@@ -1,21 +1,17 @@
-use super::super::{
-    ChoicePolicy, DryRunReport, DryRunStepTrace, DryRunStopReason, DRY_RUN_MAX_STEPS,
+use super::{
+    route_sim::select_choice_index, signatures::compiled_event_signature,
+    signatures::event_kind_compiled, ChoicePolicy, DryRunReport, DryRunStepTrace, DryRunStopReason,
 };
-use super::route_sim::select_choice_index;
-use super::signatures::{compiled_event_signature, event_kind_compiled};
-use crate::editor::validator::{LintCode, LintIssue, ValidationPhase};
-use visual_novel_engine::{Engine, EventCompiled, VnError};
+use crate::authoring::{LintCode, LintIssue, ValidationPhase};
+use crate::{Engine, EventCompiled, VnError};
 
 #[derive(Debug, Clone)]
-pub(in crate::editor::compiler) struct DryRunOutcome {
-    pub(crate) issues: Vec<LintIssue>,
-    pub(crate) report: DryRunReport,
+pub struct DryRunOutcome {
+    pub issues: Vec<LintIssue>,
+    pub report: DryRunReport,
 }
 
-pub(in crate::editor::compiler) fn run_dry_run(
-    mut engine: Engine,
-    policy: &ChoicePolicy,
-) -> DryRunOutcome {
+pub fn run_dry_run(mut engine: Engine, policy: &ChoicePolicy, max_steps: usize) -> DryRunOutcome {
     let mut issues = Vec::new();
     let mut traces = Vec::new();
     let mut steps = 0usize;
@@ -23,11 +19,9 @@ pub(in crate::editor::compiler) fn run_dry_run(
     let mut failing_event_ip = None;
 
     let (stop_reason, stop_message) = loop {
-        if steps >= DRY_RUN_MAX_STEPS {
-            let stop_message = format!(
-                "Dry Run reached {} steps; possible loop or blocking flow",
-                DRY_RUN_MAX_STEPS
-            );
+        if steps >= max_steps {
+            let stop_message =
+                format!("Dry Run reached {max_steps} steps; possible loop or blocking flow");
             issues.push(
                 LintIssue::warning(
                     Some(engine.state().position),
@@ -44,7 +38,7 @@ pub(in crate::editor::compiler) fn run_dry_run(
         let event = match engine.current_event() {
             Ok(event) => event,
             Err(_) => {
-                let msg = format!("Dry Run finished in {} step(s)", steps);
+                let msg = format!("Dry Run finished in {steps} step(s)");
                 issues.push(LintIssue::info(
                     None,
                     ValidationPhase::DryRun,
@@ -91,7 +85,7 @@ pub(in crate::editor::compiler) fn run_dry_run(
         };
 
         if let Err(err) = run_result {
-            let stop_message = format!("Dry Run runtime error at ip {}: {}", ip, err);
+            let stop_message = format!("Dry Run runtime error at ip {ip}: {err}");
             failing_event_ip = Some(ip);
             issues.push(
                 LintIssue::error(
@@ -111,7 +105,7 @@ pub(in crate::editor::compiler) fn run_dry_run(
     DryRunOutcome {
         issues,
         report: DryRunReport {
-            max_steps: DRY_RUN_MAX_STEPS,
+            max_steps,
             executed_steps: steps,
             stop_reason,
             stop_message,

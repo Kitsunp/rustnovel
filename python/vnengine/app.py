@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Mapping, Optional, Union
 
 from .engine import Engine
+from .types import Script
 
 
 class EngineApp:
@@ -45,3 +46,12 @@ class EngineApp:
             else:
                 self.engine.step()
         return events
+
+
+def run_script_headless(
+    script: Union[Script, Mapping[str, object], str],
+    chooser: Optional[Callable[[Dict[str, object]], int]] = None,
+) -> List[Dict[str, object]]:
+    """Run a script through the native headless runtime and collect events."""
+
+    return EngineApp(Engine.from_script(script)).run(chooser)

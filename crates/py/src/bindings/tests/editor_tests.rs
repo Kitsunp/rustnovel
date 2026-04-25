@@ -1,6 +1,5 @@
 use super::*;
-use eframe::egui::pos2;
-use visual_novel_gui::editor::{LintCode, ValidationPhase};
+use visual_novel_engine::authoring::{AuthoringPosition, LintCode, ValidationPhase};
 
 #[test]
 fn py_lint_issue_preserves_traceability_fields() {
@@ -35,7 +34,7 @@ fn py_lint_issue_preserves_traceability_fields() {
 #[test]
 fn autofix_helper_selects_review_when_requested() {
     let graph = NodeGraph::new();
-    let issue = validate_graph(&graph)
+    let issue = validate_authoring_graph(&graph)
         .into_iter()
         .find(|entry| entry.code == LintCode::MissingStart)
         .expect("missing start issue expected");
@@ -49,22 +48,22 @@ fn autofix_helper_selects_review_when_requested() {
 #[test]
 fn autofix_safe_pass_applies_deterministic_fix() {
     let mut graph = NodeGraph::new();
-    let start = graph.add_node(StoryNode::Start, pos2(0.0, 0.0));
+    let start = graph.add_node(StoryNode::Start, AuthoringPosition::new(0.0, 0.0));
     let dialogue = graph.add_node(
         StoryNode::Dialogue {
             speaker: "".to_string(),
             text: "Hola".to_string(),
         },
-        pos2(0.0, 120.0),
+        AuthoringPosition::new(0.0, 120.0),
     );
-    let end = graph.add_node(StoryNode::End, pos2(0.0, 240.0));
+    let end = graph.add_node(StoryNode::End, AuthoringPosition::new(0.0, 240.0));
     graph.connect(start, dialogue);
     graph.connect(dialogue, end);
 
     let applied = apply_autofix_pass(&mut graph, false).expect("safe autofix pass should complete");
     assert!(applied >= 1);
 
-    let remaining = validate_graph(&graph);
+    let remaining = validate_authoring_graph(&graph);
     assert!(
         remaining
             .iter()

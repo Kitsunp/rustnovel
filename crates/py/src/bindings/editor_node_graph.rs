@@ -1,7 +1,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use visual_novel_gui::editor::quick_fix::{apply_fix, suggest_fixes};
-use visual_novel_gui::editor::{validate_graph, NodeGraph};
+use visual_novel_engine::authoring::quick_fix::{apply_fix, suggest_fixes};
+use visual_novel_engine::authoring::{validate_authoring_graph, AuthoringPosition, NodeGraph};
 
 use super::diagnostics::{PyLintIssue, PyQuickFixCandidate};
 use super::story_node::PyStoryNode;
@@ -29,8 +29,8 @@ impl PyNodeGraph {
     }
 
     fn add_node(&mut self, node: PyStoryNode, x: f32, y: f32) -> u32 {
-        let pos = eframe::egui::pos2(x, y);
-        self.inner.add_node(node.into_inner(), pos)
+        self.inner
+            .add_node(node.into_inner(), AuthoringPosition::new(x, y))
     }
 
     fn connect(&mut self, from_id: u32, to_id: u32) {
@@ -63,14 +63,14 @@ impl PyNodeGraph {
     }
 
     fn validate(&self) -> Vec<PyLintIssue> {
-        validate_graph(&self.inner)
+        validate_authoring_graph(&self.inner)
             .into_iter()
             .map(PyLintIssue::from)
             .collect()
     }
 
     fn fix_candidates(&self, issue_index: usize) -> PyResult<Vec<PyQuickFixCandidate>> {
-        let issues = validate_graph(&self.inner);
+        let issues = validate_authoring_graph(&self.inner);
         let issue = issues
             .get(issue_index)
             .ok_or_else(|| PyValueError::new_err(format!("invalid issue index {issue_index}")))?;
@@ -86,7 +86,7 @@ impl PyNodeGraph {
         issue_index: usize,
         include_review: bool,
     ) -> PyResult<Option<String>> {
-        let issues = validate_graph(&self.inner);
+        let issues = validate_authoring_graph(&self.inner);
         let issue = issues
             .get(issue_index)
             .ok_or_else(|| PyValueError::new_err(format!("invalid issue index {issue_index}")))?;

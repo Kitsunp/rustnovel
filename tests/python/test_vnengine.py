@@ -2,7 +2,7 @@ import json
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from vnengine.app import EngineApp
+from vnengine.app import EngineApp, run_script_headless
 from vnengine.builder import ScriptBuilder
 from vnengine.localization import LocalizationCatalog, collect_script_localization_keys
 from vnengine.types import (
@@ -242,6 +242,20 @@ class EngineAppTests(unittest.TestCase):
         app = EngineApp(BrokenEngine())
         with self.assertRaises(RuntimeError):
             app.run()
+
+    def test_run_script_headless_wraps_engine_app(self):
+        script = Script(
+            events=[Dialogue(speaker="Ava", text="Hola")],
+            labels={"start": 0},
+        )
+
+        try:
+            events = run_script_headless(script)
+        except RuntimeError as exc:
+            self.skipTest(f"native engine not available: {exc}")
+
+        self.assertEqual(events[0]["type"], "dialogue")
+        self.assertEqual(events[0]["speaker"], "Ava")
 
 
 if __name__ == "__main__":

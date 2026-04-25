@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use super::super::{ChoicePolicy, ChoiceStrategy};
 use super::signatures::{event_kind_raw, raw_event_signature};
-use visual_novel_engine::{CmpOp, CondRaw, EventRaw, ScriptRaw};
+use super::{ChoicePolicy, ChoiceStrategy};
+use crate::{CmpOp, CondRaw, EventRaw, ScriptRaw};
 
-pub(super) fn select_choice_index(
+pub fn select_choice_index(
     policy: &ChoicePolicy,
     step: usize,
     option_len: usize,
@@ -40,13 +40,13 @@ struct RawSimulationState {
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::editor::compiler) struct RawStepTrace {
-    pub(in crate::editor::compiler) event_ip: u32,
-    pub(in crate::editor::compiler) event_kind: String,
-    pub(in crate::editor::compiler) event_signature: String,
-    pub(in crate::editor::compiler) visual_background: Option<String>,
-    pub(in crate::editor::compiler) visual_music: Option<String>,
-    pub(in crate::editor::compiler) character_count: usize,
+pub struct RawStepTrace {
+    pub event_ip: u32,
+    pub event_kind: String,
+    pub event_signature: String,
+    pub visual_background: Option<String>,
+    pub visual_music: Option<String>,
+    pub character_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -58,7 +58,7 @@ struct RawRouteFrame {
     state: RawSimulationState,
 }
 
-pub(in crate::editor::compiler) fn enumerate_choice_routes(
+pub fn enumerate_choice_routes(
     script: &ScriptRaw,
     max_steps: usize,
     max_routes: usize,
@@ -72,7 +72,6 @@ pub(in crate::editor::compiler) fn enumerate_choice_routes(
 
     let mut initial_state = RawSimulationState::default();
     bootstrap_initial_state(script, start_ip, &mut initial_state);
-
     let mut stack = vec![RawRouteFrame {
         ip: start_ip,
         steps: 0,
@@ -114,7 +113,6 @@ pub(in crate::editor::compiler) fn enumerate_choice_routes(
                 stack.push(next);
                 pushed = true;
             }
-
             if !pushed {
                 routes.push(frame.choices);
             }
@@ -141,16 +139,7 @@ pub(in crate::editor::compiler) fn enumerate_choice_routes(
                     next_ip = target_ip;
                 }
             }
-            EventRaw::Dialogue(_)
-            | EventRaw::ExtCall { .. }
-            | EventRaw::AudioAction(_)
-            | EventRaw::Transition(_)
-            | EventRaw::Scene(_)
-            | EventRaw::Patch(_)
-            | EventRaw::SetCharacterPosition(_)
-            | EventRaw::SetFlag { .. }
-            | EventRaw::SetVar { .. }
-            | EventRaw::Choice(_) => {}
+            _ => {}
         }
 
         next.ip = next_ip;
@@ -163,13 +152,11 @@ pub(in crate::editor::compiler) fn enumerate_choice_routes(
     }
     routes.sort();
     routes.dedup();
-    if routes.len() > max_routes {
-        routes.truncate(max_routes);
-    }
+    routes.truncate(max_routes);
     routes
 }
 
-pub(in crate::editor::compiler) fn simulate_raw_sequence(
+pub fn simulate_raw_sequence(
     script: &ScriptRaw,
     max_steps: usize,
     policy: &ChoicePolicy,
@@ -211,7 +198,7 @@ pub(in crate::editor::compiler) fn simulate_raw_sequence(
                 let Some(target_label) = choice
                     .options
                     .get(choice_idx)
-                    .map(|opt| opt.target.as_str())
+                    .map(|option| option.target.as_str())
                 else {
                     break;
                 };
@@ -228,15 +215,7 @@ pub(in crate::editor::compiler) fn simulate_raw_sequence(
                     next_ip = target_ip;
                 }
             }
-            EventRaw::Dialogue(_)
-            | EventRaw::ExtCall { .. }
-            | EventRaw::AudioAction(_)
-            | EventRaw::Transition(_)
-            | EventRaw::Scene(_)
-            | EventRaw::Patch(_)
-            | EventRaw::SetCharacterPosition(_)
-            | EventRaw::SetFlag { .. }
-            | EventRaw::SetVar { .. } => {}
+            _ => {}
         }
 
         ip = next_ip;
@@ -294,13 +273,7 @@ fn apply_state_mutations(event: &EventRaw, state: &mut RawSimulationState) {
         EventRaw::SetVar { key, value } => {
             state.vars.insert(key.clone(), *value);
         }
-        EventRaw::Dialogue(_)
-        | EventRaw::Choice(_)
-        | EventRaw::Jump { .. }
-        | EventRaw::JumpIf { .. }
-        | EventRaw::ExtCall { .. }
-        | EventRaw::AudioAction(_)
-        | EventRaw::Transition(_) => {}
+        _ => {}
     }
 }
 

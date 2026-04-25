@@ -128,6 +128,16 @@ impl NodeGraph {
         id
     }
 
+    pub(crate) fn add_node_with_id(&mut self, id: u32, node: StoryNode, pos: egui::Pos2) -> bool {
+        if self.nodes.iter().any(|(node_id, _, _)| *node_id == id) {
+            return false;
+        }
+        self.next_id = self.next_id.max(id.saturating_add(1));
+        self.nodes.push((id, node, pos));
+        self.modified = true;
+        true
+    }
+
     /// Removes a node and all its connections.
     pub fn remove_node(&mut self, id: u32) {
         self.nodes.retain(|(nid, _, _)| *nid != id);

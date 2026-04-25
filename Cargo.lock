@@ -4319,13 +4319,11 @@ dependencies = [
 name = "vnengine_py"
 version = "0.1.0"
 dependencies = [
- "eframe",
  "miette",
  "pyo3",
  "serde",
  "serde_json",
  "visual_novel_engine",
- "visual_novel_gui",
 ]
 
 [[package]]

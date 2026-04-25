@@ -1,6 +1,6 @@
 """Stable Python interface for the Visual Novel Engine."""
 
-from .app import EngineApp
+from .app import EngineApp, run_script_headless
 from .builder import ScriptBuilder
 from .engine import Engine
 from .localization import LocalizationCatalog, collect_script_localization_keys
@@ -38,6 +38,7 @@ __all__ = [
     "Dialogue",
     "Engine",
     "EngineApp",
+    "run_script_headless",
     "Event",
     "ExtCall",
     "Jump",

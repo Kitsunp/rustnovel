@@ -2,7 +2,7 @@
 //!
 //! Displays the story flow as a visual graph with nodes and edges.
 
-use crate::editor::{NodeGraph, StoryNode};
+use crate::editor::{NodeGraph, StoryNode, StoryNodeVisualExt};
 use eframe::egui;
 
 /// Graph panel widget.

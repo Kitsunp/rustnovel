@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::editor::authoring_adapter::to_authoring_graph;
 use crate::editor::NodeGraph;
 use visual_novel_engine::FlowGraphAnalysis;
 
@@ -19,6 +20,7 @@ pub(super) fn default_asset_exists(path: &str) -> bool {
     }
 }
 
+#[cfg(test)]
 pub(super) fn asset_exists_from_project_root(project_root: &Path, path: &str) -> bool {
     let candidate = Path::new(path.trim());
     if candidate.is_absolute() {
@@ -72,10 +74,5 @@ pub(super) fn is_unsafe_asset_ref(path: &str) -> bool {
 }
 
 pub(super) fn analyze_editor_flow(graph: &NodeGraph, start_nodes: &[u32]) -> FlowGraphAnalysis {
-    let nodes = graph.nodes().map(|(id, _, _)| *id).collect::<Vec<_>>();
-    let edges = graph
-        .connections()
-        .map(|connection| (connection.from, connection.to))
-        .collect::<Vec<_>>();
-    visual_novel_engine::analyze_flow_graph(&nodes, &edges, start_nodes)
+    to_authoring_graph(graph).flow_analysis(start_nodes)
 }

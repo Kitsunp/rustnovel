@@ -1,7 +1,6 @@
 mod bindings;
 
 use pyo3::prelude::*;
-use visual_novel_gui::{run_app as run_gui, GuiError};
 
 pub use bindings::{
     register_editor_classes, vn_error_to_py, PyAudio, PyEngine, PyGraphEdge, PyGraphNode,
@@ -35,10 +34,10 @@ fn visual_novel_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 #[pyfunction]
-fn run_visual_novel(script_json: String, config: Option<PyVnConfig>) -> PyResult<()> {
-    let gui_config = config.map(Into::into);
-    run_gui(script_json, gui_config).map_err(|err| match err {
-        GuiError::Script(script) => pyo3::exceptions::PyValueError::new_err(script.to_string()),
-        _ => pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to run GUI: {err}")),
-    })
+fn run_visual_novel(script_json: String, _config: Option<PyVnConfig>) -> PyResult<()> {
+    serde_json::from_str::<::visual_novel_engine::ScriptRaw>(&script_json)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+    Err(pyo3::exceptions::PyRuntimeError::new_err(
+        "GUI launch is not available in the headless Python extension; use the Rust GUI binary.",
+    ))
 }

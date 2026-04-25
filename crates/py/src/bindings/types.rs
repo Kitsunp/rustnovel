@@ -1,6 +1,5 @@
 use pyo3::prelude::*;
 use visual_novel_engine::{ResourceLimiter, VnError};
-use visual_novel_gui::{SecurityMode, VnConfig as GuiConfig};
 
 pub fn vn_error_to_py(err: VnError) -> PyErr {
     let report = miette::Report::new(err);
@@ -83,49 +82,5 @@ impl PyVnConfig {
             manifest_path,
             require_manifest,
         }
-    }
-}
-
-pub fn parse_security_mode(mode: &str) -> SecurityMode {
-    match mode {
-        "untrusted" => SecurityMode::Untrusted,
-        _ => SecurityMode::Trusted,
-    }
-}
-
-impl From<PyVnConfig> for GuiConfig {
-    fn from(config: PyVnConfig) -> Self {
-        let mut base = GuiConfig::default();
-        if let Some(title) = config.title {
-            base.title = title;
-        }
-        if let Some(width) = config.width {
-            base.width = Some(width);
-        }
-        if let Some(height) = config.height {
-            base.height = Some(height);
-        }
-        if let Some(fullscreen) = config.fullscreen {
-            base.fullscreen = fullscreen;
-        }
-        if let Some(scale_factor) = config.scale_factor {
-            base.scale_factor = Some(scale_factor);
-        }
-        if let Some(assets_root) = config.assets_root {
-            base.assets_root = Some(assets_root.into());
-        }
-        if let Some(budget) = config.asset_cache_budget_mb {
-            base.asset_cache_budget_mb = Some(budget);
-        }
-        if let Some(security_mode) = config.security_mode {
-            base.security_mode = parse_security_mode(&security_mode);
-        }
-        if let Some(manifest_path) = config.manifest_path {
-            base.manifest_path = Some(manifest_path.into());
-        }
-        if let Some(require_manifest) = config.require_manifest {
-            base.require_manifest = Some(require_manifest);
-        }
-        base
     }
 }

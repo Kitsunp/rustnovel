@@ -1,0 +1,348 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::{
+    AudioActionRaw, ChoiceOptionRaw, ChoiceRaw, DialogueRaw, EventRaw, SceneTransitionRaw,
+    SceneUpdateRaw, ScriptRaw, SetCharacterPositionRaw,
+};
+
+use super::{AuthoringPosition, NodeGraph, StoryNode, NODE_VERTICAL_SPACING};
+
+pub fn from_script(script: &ScriptRaw) -> NodeGraph {
+    let mut graph = NodeGraph::new();
+    if script.events.is_empty() {
+        return graph;
+    }
+
+    let start_id = graph.add_node(StoryNode::Start, AuthoringPosition::new(50.0, 30.0));
+    let mut index_to_id: BTreeMap<usize, u32> = BTreeMap::new();
+
+    for (idx, event) in script.events.iter().enumerate() {
+        let y = 100.0 + (idx as f32) * NODE_VERTICAL_SPACING;
+        let node = node_from_event(event);
+        let id = graph.add_node(node, AuthoringPosition::new(100.0, y));
+        index_to_id.insert(idx, id);
+    }
+
+    let last_y = 100.0 + (script.events.len() as f32) * NODE_VERTICAL_SPACING;
+    let end_id = graph.add_node(StoryNode::End, AuthoringPosition::new(100.0, last_y));
+    if let Some(first_id) = index_to_id.get(&0).copied() {
+        graph.connect(start_id, first_id);
+    }
+
+    let label_to_index = script
+        .labels
+        .iter()
+        .map(|(name, idx)| (name.as_str(), *idx))
+        .collect::<BTreeMap<_, _>>();
+
+    for (idx, event) in script.events.iter().enumerate() {
+        let Some(from_id) = index_to_id.get(&idx).copied() else {
+            continue;
+        };
+        connect_event_flow(
+            &mut graph,
+            event,
+            idx,
+            from_id,
+            end_id,
+            &label_to_index,
+            &index_to_id,
+            script.events.len(),
+        );
+    }
+
+    let nodes_with_outgoing = graph
+        .connections()
+        .map(|conn| conn.from)
+        .collect::<BTreeSet<_>>();
+    let dangling = graph
+        .nodes()
+        .map(|(id, _, _)| *id)
+        .filter(|id| {
+            !nodes_with_outgoing.contains(id)
+                && !matches!(graph.get_node(*id), Some(StoryNode::End))
+        })
+        .collect::<Vec<_>>();
+    for id in dangling {
+        graph.connect(id, end_id);
+    }
+
+    graph.clear_modified();
+    graph
+}
+
+pub fn to_script(graph: &NodeGraph) -> ScriptRaw {
+    let mut events = Vec::new();
+    let mut labels = BTreeMap::new();
+    let node_lookup = graph
+        .nodes()
+        .map(|(id, node, _)| (*id, node))
+        .collect::<BTreeMap<_, _>>();
+    let choice_targets = graph
+        .connections()
+        .map(|conn| ((conn.from, conn.from_port), conn.to))
+        .collect::<BTreeMap<_, _>>();
+
+    for id in graph.script_order_node_ids() {
+        let Some(node) = node_lookup.get(&id).copied() else {
+            continue;
+        };
+        if node.is_marker() {
+            continue;
+        }
+        let event_idx = events.len();
+        labels.insert(format!("node_{id}"), event_idx);
+        if let Some(event) = event_from_node(id, node, &node_lookup, &choice_targets) {
+            events.push(event);
+        }
+    }
+
+    if events.iter().any(targets_end_label) {
+        labels.insert("__end".to_string(), events.len());
+    }
+    if !events.is_empty() {
+        labels.entry("start".to_string()).or_insert(0);
+    }
+    ScriptRaw::new(events, labels)
+}
+
+fn node_from_event(event: &EventRaw) -> StoryNode {
+    match event {
+        EventRaw::Dialogue(dialogue) => StoryNode::Dialogue {
+            speaker: dialogue.speaker.clone(),
+            text: dialogue.text.clone(),
+        },
+        EventRaw::Choice(choice) => StoryNode::Choice {
+            prompt: choice.prompt.clone(),
+            options: choice
+                .options
+                .iter()
+                .map(|option| option.text.clone())
+                .collect(),
+        },
+        EventRaw::Scene(scene) => StoryNode::Scene {
+            profile: None,
+            background: scene.background.clone(),
+            music: scene.music.clone(),
+            characters: scene.characters.clone(),
+        },
+        EventRaw::Jump { target } => StoryNode::Jump {
+            target: target.clone(),
+        },
+        EventRaw::SetVar { key, value } => StoryNode::SetVariable {
+            key: key.clone(),
+            value: *value,
+        },
+        EventRaw::JumpIf { cond, target } => StoryNode::JumpIf {
+            target: target.clone(),
+            cond: cond.clone(),
+        },
+        EventRaw::Patch(patch) => StoryNode::ScenePatch(patch.clone()),
+        EventRaw::AudioAction(action) => StoryNode::AudioAction {
+            channel: action.channel.clone(),
+            action: action.action.clone(),
+            asset: action.asset.clone(),
+            volume: action.volume,
+            fade_duration_ms: action.fade_duration_ms,
+            loop_playback: action.loop_playback,
+        },
+        EventRaw::Transition(transition) => StoryNode::Transition {
+            kind: transition.kind.clone(),
+            duration_ms: transition.duration_ms,
+            color: transition.color.clone(),
+        },
+        EventRaw::SetCharacterPosition(pos) => StoryNode::CharacterPlacement {
+            name: pos.name.clone(),
+            x: pos.x,
+            y: pos.y,
+            scale: pos.scale,
+        },
+        EventRaw::ExtCall { .. } | EventRaw::SetFlag { .. } => StoryNode::Generic(event.clone()),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn connect_event_flow(
+    graph: &mut NodeGraph,
+    event: &EventRaw,
+    idx: usize,
+    from_id: u32,
+    end_id: u32,
+    label_to_index: &BTreeMap<&str, usize>,
+    index_to_id: &BTreeMap<usize, u32>,
+    event_count: usize,
+) {
+    match event {
+        EventRaw::Jump { target } => connect_target(
+            graph,
+            from_id,
+            0,
+            target,
+            end_id,
+            label_to_index,
+            index_to_id,
+            event_count,
+        ),
+        EventRaw::Choice(choice) => {
+            for (port, option) in choice.options.iter().enumerate() {
+                connect_target(
+                    graph,
+                    from_id,
+                    port,
+                    &option.target,
+                    end_id,
+                    label_to_index,
+                    index_to_id,
+                    event_count,
+                );
+            }
+        }
+        EventRaw::JumpIf { target, .. } => {
+            connect_target(
+                graph,
+                from_id,
+                0,
+                target,
+                end_id,
+                label_to_index,
+                index_to_id,
+                event_count,
+            );
+            if let Some(next_id) = index_to_id.get(&(idx + 1)).copied() {
+                graph.connect(from_id, next_id);
+            }
+        }
+        _ => {
+            if let Some(next_id) = index_to_id.get(&(idx + 1)).copied() {
+                graph.connect(from_id, next_id);
+            }
+        }
+    }
+}
+
+fn connect_target(
+    graph: &mut NodeGraph,
+    from_id: u32,
+    from_port: usize,
+    target: &str,
+    end_id: u32,
+    label_to_index: &BTreeMap<&str, usize>,
+    index_to_id: &BTreeMap<usize, u32>,
+    event_count: usize,
+) {
+    let Some(target_idx) = label_to_index.get(target).copied() else {
+        return;
+    };
+    if target_idx == event_count {
+        graph.connect_port(from_id, from_port, end_id);
+    } else if let Some(target_id) = index_to_id.get(&target_idx).copied() {
+        graph.connect_port(from_id, from_port, target_id);
+    }
+}
+
+fn event_from_node(
+    id: u32,
+    node: &StoryNode,
+    node_lookup: &BTreeMap<u32, &StoryNode>,
+    choice_targets: &BTreeMap<(u32, usize), u32>,
+) -> Option<EventRaw> {
+    Some(match node {
+        StoryNode::Dialogue { speaker, text } => EventRaw::Dialogue(DialogueRaw {
+            speaker: speaker.clone(),
+            text: text.clone(),
+        }),
+        StoryNode::Choice { prompt, options } => EventRaw::Choice(ChoiceRaw {
+            prompt: prompt.clone(),
+            options: options
+                .iter()
+                .enumerate()
+                .map(|(port, text)| ChoiceOptionRaw {
+                    text: text.clone(),
+                    target: target_label(id, port, node_lookup, choice_targets),
+                })
+                .collect(),
+        }),
+        StoryNode::Scene {
+            background,
+            music,
+            characters,
+            ..
+        } => EventRaw::Scene(SceneUpdateRaw {
+            background: background.clone(),
+            music: music.clone(),
+            characters: characters.clone(),
+        }),
+        StoryNode::Jump { target } => EventRaw::Jump {
+            target: target.clone(),
+        },
+        StoryNode::SetVariable { key, value } => EventRaw::SetVar {
+            key: key.clone(),
+            value: *value,
+        },
+        StoryNode::JumpIf { cond, target } => EventRaw::JumpIf {
+            cond: cond.clone(),
+            target: target.clone(),
+        },
+        StoryNode::ScenePatch(patch) => EventRaw::Patch(patch.clone()),
+        StoryNode::AudioAction {
+            channel,
+            action,
+            asset,
+            volume,
+            fade_duration_ms,
+            loop_playback,
+        } => EventRaw::AudioAction(AudioActionRaw {
+            channel: channel.clone(),
+            action: action.clone(),
+            asset: asset.clone(),
+            volume: *volume,
+            fade_duration_ms: *fade_duration_ms,
+            loop_playback: *loop_playback,
+        }),
+        StoryNode::Transition {
+            kind,
+            duration_ms,
+            color,
+        } => EventRaw::Transition(SceneTransitionRaw {
+            kind: kind.clone(),
+            duration_ms: *duration_ms,
+            color: color.clone(),
+        }),
+        StoryNode::CharacterPlacement { name, x, y, scale } => {
+            EventRaw::SetCharacterPosition(SetCharacterPositionRaw {
+                name: name.clone(),
+                x: *x,
+                y: *y,
+                scale: *scale,
+            })
+        }
+        StoryNode::Generic(event) => event.clone(),
+        StoryNode::Start | StoryNode::End => return None,
+    })
+}
+
+fn target_label(
+    node_id: u32,
+    port: usize,
+    node_lookup: &BTreeMap<u32, &StoryNode>,
+    choice_targets: &BTreeMap<(u32, usize), u32>,
+) -> String {
+    choice_targets
+        .get(&(node_id, port))
+        .and_then(|target_id| {
+            node_lookup.get(target_id).map(|node| match node {
+                StoryNode::Start => "start".to_string(),
+                StoryNode::End => "__end".to_string(),
+                _ => format!("node_{target_id}"),
+            })
+        })
+        .unwrap_or_else(|| format!("__unlinked_node_{node_id}_option_{port}"))
+}
+
+fn targets_end_label(event: &EventRaw) -> bool {
+    match event {
+        EventRaw::Jump { target } | EventRaw::JumpIf { target, .. } => target == "__end",
+        EventRaw::Choice(choice) => choice.options.iter().any(|option| option.target == "__end"),
+        _ => false,
+    }
+}

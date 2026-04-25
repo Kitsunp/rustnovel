@@ -1,10 +1,10 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use visual_novel_engine::CmpOp;
-use visual_novel_gui::editor::quick_fix::{
+use visual_novel_engine::authoring::quick_fix::{
     apply_fix, suggest_fixes, QuickFixCandidate, QuickFixRisk,
 };
-use visual_novel_gui::editor::{validate_graph, LintIssue, NodeGraph};
+use visual_novel_engine::authoring::{validate_authoring_graph, LintIssue, NodeGraph};
+use visual_novel_engine::CmpOp;
 
 pub(super) fn parse_cmp_op(op: &str) -> PyResult<CmpOp> {
     match op {
@@ -48,7 +48,7 @@ pub(super) fn apply_autofix_pass(
 
     while guard < 128 {
         guard += 1;
-        let issues = validate_graph(graph);
+        let issues = validate_authoring_graph(graph);
         let mut applied_this_round = false;
 
         for issue in issues {

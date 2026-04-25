@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
-use visual_novel_gui::editor::quick_fix::QuickFixCandidate;
-use visual_novel_gui::editor::{DiagnosticLanguage, LintIssue, LintSeverity};
+use visual_novel_engine::authoring::{
+    DiagnosticLanguage, LintIssue, LintSeverity, QuickFixCandidate,
+};
 
 /// Quick-fix candidate metadata exposed to Python.
 #[pyclass(name = "QuickFixCandidate")]

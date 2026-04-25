@@ -14,6 +14,9 @@ use visual_novel_engine::{
 use vnengine_assets::{AssetEntry, AssetManifest};
 use walkdir::WalkDir;
 
+#[path = "vnengine/authoring.rs"]
+mod authoring;
+
 #[derive(Parser)]
 #[command(author, version, about = "Visual Novel Engine CLI")]
 struct Cli {
@@ -25,6 +28,12 @@ struct Cli {
 enum Command {
     /// Validate a script JSON file.
     Validate { script: PathBuf },
+    /// Validate editor/authoring graph semantics from a script JSON file.
+    AuthoringValidate {
+        script: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Compile a script JSON file into binary form.
     Compile {
         script: PathBuf,
@@ -197,6 +206,9 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Validate { script } => validate_script(&script),
+        Command::AuthoringValidate { script, output } => {
+            authoring::validate_authoring_script(&script, output.as_deref())
+        }
         Command::Compile { script, output } => compile_script(&script, &output),
         Command::Trace {
             script,

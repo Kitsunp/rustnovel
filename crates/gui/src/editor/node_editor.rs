@@ -12,7 +12,9 @@ use eframe::egui;
 
 use super::node_graph::NodeGraph;
 use super::node_rendering;
-use super::node_types::{node_visual_height, ContextMenu, StoryNode, NODE_WIDTH};
+use super::node_types::{
+    node_visual_height, ContextMenu, StoryNode, StoryNodeVisualExt, NODE_WIDTH,
+};
 use super::undo::UndoStack;
 
 // =============================================================================

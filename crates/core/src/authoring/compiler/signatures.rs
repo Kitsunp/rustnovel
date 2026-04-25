@@ -1,6 +1,6 @@
-use visual_novel_engine::{CondCompiled, CondRaw, EventCompiled, EventRaw};
+use crate::{CondCompiled, CondRaw, EventCompiled, EventRaw};
 
-pub(super) fn event_kind_compiled(event: &EventCompiled) -> &'static str {
+pub fn event_kind_compiled(event: &EventCompiled) -> &'static str {
     match event {
         EventCompiled::Dialogue(_) => "dialogue",
         EventCompiled::Choice(_) => "choice",
@@ -17,7 +17,7 @@ pub(super) fn event_kind_compiled(event: &EventCompiled) -> &'static str {
     }
 }
 
-pub(super) fn event_kind_raw(event: &EventRaw) -> &'static str {
+pub fn event_kind_raw(event: &EventRaw) -> &'static str {
     match event {
         EventRaw::Dialogue(_) => "dialogue",
         EventRaw::Choice(_) => "choice",
@@ -34,121 +34,123 @@ pub(super) fn event_kind_raw(event: &EventRaw) -> &'static str {
     }
 }
 
-pub(super) fn compiled_event_signature(event: &EventCompiled) -> String {
+pub fn compiled_event_signature(event: &EventCompiled) -> String {
     match event {
-        EventCompiled::Dialogue(d) => {
-            format!("dialogue|{}|{}", d.speaker.as_ref(), d.text.as_ref())
+        EventCompiled::Dialogue(dialogue) => {
+            format!(
+                "dialogue|{}|{}",
+                dialogue.speaker.as_ref(),
+                dialogue.text.as_ref()
+            )
         }
-        EventCompiled::Choice(c) => {
-            format!("choice|{}|{}", c.prompt.as_ref(), c.options.len())
+        EventCompiled::Choice(choice) => {
+            format!("choice|{}|{}", choice.prompt.as_ref(), choice.options.len())
         }
-        EventCompiled::Scene(s) => format!(
+        EventCompiled::Scene(scene) => format!(
             "scene|bg={:?}|music={:?}|chars={}",
-            s.background.as_deref(),
-            s.music.as_deref(),
-            s.characters.len()
+            scene.background.as_deref(),
+            scene.music.as_deref(),
+            scene.characters.len()
         ),
         EventCompiled::Jump { .. } => "jump".to_string(),
-        EventCompiled::SetFlag { value, .. } => format!("set_flag|{}", value),
-        EventCompiled::SetVar { value, .. } => format!("set_var|{}", value),
+        EventCompiled::SetFlag { value, .. } => format!("set_flag|{value}"),
+        EventCompiled::SetVar { value, .. } => format!("set_var|{value}"),
         EventCompiled::JumpIf { cond, .. } => format!("jump_if|{}", compiled_cond_signature(cond)),
-        EventCompiled::Patch(p) => format!(
+        EventCompiled::Patch(patch) => format!(
             "patch|bg={:?}|music={:?}|add={}|upd={}|rm={}",
-            p.background.as_deref(),
-            p.music.as_deref(),
-            p.add.len(),
-            p.update.len(),
-            p.remove.len()
+            patch.background.as_deref(),
+            patch.music.as_deref(),
+            patch.add.len(),
+            patch.update.len(),
+            patch.remove.len()
         ),
         EventCompiled::ExtCall { command, args } => {
             format!("ext_call|{}|{}", command, args.len())
         }
-        EventCompiled::AudioAction(a) => format!(
+        EventCompiled::AudioAction(audio) => format!(
             "audio|{}|{}|asset={:?}|vol={}|fade={:?}|loop={:?}",
-            compiled_audio_channel(a.channel),
-            compiled_audio_action(a.action),
-            a.asset.as_deref(),
-            fmt_opt_f32(a.volume),
-            a.fade_duration_ms,
-            a.loop_playback
+            compiled_audio_channel(audio.channel),
+            compiled_audio_action(audio.action),
+            audio.asset.as_deref(),
+            fmt_opt_f32(audio.volume),
+            audio.fade_duration_ms,
+            audio.loop_playback
         ),
-        EventCompiled::Transition(t) => format!(
+        EventCompiled::Transition(transition) => format!(
             "transition|{}|{}|{:?}",
-            compiled_transition_kind(t.kind),
-            t.duration_ms,
-            t.color.as_deref()
+            compiled_transition_kind(transition.kind),
+            transition.duration_ms,
+            transition.color.as_deref()
         ),
-        EventCompiled::SetCharacterPosition(p) => format!(
+        EventCompiled::SetCharacterPosition(pos) => format!(
             "set_character_position|{}|{}|{}|{}",
-            p.name.as_ref(),
-            p.x,
-            p.y,
-            fmt_opt_f32(p.scale)
+            pos.name.as_ref(),
+            pos.x,
+            pos.y,
+            fmt_opt_f32(pos.scale)
         ),
     }
 }
 
-pub(super) fn raw_event_signature(event: &EventRaw) -> String {
+pub fn raw_event_signature(event: &EventRaw) -> String {
     match event {
-        EventRaw::Dialogue(d) => format!("dialogue|{}|{}", d.speaker, d.text),
-        EventRaw::Choice(c) => format!("choice|{}|{}", c.prompt, c.options.len()),
-        EventRaw::Scene(s) => format!(
+        EventRaw::Dialogue(dialogue) => format!("dialogue|{}|{}", dialogue.speaker, dialogue.text),
+        EventRaw::Choice(choice) => format!("choice|{}|{}", choice.prompt, choice.options.len()),
+        EventRaw::Scene(scene) => format!(
             "scene|bg={:?}|music={:?}|chars={}",
-            s.background,
-            s.music,
-            s.characters.len()
+            scene.background,
+            scene.music,
+            scene.characters.len()
         ),
         EventRaw::Jump { .. } => "jump".to_string(),
-        EventRaw::SetFlag { value, .. } => format!("set_flag|{}", value),
-        EventRaw::SetVar { value, .. } => format!("set_var|{}", value),
+        EventRaw::SetFlag { value, .. } => format!("set_flag|{value}"),
+        EventRaw::SetVar { value, .. } => format!("set_var|{value}"),
         EventRaw::JumpIf { cond, .. } => format!("jump_if|{}", raw_cond_signature(cond)),
-        EventRaw::Patch(p) => format!(
+        EventRaw::Patch(patch) => format!(
             "patch|bg={:?}|music={:?}|add={}|upd={}|rm={}",
-            p.background,
-            p.music,
-            p.add.len(),
-            p.update.len(),
-            p.remove.len()
+            patch.background,
+            patch.music,
+            patch.add.len(),
+            patch.update.len(),
+            patch.remove.len()
         ),
         EventRaw::ExtCall { command, args } => format!("ext_call|{}|{}", command, args.len()),
-        EventRaw::AudioAction(a) => format!(
+        EventRaw::AudioAction(audio) => format!(
             "audio|{}|{}|asset={:?}|vol={}|fade={:?}|loop={:?}",
-            normalize_audio_channel(&a.channel),
-            normalize_audio_action(&a.action),
-            a.asset,
-            fmt_opt_f32(a.volume),
-            a.fade_duration_ms,
-            a.loop_playback
+            normalize_audio_channel(&audio.channel),
+            normalize_audio_action(&audio.action),
+            audio.asset,
+            fmt_opt_f32(audio.volume),
+            audio.fade_duration_ms,
+            audio.loop_playback
         ),
-        EventRaw::Transition(t) => {
-            format!(
-                "transition|{}|{}|{:?}",
-                normalize_transition_kind(&t.kind),
-                t.duration_ms,
-                t.color
-            )
-        }
-        EventRaw::SetCharacterPosition(p) => format!(
+        EventRaw::Transition(transition) => format!(
+            "transition|{}|{}|{:?}",
+            normalize_transition_kind(&transition.kind),
+            transition.duration_ms,
+            transition.color
+        ),
+        EventRaw::SetCharacterPosition(pos) => format!(
             "set_character_position|{}|{}|{}|{}",
-            p.name,
-            p.x,
-            p.y,
-            fmt_opt_f32(p.scale)
+            pos.name,
+            pos.x,
+            pos.y,
+            fmt_opt_f32(pos.scale)
         ),
     }
 }
 
 fn compiled_cond_signature(cond: &CondCompiled) -> String {
     match cond {
-        CondCompiled::Flag { is_set, .. } => format!("flag|{}", is_set),
-        CondCompiled::VarCmp { op, value, .. } => format!("var|{:?}|{}", op, value),
+        CondCompiled::Flag { is_set, .. } => format!("flag|{is_set}"),
+        CondCompiled::VarCmp { op, value, .. } => format!("var|{op:?}|{value}"),
     }
 }
 
 fn raw_cond_signature(cond: &CondRaw) -> String {
     match cond {
-        CondRaw::Flag { is_set, .. } => format!("flag|{}", is_set),
-        CondRaw::VarCmp { op, value, .. } => format!("var|{:?}|{}", op, value),
+        CondRaw::Flag { is_set, .. } => format!("flag|{is_set}"),
+        CondRaw::VarCmp { op, value, .. } => format!("var|{op:?}|{value}"),
     }
 }
 
@@ -208,7 +210,7 @@ fn normalize_transition_kind(kind: &str) -> &'static str {
 
 fn fmt_opt_f32(value: Option<f32>) -> String {
     match value {
-        Some(v) => format!("{:.3}", v),
+        Some(value) => format!("{value:.3}"),
         None => "none".to_string(),
     }
 }

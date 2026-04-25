@@ -9,6 +9,7 @@
 mod asset_browser;
 mod asset_candidates;
 mod asset_import;
+mod authoring_adapter;
 pub mod compiler;
 mod diagnostics;
 mod diff_dialog;
@@ -45,7 +46,7 @@ pub use inspector_panel::{InspectorAction, InspectorPanel};
 pub use lint_panel::LintPanel;
 pub use node_editor::NodeEditorPanel;
 pub use node_graph::NodeGraph;
-pub use node_types::{ContextMenu, StoryNode, ToastKind, ToastState};
+pub use node_types::{ContextMenu, StoryNode, StoryNodeVisualExt, ToastKind, ToastState};
 pub use timeline_panel::TimelinePanel;
 pub use undo::UndoStack;
 pub use validator::{

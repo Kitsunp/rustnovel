@@ -1,64 +1,21 @@
-use crate::editor::{DiagnosticLanguage, LintIssue, NodeGraph};
+use crate::editor::authoring_adapter::{replace_gui_semantics_from_authoring, to_authoring_graph};
+use crate::editor::{LintIssue, NodeGraph};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuickFixRisk {
-    Safe,
-    Review,
-}
-
-impl QuickFixRisk {
-    pub fn label(self) -> &'static str {
-        match self {
-            QuickFixRisk::Safe => "SAFE",
-            QuickFixRisk::Review => "REVIEW",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct QuickFixCandidate {
-    pub fix_id: &'static str,
-    pub title_es: &'static str,
-    pub title_en: &'static str,
-    pub preconditions_es: &'static str,
-    pub preconditions_en: &'static str,
-    pub postconditions_es: &'static str,
-    pub postconditions_en: &'static str,
-    pub risk: QuickFixRisk,
-    pub structural: bool,
-}
-
-impl QuickFixCandidate {
-    pub fn title(&self, language: DiagnosticLanguage) -> &'static str {
-        match language {
-            DiagnosticLanguage::Es => self.title_es,
-            DiagnosticLanguage::En => self.title_en,
-        }
-    }
-
-    pub fn preconditions(&self, language: DiagnosticLanguage) -> &'static str {
-        match language {
-            DiagnosticLanguage::Es => self.preconditions_es,
-            DiagnosticLanguage::En => self.preconditions_en,
-        }
-    }
-
-    pub fn postconditions(&self, language: DiagnosticLanguage) -> &'static str {
-        match language {
-            DiagnosticLanguage::Es => self.postconditions_es,
-            DiagnosticLanguage::En => self.postconditions_en,
-        }
-    }
-}
-
-mod catalog;
+pub use visual_novel_engine::authoring::quick_fix::{QuickFixCandidate, QuickFixRisk};
 
 pub fn suggest_fixes(issue: &LintIssue, graph: &NodeGraph) -> Vec<QuickFixCandidate> {
-    catalog::suggest_fixes(issue, graph)
+    let authoring = to_authoring_graph(graph);
+    visual_novel_engine::authoring::quick_fix::suggest_fixes(issue, &authoring)
 }
 
 pub fn apply_fix(graph: &mut NodeGraph, issue: &LintIssue, fix_id: &str) -> Result<bool, String> {
-    catalog::apply_fix(graph, issue, fix_id)
+    let mut authoring = to_authoring_graph(graph);
+    let changed =
+        visual_novel_engine::authoring::quick_fix::apply_fix(&mut authoring, issue, fix_id)?;
+    if changed {
+        replace_gui_semantics_from_authoring(graph, &authoring);
+    }
+    Ok(changed)
 }
 
 #[cfg(test)]

@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, HashMap};
 
-use super::super::{ChoicePolicy, DryRunReport};
 use super::route_sim::simulate_raw_sequence;
-use crate::editor::validator::{LintCode, LintIssue, ValidationPhase};
-use visual_novel_engine::{EventRaw, ScriptRaw};
+use super::{ChoicePolicy, DryRunReport};
+use crate::authoring::{LintCode, LintIssue, ValidationPhase};
+use crate::{EventRaw, ScriptRaw};
 
-pub(in crate::editor::compiler) fn check_preview_runtime_parity(
+pub fn check_preview_runtime_parity(
     script: &ScriptRaw,
     report: &DryRunReport,
     policy: &ChoicePolicy,
@@ -88,11 +88,10 @@ pub(in crate::editor::compiler) fn check_preview_runtime_parity(
     }
 
     if runtime_steps.len() != raw_steps.len() {
-        let mismatch_step = overlap;
         let mismatch_ip = runtime_steps
-            .get(mismatch_step)
+            .get(overlap)
             .map(|entry| entry.event_ip)
-            .or_else(|| raw_steps.get(mismatch_step).map(|entry| entry.event_ip));
+            .or_else(|| raw_steps.get(overlap).map(|entry| entry.event_ip));
         issues.push(
             LintIssue::error(
                 None,
@@ -112,7 +111,7 @@ pub(in crate::editor::compiler) fn check_preview_runtime_parity(
     issues
 }
 
-pub(in crate::editor::compiler) fn build_minimal_repro_script(
+pub fn build_minimal_repro_script(
     script: &ScriptRaw,
     failure_ip: u32,
     radius: usize,
@@ -125,21 +124,17 @@ pub(in crate::editor::compiler) fn build_minimal_repro_script(
     let start_idx = failure_idx.saturating_sub(radius);
     let end_idx = (failure_idx + radius + 1).min(script.events.len());
     let mut events = script.events[start_idx..end_idx].to_vec();
-
-    let mut old_to_new_label: HashMap<String, String> = HashMap::new();
+    let mut old_to_new_label = HashMap::new();
     let mut labels = BTreeMap::new();
 
     for offset in 0..events.len() {
-        let local_name = format!("repro_{}", offset);
-        labels.insert(local_name.clone(), offset);
+        labels.insert(format!("repro_{offset}"), offset);
     }
-
     for (label, old_idx) in &script.labels {
         if *old_idx >= start_idx && *old_idx < end_idx {
             old_to_new_label.insert(label.clone(), format!("repro_{}", old_idx - start_idx));
         }
     }
-
     labels.insert("start".to_string(), 0);
 
     for event in &mut events {
@@ -153,13 +148,7 @@ pub(in crate::editor::compiler) fn build_minimal_repro_script(
 
 fn rewrite_event_targets(event: &mut EventRaw, old_to_new_label: &HashMap<String, String>) -> bool {
     match event {
-        EventRaw::Jump { target } => {
-            let Some(mapped) = old_to_new_label.get(target).cloned() else {
-                return false;
-            };
-            *target = mapped;
-        }
-        EventRaw::JumpIf { target, .. } => {
+        EventRaw::Jump { target } | EventRaw::JumpIf { target, .. } => {
             let Some(mapped) = old_to_new_label.get(target).cloned() else {
                 return false;
             };

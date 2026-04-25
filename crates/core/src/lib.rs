@@ -1,10 +1,12 @@
 mod assets;
 mod audio;
+pub mod authoring;
 mod bundle;
 mod engine;
 mod entity;
 mod error;
 mod event;
+mod execution_contract;
 mod graph;
 mod localization;
 pub mod manifest;
@@ -26,6 +28,14 @@ mod visual;
 
 pub use assets::{AssetId, AssetId128, AssetManifest};
 pub use audio::AudioCommand;
+pub use authoring::{
+    quick_fix as authoring_quick_fix, validate_authoring_graph,
+    validate_authoring_graph_with_probe, AuthoringPosition, CharacterPoseBinding,
+    GraphConnection as AuthoringGraphConnection, LintCode as AuthoringLintCode,
+    LintIssue as AuthoringLintIssue, LintSeverity as AuthoringLintSeverity,
+    NodeGraph as AuthoringGraph, QuickFixCandidate, QuickFixRisk, SceneLayer, SceneProfile,
+    StoryNode as AuthoringStoryNode, ValidationPhase,
+};
 pub use bundle::{
     export_bundle, BundleAssetEntry, BundleIntegrity, ExportBundleReport, ExportBundleSpec,
     ExportTargetPlatform,
@@ -39,6 +49,10 @@ pub use event::{
     EventCompiled, EventRaw, ScenePatchCompiled, ScenePatchRaw, SceneTransitionCompiled,
     SceneTransitionRaw, SceneUpdateCompiled, SceneUpdateRaw, SetCharacterPositionCompiled,
     SetCharacterPositionRaw, SharedStr,
+};
+pub use execution_contract::{
+    contract_for_authoring_node, contract_for_event_raw, contract_matrix,
+    is_preview_only_authoring_node, EventExecutionContract, FidelityClass,
 };
 pub use localization::{
     collect_script_localization_keys, localization_key, LocalizationCatalog, LocalizationIssue,

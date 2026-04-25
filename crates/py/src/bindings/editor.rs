@@ -4,7 +4,7 @@
 
 use pyo3::prelude::*;
 
-use visual_novel_gui::editor::validate_graph;
+use visual_novel_engine::authoring::validate_authoring_graph;
 
 #[path = "editor_diagnostics.rs"]
 mod diagnostics;
@@ -22,11 +22,11 @@ pub use story_node::PyStoryNode;
 #[cfg(test)]
 use support::{apply_autofix_pass, select_fix_candidate};
 #[cfg(test)]
-use visual_novel_gui::editor::{LintIssue, NodeGraph, StoryNode};
+use visual_novel_engine::authoring::{LintIssue, NodeGraph, StoryNode};
 
 #[pyfunction]
 pub fn py_validate_graph(graph: &PyNodeGraph) -> Vec<PyLintIssue> {
-    validate_graph(graph.inner())
+    validate_authoring_graph(graph.inner())
         .into_iter()
         .map(PyLintIssue::from)
         .collect()
