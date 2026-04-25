@@ -1,0 +1,9 @@
+name: Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-ci-suite:
+    name: Run CI Suite
+    uses: ./.github/workflows/ci.yml

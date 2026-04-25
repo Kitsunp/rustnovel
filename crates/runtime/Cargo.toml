@@ -1,0 +1,16 @@
+[package]
+name = "vnengine_runtime"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+visual_novel_engine = { path = "../core" }
+pixels = "0.15"
+winit = "0.29"
+wgpu = "0.19"
+pollster = "0.3"
+bytemuck = { version = "1.14", features = ["derive"] }
+
+rodio = "0.17"
+vnengine_assets = { path = "../assets" }

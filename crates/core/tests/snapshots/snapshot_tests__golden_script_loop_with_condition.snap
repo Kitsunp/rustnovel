@@ -1,0 +1,145 @@
+---
+source: crates/core/tests/snapshot_tests.rs
+expression: trace
+---
+steps:
+  - step: 0
+    view:
+      kind: System
+      message: "SetVar: 0 = 0"
+    state:
+      position: 0
+      flags: {}
+      vars: {}
+      history_len: 0
+      visual:
+        background: ~
+        music: ~
+        characters: []
+  - step: 1
+    view:
+      kind: Dialogue
+      speaker: Loop
+      text: Iteration
+    state:
+      position: 1
+      flags: {}
+      vars: {}
+      history_len: 0
+      visual:
+        background: ~
+        music: ~
+        characters: []
+  - step: 2
+    view:
+      kind: System
+      message: "SetVar: 0 = 1"
+    state:
+      position: 2
+      flags: {}
+      vars: {}
+      history_len: 1
+      visual:
+        background: ~
+        music: ~
+        characters: []
+  - step: 3
+    view:
+      kind: System
+      message: JumpIf
+    state:
+      position: 3
+      flags: {}
+      vars:
+        0: 1
+      history_len: 1
+      visual:
+        background: ~
+        music: ~
+        characters: []
+  - step: 4
+    view:
+      kind: Dialogue
+      speaker: Loop
+      text: Iteration
+    state:
+      position: 1
+      flags: {}
+      vars:
+        0: 1
+      history_len: 1
+      visual:
+        background: ~
+        music: ~
+        characters: []
+  - step: 5
+    view:
+      kind: System
+      message: "SetVar: 0 = 1"
+    state:
+      position: 2
+      flags: {}
+      vars:
+        0: 1
+      history_len: 2
+      visual:
+        background: ~
+        music: ~
+        characters: []
+  - step: 6
+    view:
+      kind: System
+      message: JumpIf
+    state:
+      position: 3
+      flags: {}
+      vars:
+        0: 1
+      history_len: 2
+      visual:
+        background: ~
+        music: ~
+        characters: []
+  - step: 7
+    view:
+      kind: Dialogue
+      speaker: Loop
+      text: Iteration
+    state:
+      position: 1
+      flags: {}
+      vars:
+        0: 1
+      history_len: 2
+      visual:
+        background: ~
+        music: ~
+        characters: []
+  - step: 8
+    view:
+      kind: System
+      message: "SetVar: 0 = 1"
+    state:
+      position: 2
+      flags: {}
+      vars:
+        0: 1
+      history_len: 3
+      visual:
+        background: ~
+        music: ~
+        characters: []
+  - step: 9
+    view:
+      kind: System
+      message: JumpIf
+    state:
+      position: 3
+      flags: {}
+      vars:
+        0: 1
+      history_len: 3
+      visual:
+        background: ~
+        music: ~
+        characters: []

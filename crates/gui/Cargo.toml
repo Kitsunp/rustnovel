@@ -1,0 +1,31 @@
+[package]
+name = "visual_novel_gui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+visual_novel_engine = { path = "../core" }
+vnengine_assets = { path = "../assets" }
+visual_novel_runtime = { package = "vnengine_runtime", path = "../runtime" }
+
+egui = { version = "0.27", features = ["serde"] }
+eframe = { version = "0.27", default-features = false, features = ["default_fonts", "glow"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+rfd = { version = "0.14", default-features = false, features = ["xdg-portal", "async-std"] } # Explicit Linux backend for CI and local builds
+directories = "5.0"
+miette = { version = "7.0", features = ["fancy"] } # Nice error reporting
+uuid = { version = "1.0", features = ["v4", "serde"] } # For unique IDs
+
+toml = "0.9.11"
+
+[features]
+default = []
+translation = [] # Reserved feature flag for automatic translation
+
+[dev-dependencies]
+tempfile = "3.10"
+image = { version = "0.24", default-features = false, features = ["png"] }

@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/runtime",
+    "crates/assets",
+    "crates/py",
+    "crates/gui",
+    "tools/cli",
+]
+
+[profile.release]
+# Optimize for runtime performance with smaller binaries; longer compile times and reduced backtraces.
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+debug = 1
+
+[profile.python]
+inherits = "release"
+panic = "unwind"

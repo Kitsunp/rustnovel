@@ -1,0 +1,545 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ScriptRaw",
+  "description": "JSON-facing script format with label names and raw string data.",
+  "type": "object",
+  "required": [
+    "events",
+    "labels"
+  ],
+  "properties": {
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/EventRaw"
+      }
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "format": "uint",
+        "minimum": 0.0
+      }
+    }
+  },
+  "definitions": {
+    "CharacterPatchRaw": {
+      "description": "Character patch for partial updates.",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "expression": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "position": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "CharacterPlacementRaw": {
+      "description": "Character placement in raw form.",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "expression": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "position": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scale": {
+          "default": null,
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "x": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "y": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        }
+      }
+    },
+    "ChoiceOptionRaw": {
+      "description": "Choice option with label target in raw form.",
+      "type": "object",
+      "required": [
+        "target",
+        "text"
+      ],
+      "properties": {
+        "target": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "CmpOp": {
+      "description": "Comparison operators for variable conditions.",
+      "type": "string",
+      "enum": [
+        "eq",
+        "ne",
+        "lt",
+        "le",
+        "gt",
+        "ge"
+      ]
+    },
+    "CondRaw": {
+      "description": "Condition for conditional jumps (raw form).",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "is_set",
+            "key",
+            "kind"
+          ],
+          "properties": {
+            "is_set": {
+              "type": "boolean"
+            },
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "flag"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "key",
+            "kind",
+            "op",
+            "value"
+          ],
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "var_cmp"
+              ]
+            },
+            "op": {
+              "$ref": "#/definitions/CmpOp"
+            },
+            "value": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        }
+      ]
+    },
+    "EventRaw": {
+      "description": "JSON-facing events used in `ScriptRaw`.",
+      "oneOf": [
+        {
+          "description": "Dialogue line with speaker and text in raw form.",
+          "type": "object",
+          "required": [
+            "speaker",
+            "text",
+            "type"
+          ],
+          "properties": {
+            "speaker": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "dialogue"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Choice prompt and options in raw form.",
+          "type": "object",
+          "required": [
+            "options",
+            "prompt",
+            "type"
+          ],
+          "properties": {
+            "options": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/ChoiceOptionRaw"
+              }
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "choice"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Scene update payload in raw form.",
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "background": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "characters": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/CharacterPlacementRaw"
+              }
+            },
+            "music": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "scene"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "target",
+            "type"
+          ],
+          "properties": {
+            "target": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "jump"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "key",
+            "type",
+            "value"
+          ],
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "set_flag"
+              ]
+            },
+            "value": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "key",
+            "type",
+            "value"
+          ],
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "set_var"
+              ]
+            },
+            "value": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "cond",
+            "target",
+            "type"
+          ],
+          "properties": {
+            "cond": {
+              "$ref": "#/definitions/CondRaw"
+            },
+            "target": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "jump_if"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Scene patch in raw form (handling partial updates).",
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "add": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/CharacterPlacementRaw"
+              }
+            },
+            "background": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "music": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "remove": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "patch"
+              ]
+            },
+            "update": {
+              "default": [],
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/CharacterPatchRaw"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "command",
+            "type"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "command": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "ext_call"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Raw definition for audio actions.",
+          "type": "object",
+          "required": [
+            "action",
+            "channel",
+            "type"
+          ],
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "asset": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "channel": {
+              "type": "string"
+            },
+            "fade_duration_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "loop_playback": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "audio_action"
+              ]
+            },
+            "volume": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            }
+          }
+        },
+        {
+          "description": "Raw definition for scene transitions.",
+          "type": "object",
+          "required": [
+            "duration_ms",
+            "kind",
+            "type"
+          ],
+          "properties": {
+            "color": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "duration_ms": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            },
+            "kind": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "transition"
+              ]
+            }
+          }
+        },
+        {
+          "description": "Precise character positioning for Visual Composer.",
+          "type": "object",
+          "required": [
+            "name",
+            "type",
+            "x",
+            "y"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "scale": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "set_character_position"
+              ]
+            },
+            "x": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "y": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

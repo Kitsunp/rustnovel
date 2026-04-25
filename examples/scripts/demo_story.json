@@ -1,0 +1,41 @@
+{
+  "events": [
+    {
+      "type": "scene",
+      "background": "bg/classroom.png",
+      "music": null,
+      "characters": []
+    },
+    {
+      "type": "dialogue",
+      "speaker": "Narrator",
+      "text": "It was a bright morning at the academy. The cherry blossoms were in full bloom."
+    },
+    {
+      "type": "dialogue",
+      "speaker": "???",
+      "text": "Hey! Are you the new transfer student?"
+    },
+    {
+      "type": "scene",
+      "background": "bg/classroom.png",
+      "music": null,
+      "characters": []
+    },
+    {
+      "type": "dialogue",
+      "speaker": "Sakura",
+      "text": "I'm Sakura! Nice to meet you. Let me show you around!"
+    }
+  ],
+  "labels": {
+    "node_0": 0,
+    "node_1": 0,
+    "node_2": 1,
+    "node_23": 5,
+    "node_3": 2,
+    "node_4": 3,
+    "node_5": 4,
+    "start": 0
+  }
+}

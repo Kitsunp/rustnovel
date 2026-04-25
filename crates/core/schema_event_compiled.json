@@ -1,0 +1,587 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EventCompiled",
+  "description": "Runtime events with pre-resolved targets and interned strings.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "dialogue"
+      ],
+      "properties": {
+        "dialogue": {
+          "$ref": "#/definitions/DialogueCompiled"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "choice"
+      ],
+      "properties": {
+        "choice": {
+          "$ref": "#/definitions/ChoiceCompiled"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "scene"
+      ],
+      "properties": {
+        "scene": {
+          "$ref": "#/definitions/SceneUpdateCompiled"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "jump"
+      ],
+      "properties": {
+        "jump": {
+          "type": "object",
+          "required": [
+            "target_ip"
+          ],
+          "properties": {
+            "target_ip": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "set_flag"
+      ],
+      "properties": {
+        "set_flag": {
+          "type": "object",
+          "required": [
+            "flag_id",
+            "value"
+          ],
+          "properties": {
+            "flag_id": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            },
+            "value": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "set_var"
+      ],
+      "properties": {
+        "set_var": {
+          "type": "object",
+          "required": [
+            "value",
+            "var_id"
+          ],
+          "properties": {
+            "value": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "var_id": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "jump_if"
+      ],
+      "properties": {
+        "jump_if": {
+          "type": "object",
+          "required": [
+            "cond",
+            "target_ip"
+          ],
+          "properties": {
+            "cond": {
+              "$ref": "#/definitions/CondCompiled"
+            },
+            "target_ip": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "patch"
+      ],
+      "properties": {
+        "patch": {
+          "$ref": "#/definitions/ScenePatchCompiled"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ext_call"
+      ],
+      "properties": {
+        "ext_call": {
+          "type": "object",
+          "required": [
+            "args",
+            "command"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "command": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "audio_action"
+      ],
+      "properties": {
+        "audio_action": {
+          "$ref": "#/definitions/AudioActionCompiled"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "transition"
+      ],
+      "properties": {
+        "transition": {
+          "$ref": "#/definitions/SceneTransitionCompiled"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "set_character_position"
+      ],
+      "properties": {
+        "set_character_position": {
+          "$ref": "#/definitions/SetCharacterPositionCompiled"
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "definitions": {
+    "AudioActionCompiled": {
+      "description": "Compiled definition for audio actions.",
+      "type": "object",
+      "required": [
+        "action",
+        "channel"
+      ],
+      "properties": {
+        "action": {
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0.0
+        },
+        "asset": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "channel": {
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0.0
+        },
+        "fade_duration_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "loop_playback": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "volume": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        }
+      }
+    },
+    "CharacterPatchCompiled": {
+      "description": "Character patch with interned strings.",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "expression": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "position": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "CharacterPlacementCompiled": {
+      "description": "Character placement with interned strings.",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "expression": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "position": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scale": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "x": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "y": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        }
+      }
+    },
+    "ChoiceCompiled": {
+      "description": "Choice prompt and options with pre-resolved targets.",
+      "type": "object",
+      "required": [
+        "options",
+        "prompt"
+      ],
+      "properties": {
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceOptionCompiled"
+          }
+        },
+        "prompt": {
+          "type": "string"
+        }
+      }
+    },
+    "ChoiceOptionCompiled": {
+      "description": "Choice option with pre-resolved target instruction pointer.",
+      "type": "object",
+      "required": [
+        "target_ip",
+        "text"
+      ],
+      "properties": {
+        "target_ip": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "CmpOp": {
+      "description": "Comparison operators for variable conditions.",
+      "type": "string",
+      "enum": [
+        "eq",
+        "ne",
+        "lt",
+        "le",
+        "gt",
+        "ge"
+      ]
+    },
+    "CondCompiled": {
+      "description": "Condition for conditional jumps (compiled form).",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "Flag"
+          ],
+          "properties": {
+            "Flag": {
+              "type": "object",
+              "required": [
+                "flag_id",
+                "is_set"
+              ],
+              "properties": {
+                "flag_id": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0.0
+                },
+                "is_set": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "VarCmp"
+          ],
+          "properties": {
+            "VarCmp": {
+              "type": "object",
+              "required": [
+                "op",
+                "value",
+                "var_id"
+              ],
+              "properties": {
+                "op": {
+                  "$ref": "#/definitions/CmpOp"
+                },
+                "value": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "var_id": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0.0
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "DialogueCompiled": {
+      "description": "Dialogue line with interned speaker and text.",
+      "type": "object",
+      "required": [
+        "speaker",
+        "text"
+      ],
+      "properties": {
+        "speaker": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "ScenePatchCompiled": {
+      "description": "Scene patch with interned strings.",
+      "type": "object",
+      "required": [
+        "add",
+        "remove",
+        "update"
+      ],
+      "properties": {
+        "add": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CharacterPlacementCompiled"
+          }
+        },
+        "background": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "music": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remove": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "update": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CharacterPatchCompiled"
+          }
+        }
+      }
+    },
+    "SceneTransitionCompiled": {
+      "description": "Compiled definition for scene transitions.",
+      "type": "object",
+      "required": [
+        "duration_ms",
+        "kind"
+      ],
+      "properties": {
+        "color": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "kind": {
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0.0
+        }
+      }
+    },
+    "SceneUpdateCompiled": {
+      "description": "Scene update payload with interned strings.",
+      "type": "object",
+      "required": [
+        "characters"
+      ],
+      "properties": {
+        "background": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "characters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CharacterPlacementCompiled"
+          }
+        },
+        "music": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "SetCharacterPositionCompiled": {
+      "description": "Compiled precise character positioning.",
+      "type": "object",
+      "required": [
+        "name",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "scale": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "x": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "y": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,146 @@
+---
+source: crates/core/tests/snapshot_tests_patch.rs
+expression: trace
+---
+steps:
+  - step: 0
+    view:
+      kind: Scene
+      description: "Scene bg=Some(\"bg_city\") music=Some(\"music_day\") chars=1"
+    state:
+      position: 0
+      flags: {}
+      vars: {}
+      history_len: 0
+      visual:
+        background: bg_city
+        music: music_day
+        characters:
+          - name: Alice
+            expression: smile
+            position: left
+  - step: 1
+    view:
+      kind: Dialogue
+      speaker: Alice
+      text: Hello!
+    state:
+      position: 1
+      flags: {}
+      vars: {}
+      history_len: 0
+      visual:
+        background: bg_city
+        music: music_day
+        characters:
+          - name: Alice
+            expression: smile
+            position: left
+  - step: 2
+    view:
+      kind: Scene
+      description: Patch bg=None music=None add=1 update=1 remove=0
+    state:
+      position: 2
+      flags: {}
+      vars: {}
+      history_len: 1
+      visual:
+        background: bg_city
+        music: music_day
+        characters:
+          - name: Alice
+            expression: smile
+            position: left
+  - step: 3
+    view:
+      kind: Dialogue
+      speaker: Bob
+      text: Hi Alice.
+    state:
+      position: 3
+      flags: {}
+      vars: {}
+      history_len: 1
+      visual:
+        background: bg_city
+        music: music_day
+        characters:
+          - name: Alice
+            expression: surprised
+            position: left
+          - name: Bob
+            expression: neutral
+            position: right
+  - step: 4
+    view:
+      kind: Scene
+      description: "Patch bg=Some(\"bg_night\") music=None add=0 update=0 remove=0"
+    state:
+      position: 4
+      flags: {}
+      vars: {}
+      history_len: 2
+      visual:
+        background: bg_city
+        music: music_day
+        characters:
+          - name: Alice
+            expression: surprised
+            position: left
+          - name: Bob
+            expression: neutral
+            position: right
+  - step: 5
+    view:
+      kind: Dialogue
+      speaker: Alice
+      text: It got dark.
+    state:
+      position: 5
+      flags: {}
+      vars: {}
+      history_len: 2
+      visual:
+        background: bg_night
+        music: music_day
+        characters:
+          - name: Alice
+            expression: surprised
+            position: left
+          - name: Bob
+            expression: neutral
+            position: right
+  - step: 6
+    view:
+      kind: Scene
+      description: "Patch bg=None music=Some(\"music_night\") add=0 update=0 remove=2"
+    state:
+      position: 6
+      flags: {}
+      vars: {}
+      history_len: 3
+      visual:
+        background: bg_night
+        music: music_day
+        characters:
+          - name: Alice
+            expression: surprised
+            position: left
+          - name: Bob
+            expression: neutral
+            position: right
+  - step: 7
+    view:
+      kind: Dialogue
+      speaker: Narrator
+      text: They left.
+    state:
+      position: 7
+      flags: {}
+      vars: {}
+      history_len: 3
+      visual:
+        background: bg_night
+        music: music_night
+        characters: []
