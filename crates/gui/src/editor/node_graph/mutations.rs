@@ -62,6 +62,10 @@ impl NodeGraph {
         let Some(pos) = self.get_node_pos(node_id) else {
             return;
         };
+        let previous_continuation = self
+            .connections()
+            .find(|conn| conn.from == node_id && conn.from_port == 0)
+            .map(|conn| conn.to);
         let choice_pos = egui::pos2(pos.x, pos.y + 120.0);
         let choice_id = self.add_node(
             StoryNode::Choice {
@@ -76,6 +80,10 @@ impl NodeGraph {
         self.connect_port(node_id, 0, choice_id);
         self.connect_port(choice_id, 0, branch_a);
         self.connect_port(choice_id, 1, branch_b);
+        if let Some(continuation) = previous_continuation {
+            self.connect(branch_a, continuation);
+            self.connect(branch_b, continuation);
+        }
     }
 
     pub fn save_scene_profile(&mut self, profile_id: impl Into<String>, node_id: u32) -> bool {

@@ -3,7 +3,10 @@ use std::fs;
 use std::process::Command;
 
 use tempfile::TempDir;
-use visual_novel_engine::{DialogueRaw, EventRaw, ProjectManifest, ScriptRaw};
+use visual_novel_engine::{
+    authoring::{AuthoringDocument, AuthoringPosition, NodeGraph, StoryNode},
+    DialogueRaw, EventRaw, ProjectManifest, ScriptRaw,
+};
 
 fn build_project_fixture() -> (TempDir, std::path::PathBuf) {
     let tmp = TempDir::new().expect("temp dir");
@@ -82,4 +85,54 @@ fn package_command_hmac_mode_requires_key() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("requires hmac_key"), "stderr={stderr}");
+}
+
+#[test]
+fn package_command_accepts_authoring_entry_script() {
+    let (_tmp, project_root) = build_project_fixture();
+    let mut manifest = ProjectManifest::new("cli-fixture", "qa");
+    manifest.settings.entry_point = "main.vnauthoring".to_string();
+    manifest
+        .save(&project_root.join("project.vnm"))
+        .expect("manifest save");
+
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, AuthoringPosition::new(0.0, 0.0));
+    let line = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "pack authoring".to_string(),
+        },
+        AuthoringPosition::new(0.0, 90.0),
+    );
+    let end = graph.add_node(StoryNode::End, AuthoringPosition::new(0.0, 180.0));
+    graph.connect(start, line);
+    graph.connect(line, end);
+    fs::write(
+        project_root.join("main.vnauthoring"),
+        AuthoringDocument::new(graph)
+            .to_json()
+            .expect("authoring json"),
+    )
+    .expect("authoring");
+
+    let output_root = project_root.join("dist_authoring");
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("package")
+        .arg(project_root.as_os_str())
+        .arg("--output")
+        .arg(output_root.as_os_str())
+        .arg("--target")
+        .arg("windows")
+        .output()
+        .expect("run package command");
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output_root.join("scripts/main.vnc").is_file());
+    assert!(output_root.join("scripts/main.vnauthoring").is_file());
 }

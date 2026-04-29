@@ -336,4 +336,56 @@ class GuiBindingTests(unittest.TestCase):
         graph = vn.NodeGraph()
         graph.add_node(vn.StoryNode.scene(r"C:\temp\evil.png", None, []), 0.0, 0.0)
         codes = {issue.code for issue in graph.validate()}
-        self.assertIn("VAL_UNSAFE_ASSET_PATH", codes)
+        self.assertIn("VAL_ASSET_UNSAFE_PATH", codes)
+
+    def test_node_graph_validate_accepts_project_root(self):
+        import tempfile
+        from pathlib import Path
+
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "assets" / "bg").mkdir(parents=True)
+            (root / "assets" / "bg" / "room.png").write_bytes(b"png")
+            graph = vn.NodeGraph()
+            graph.add_node(vn.StoryNode.scene("assets/bg/room.png", None, []), 0.0, 0.0)
+            self.assertNotIn(
+                "VAL_ASSET_NOT_FOUND", {issue.code for issue in graph.validate_no_io()}
+            )
+            self.assertNotIn(
+                "VAL_ASSET_NOT_FOUND",
+                {issue.code for issue in graph.validate(project_root=str(root))},
+            )
+
+    def test_story_node_full_scene_and_extcall_constructors(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+
+        graph = vn.NodeGraph()
+        start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)
+        scene = graph.add_node(
+            vn.StoryNode.scene_full(
+                None,
+                "bg/room.png",
+                None,
+                [("Ava", "characters/ava.png", "left", 10, 20, 1.25)],
+            ),
+            0.0,
+            100.0,
+        )
+        ext = graph.add_node(vn.StoryNode.ext_call("analytics", ["intro"]), 0.0, 200.0)
+        end = graph.add_node(vn.StoryNode.end(), 0.0, 300.0)
+        graph.connect(start, scene)
+        graph.connect(scene, ext)
+        graph.connect(ext, end)
+
+        payload = json.loads(graph.to_script_json())
+        self.assertEqual(payload["events"][0]["characters"][0]["x"], 10)
+        self.assertEqual(payload["events"][0]["characters"][0]["scale"], 1.25)
+        self.assertEqual(payload["events"][1]["type"], "ext_call")

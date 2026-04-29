@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 use visual_novel_engine::{
+    authoring::{AuthoringDocument, AuthoringPosition, NodeGraph, StoryNode},
     export_bundle, BundleIntegrity, DialogueRaw, EventRaw, ExportBundleSpec, ExportTargetPlatform,
     ProjectManifest, ScriptRaw,
 };
@@ -86,6 +87,51 @@ fn export_bundle_builds_expected_layout_and_manifest() {
     let manifest: serde_json::Value =
         serde_json::from_str(&manifest_raw).expect("assets manifest json");
     assert!(manifest.get("bgm/theme.ogg").is_some());
+}
+
+#[test]
+fn export_bundle_accepts_authoring_document_entry() {
+    let (_tmp, project_root) = build_project_fixture();
+    let mut manifest = ProjectManifest::new("fixture", "qa");
+    manifest.settings.entry_point = "main.vnauthoring".to_string();
+    manifest
+        .save(&project_root.join("project.vnm"))
+        .expect("manifest save");
+
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, AuthoringPosition::new(0.0, 0.0));
+    let line = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "from authoring".to_string(),
+        },
+        AuthoringPosition::new(0.0, 90.0),
+    );
+    let end = graph.add_node(StoryNode::End, AuthoringPosition::new(0.0, 180.0));
+    graph.connect(start, line);
+    graph.connect(line, end);
+    let document = AuthoringDocument::new(graph);
+    fs::write(
+        project_root.join("main.vnauthoring"),
+        document.to_json().expect("authoring json"),
+    )
+    .expect("write authoring");
+
+    let out = project_root.join("dist_authoring");
+    let report = export_bundle(ExportBundleSpec {
+        project_root: project_root.clone(),
+        output_root: out.clone(),
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: None,
+        integrity: BundleIntegrity::None,
+        output_layout_version: 1,
+        hmac_key: None,
+    })
+    .expect("bundle export from authoring");
+
+    assert_eq!(report.script_source, "scripts/main.vnauthoring");
+    assert!(Path::new(&out.join("scripts/main.vnc")).is_file());
 }
 
 #[test]

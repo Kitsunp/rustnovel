@@ -18,3 +18,6 @@ mod preview_fallback_tests;
 
 #[path = "workbench/composer_tests.rs"]
 mod composer_tests;
+
+#[path = "workbench/report_stale_tests.rs"]
+mod report_stale_tests;

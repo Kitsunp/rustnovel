@@ -7,6 +7,14 @@ use crate::visual::VisualState;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UiState {
     pub view: UiView,
+    pub pending_transition: Option<UiTransition>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UiTransition {
+    pub kind: String,
+    pub duration_ms: u32,
+    pub color: Option<String>,
 }
 
 /// Distinct UI views for runtimes.
@@ -85,7 +93,29 @@ impl UiState {
                 ),
             },
         };
-        Self { view }
+        let pending_transition = match event {
+            EventCompiled::Transition(transition) => Some(UiTransition {
+                kind: transition_kind_label(transition.kind).to_string(),
+                duration_ms: transition.duration_ms,
+                color: transition
+                    .color
+                    .as_ref()
+                    .map(|value| value.as_ref().to_string()),
+            }),
+            _ => None,
+        };
+        Self {
+            view,
+            pending_transition,
+        }
+    }
+}
+
+fn transition_kind_label(kind: u8) -> &'static str {
+    match kind {
+        0 => "fade",
+        1 => "dissolve",
+        _ => "unknown",
     }
 }
 

@@ -45,7 +45,15 @@ pub fn run_repro_case_with_limits(
                     };
 
                     let event_ip = engine.state().position;
-                    traces.push(build_step_trace(steps, event_ip, &event, &engine));
+                    let simulation_note = matches!(event, EventCompiled::ExtCall { .. })
+                        .then(|| "external_call_simulated".to_string());
+                    traces.push(build_step_trace(
+                        steps,
+                        event_ip,
+                        &event,
+                        &engine,
+                        simulation_note,
+                    ));
 
                     let step_result = match &event {
                         EventCompiled::Choice(choice) => {
@@ -58,6 +66,7 @@ pub fn run_repro_case_with_limits(
                             choice_cursor = choice_cursor.saturating_add(1);
                             engine.choose(selected).map(|_| ())
                         }
+                        EventCompiled::ExtCall { .. } => engine.resume().map(|_| ()),
                         _ => engine.step().map(|_| ()),
                     };
                     if let Err(err) = step_result {
@@ -114,12 +123,14 @@ fn build_step_trace(
     event_ip: u32,
     event: &EventCompiled,
     engine: &Engine,
+    simulation_note: Option<String>,
 ) -> ReproStepTrace {
     ReproStepTrace {
         step,
         event_ip,
         event_kind: event_kind_compiled(event).to_string(),
         event_signature: compiled_event_signature(event),
+        simulation_note,
         visual_background: engine
             .visual_state()
             .background

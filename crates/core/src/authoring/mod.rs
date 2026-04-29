@@ -5,6 +5,7 @@
 pub mod compiler;
 mod diagnostics;
 mod document;
+mod entry;
 mod graph;
 mod lint;
 pub mod quick_fix;
@@ -15,7 +16,15 @@ mod types;
 mod validation;
 
 pub use diagnostics::{DiagnosticExplanation, DiagnosticLanguage};
-pub use document::{AuthoringDocument, AUTHORING_DOCUMENT_SCHEMA_VERSION};
+pub use document::{
+    source_looks_like_authoring_document, AuthoringDocument, AuthoringDocumentError,
+    AUTHORING_DOCUMENT_SCHEMA_VERSION,
+};
+pub use entry::{
+    export_runtime_script_from_authoring, load_authoring_document_or_script,
+    load_runtime_script_from_entry, parse_authoring_document_or_script,
+    parse_runtime_script_from_entry,
+};
 pub use graph::{CharacterPoseBinding, GraphConnection, NodeGraph, SceneLayer, SceneProfile};
 pub use lint::{LintCode, LintIssue, LintSeverity, ValidationPhase};
 pub use quick_fix::{QuickFixCandidate, QuickFixRisk};

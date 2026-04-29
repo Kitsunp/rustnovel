@@ -66,6 +66,45 @@ impl PyStoryNode {
     }
 
     #[staticmethod]
+    #[pyo3(signature = (profile=None, background=None, music=None, characters=Vec::new()))]
+    fn scene_full(
+        profile: Option<String>,
+        background: Option<String>,
+        music: Option<String>,
+        characters: Vec<(
+            String,
+            Option<String>,
+            Option<String>,
+            Option<i32>,
+            Option<i32>,
+            Option<f32>,
+        )>,
+    ) -> Self {
+        let characters = characters
+            .into_iter()
+            .map(
+                |(name, expression, position, x, y, scale)| CharacterPlacementRaw {
+                    name,
+                    expression,
+                    position,
+                    x,
+                    y,
+                    scale,
+                },
+            )
+            .collect();
+
+        Self {
+            inner: StoryNode::Scene {
+                profile,
+                background,
+                music,
+                characters,
+            },
+        }
+    }
+
+    #[staticmethod]
     fn jump(target: String) -> Self {
         Self {
             inner: StoryNode::Jump { target },
@@ -151,6 +190,55 @@ impl PyStoryNode {
     }
 
     #[staticmethod]
+    #[pyo3(signature = (background=None, music=None, add=Vec::new(), update=Vec::new(), remove=Vec::new()))]
+    fn scene_patch_full(
+        background: Option<String>,
+        music: Option<String>,
+        add: Vec<(
+            String,
+            Option<String>,
+            Option<String>,
+            Option<i32>,
+            Option<i32>,
+            Option<f32>,
+        )>,
+        update: Vec<(String, Option<String>, Option<String>)>,
+        remove: Vec<String>,
+    ) -> Self {
+        let add = add
+            .into_iter()
+            .map(
+                |(name, expression, position, x, y, scale)| CharacterPlacementRaw {
+                    name,
+                    expression,
+                    position,
+                    x,
+                    y,
+                    scale,
+                },
+            )
+            .collect();
+        let update = update
+            .into_iter()
+            .map(|(name, expression, position)| CharacterPatchRaw {
+                name,
+                expression,
+                position,
+            })
+            .collect();
+
+        Self {
+            inner: StoryNode::ScenePatch(ScenePatchRaw {
+                background,
+                music,
+                add,
+                update,
+                remove,
+            }),
+        }
+    }
+
+    #[staticmethod]
     #[pyo3(signature = (channel, action, asset=None, volume=None, fade_duration_ms=None, loop_playback=None))]
     fn audio_action(
         channel: String,
@@ -199,6 +287,14 @@ impl PyStoryNode {
         Ok(Self {
             inner: StoryNode::Generic(event),
         })
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (command, args=Vec::new()))]
+    fn ext_call(command: String, args: Vec<String>) -> Self {
+        Self {
+            inner: StoryNode::Generic(EventRaw::ExtCall { command, args }),
+        }
     }
 
     #[staticmethod]

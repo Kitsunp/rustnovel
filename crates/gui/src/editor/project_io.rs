@@ -1,11 +1,12 @@
 use crate::editor::authoring_adapter::{from_authoring_graph, to_authoring_graph};
 use crate::editor::errors::EditorError;
-use crate::editor::{node_graph::NodeGraph, script_sync};
+use crate::editor::node_graph::NodeGraph;
 use std::path::{Component, Path, PathBuf};
 use visual_novel_engine::{
-    authoring::AuthoringDocument,
+    authoring::{
+        export_runtime_script_from_authoring, load_authoring_document_or_script, AuthoringDocument,
+    },
     manifest::{ManifestMigrationReport, ProjectManifest},
-    ScriptRaw,
 };
 
 pub struct LoadedProject {
@@ -96,27 +97,22 @@ pub fn load_project(path: PathBuf) -> Result<LoadedProject, EditorError> {
 }
 
 pub fn load_script(path: PathBuf) -> Result<LoadedScript, EditorError> {
-    let content = std::fs::read_to_string(&path).map_err(EditorError::IoError)?;
-
-    if let Ok(document) = AuthoringDocument::from_json(&content) {
-        return Ok(LoadedScript {
-            graph: from_authoring_graph(&document.graph),
-            was_imported: false,
-        });
-    }
-
-    // Legacy/import path: parse executable ScriptRaw and lift it into authoring.
-    let script = ScriptRaw::from_json(&content)
+    let graph = load_authoring_document_or_script(&path)
         .map_err(|e| EditorError::CompileError(format!("Parse error: {}", e)))?;
-
-    let graph = script_sync::from_script(&script);
     Ok(LoadedScript {
-        graph,
+        graph: from_authoring_graph(&graph),
         was_imported: false,
     })
 }
 
 pub fn save_script(path: &std::path::Path, graph: &NodeGraph) -> Result<(), EditorError> {
+    save_authoring_document(path, graph)
+}
+
+pub fn save_authoring_document(
+    path: &std::path::Path,
+    graph: &NodeGraph,
+) -> Result<(), EditorError> {
     let document = AuthoringDocument::new(to_authoring_graph(graph));
     let json = document
         .to_json()
@@ -124,6 +120,16 @@ pub fn save_script(path: &std::path::Path, graph: &NodeGraph) -> Result<(), Edit
 
     std::fs::write(path, json).map_err(EditorError::IoError)?;
 
+    Ok(())
+}
+
+pub fn export_runtime_script(path: &std::path::Path, graph: &NodeGraph) -> Result<(), EditorError> {
+    let script = export_runtime_script_from_authoring(&to_authoring_graph(graph))
+        .map_err(|e| EditorError::CompileError(format!("Strict export error: {}", e)))?;
+    let json = script
+        .to_json()
+        .map_err(|e| EditorError::CompileError(format!("Serialization error: {}", e)))?;
+    std::fs::write(path, json).map_err(EditorError::IoError)?;
     Ok(())
 }
 

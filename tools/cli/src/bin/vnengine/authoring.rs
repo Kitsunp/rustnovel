@@ -1,12 +1,11 @@
-use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
 use visual_novel_engine::authoring::{
-    build_authoring_report_fingerprint, validate_authoring_graph_with_project_root,
-    AuthoringDocument, AuthoringReportFingerprint, LintIssue, LintSeverity,
-    NodeGraph as AuthoringGraph,
+    build_authoring_report_fingerprint, load_authoring_document_or_script,
+    validate_authoring_graph_with_project_root, AuthoringReportFingerprint, LintIssue,
+    LintSeverity, NodeGraph as AuthoringGraph,
 };
 use visual_novel_engine::ScriptRaw;
 
@@ -35,17 +34,16 @@ struct AuthoringIssueReport {
     asset_path: Option<String>,
 }
 
-pub fn validate_authoring_script(path: &Path, output: Option<&Path>) -> Result<()> {
-    let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let graph = match AuthoringDocument::from_json(&raw) {
-        Ok(document) => document.graph,
-        Err(_) => {
-            let script = ScriptRaw::from_json(&raw).context("parse script")?;
-            AuthoringGraph::from_script(&script)
-        }
-    };
-    let script = graph.to_script();
-    let project_root = path.parent().unwrap_or_else(|| Path::new("."));
+pub fn validate_authoring_script(
+    path: &Path,
+    project_root: Option<&Path>,
+    output: Option<&Path>,
+) -> Result<()> {
+    let graph = load_authoring_document_or_script(path).context("load authoring/script entry")?;
+    let script = graph.to_script_lossy_for_diagnostics();
+    let project_root = project_root
+        .or_else(|| path.parent())
+        .unwrap_or_else(|| Path::new("."));
     let issues = validate_authoring_graph_with_project_root(&graph, project_root);
     let report = AuthoringValidationReport::from_graph_and_issues(&graph, &script, &issues);
 
@@ -113,10 +111,10 @@ impl From<&LintIssue> for AuthoringIssueReport {
 
 fn write_report(output: &Path, report: &AuthoringValidationReport) -> Result<()> {
     if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(report)?;
-    fs::write(output, json).with_context(|| format!("write {}", output.display()))?;
+    std::fs::write(output, json).with_context(|| format!("write {}", output.display()))?;
     Ok(())
 }
 

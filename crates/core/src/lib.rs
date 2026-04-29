@@ -29,7 +29,9 @@ mod visual;
 pub use assets::{AssetId, AssetId128, AssetManifest};
 pub use audio::AudioCommand;
 pub use authoring::{
-    asset_exists_from_project_root, default_asset_exists, is_unsafe_asset_ref,
+    asset_exists_from_project_root, default_asset_exists, export_runtime_script_from_authoring,
+    is_unsafe_asset_ref, load_authoring_document_or_script, load_runtime_script_from_entry,
+    parse_authoring_document_or_script, parse_runtime_script_from_entry,
     quick_fix as authoring_quick_fix, should_probe_asset_exists, validate_authoring_graph,
     validate_authoring_graph_no_io, validate_authoring_graph_with_probe,
     validate_authoring_graph_with_project_root, validate_authoring_graph_with_resolver,

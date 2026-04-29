@@ -36,6 +36,11 @@ impl NodeGraph {
 
     /// Adjusts pan and zoom to show all nodes.
     pub fn zoom_to_fit(&mut self) {
+        self.zoom_to_fit_viewport(egui::vec2(800.0, 600.0));
+    }
+
+    /// Adjusts pan and zoom to show all nodes in a concrete viewport.
+    pub fn zoom_to_fit_viewport(&mut self, viewport: egui::Vec2) {
         if self.is_empty() {
             self.reset_view();
             return;
@@ -59,8 +64,8 @@ impl NodeGraph {
         max_x += padding;
         max_y += padding;
 
-        let viewport_width = 800.0;
-        let viewport_height = 600.0;
+        let viewport_width = viewport.x.max(1.0);
+        let viewport_height = viewport.y.max(1.0);
         let content_width = max_x - min_x;
         let content_height = max_y - min_y;
 

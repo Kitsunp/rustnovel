@@ -8,8 +8,8 @@ use sha2::Sha256;
 use walkdir::WalkDir;
 
 use crate::error::VnResult;
+use crate::load_runtime_script_from_entry;
 use crate::manifest::ProjectManifest;
-use crate::script::ScriptRaw;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -120,15 +120,9 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
     let script_source_path =
         canonicalize_within_root(&project_root, &entry_script, "entry_script")?;
 
-    let raw_script = fs::read_to_string(&script_source_path).map_err(|e| {
+    let script = load_runtime_script_from_entry(&script_source_path).map_err(|e| {
         invalid_bundle(format!(
-            "read entry script '{}': {e}",
-            script_source_path.display()
-        ))
-    })?;
-    let script = ScriptRaw::from_json(&raw_script).map_err(|e| {
-        invalid_bundle(format!(
-            "parse entry script '{}': {e}",
+            "load entry script '{}': {e}",
             entry_script.display()
         ))
     })?;

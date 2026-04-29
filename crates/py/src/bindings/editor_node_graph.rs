@@ -2,7 +2,9 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use visual_novel_engine::authoring::quick_fix::{apply_fix, suggest_fixes};
 use visual_novel_engine::authoring::{
-    validate_authoring_graph, AuthoringDocument, AuthoringPosition, NodeGraph,
+    load_authoring_document_or_script, parse_authoring_document_or_script,
+    validate_authoring_graph, validate_authoring_graph_no_io,
+    validate_authoring_graph_with_project_root, AuthoringDocument, AuthoringPosition, NodeGraph,
 };
 
 use super::diagnostics::{PyLintIssue, PyQuickFixCandidate};
@@ -60,28 +62,58 @@ impl PyNodeGraph {
     }
 
     fn to_script_json(&self) -> PyResult<String> {
-        let script = self.inner.to_script();
-        serde_json::to_string_pretty(&script).map_err(|e| PyValueError::new_err(e.to_string()))
+        let script = self
+            .inner
+            .to_script_strict()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        script
+            .to_json()
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     #[staticmethod]
     fn from_script_json(script_json: &str) -> PyResult<Self> {
-        let script = visual_novel_engine::ScriptRaw::from_json(script_json)
+        let inner = parse_authoring_document_or_script(script_json)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(Self {
-            inner: NodeGraph::from_script(&script),
-        })
+        Ok(Self { inner })
+    }
+
+    fn to_lossy_script_json_for_diagnostics(&self) -> PyResult<String> {
+        let script = self.inner.to_script_lossy_for_diagnostics();
+        script
+            .to_json()
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    fn validate_no_io(&self) -> Vec<PyLintIssue> {
+        validate_authoring_graph_no_io(&self.inner)
+            .into_iter()
+            .map(PyLintIssue::from)
+            .collect()
+    }
+
+    #[pyo3(signature = (project_root=None))]
+    fn validate(&self, project_root: Option<&str>) -> Vec<PyLintIssue> {
+        let issues = if let Some(project_root) = project_root {
+            validate_authoring_graph_with_project_root(
+                &self.inner,
+                std::path::Path::new(project_root),
+            )
+        } else {
+            validate_authoring_graph(&self.inner)
+        };
+        issues.into_iter().map(PyLintIssue::from).collect()
+    }
+
+    #[staticmethod]
+    fn from_authoring_or_script_json(source: &str) -> PyResult<Self> {
+        let inner = parse_authoring_document_or_script(source)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(Self { inner })
     }
 
     fn search_nodes(&self, query: &str) -> Vec<u32> {
         self.inner.search_nodes(query)
-    }
-
-    fn validate(&self) -> Vec<PyLintIssue> {
-        validate_authoring_graph(&self.inner)
-            .into_iter()
-            .map(PyLintIssue::from)
-            .collect()
     }
 
     fn fix_candidates(&self, issue_index: usize) -> PyResult<Vec<PyQuickFixCandidate>> {
@@ -153,18 +185,9 @@ impl PyNodeGraph {
 
     #[staticmethod]
     fn load(path: &str) -> PyResult<Self> {
-        let content =
-            std::fs::read_to_string(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        if let Ok(document) = AuthoringDocument::from_json(&content) {
-            return Ok(Self {
-                inner: document.graph,
-            });
-        }
-        let script: visual_novel_engine::ScriptRaw =
-            serde_json::from_str(&content).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(Self {
-            inner: NodeGraph::from_script(&script),
-        })
+        let inner = load_authoring_document_or_script(path)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(Self { inner })
     }
 
     fn __repr__(&self) -> String {

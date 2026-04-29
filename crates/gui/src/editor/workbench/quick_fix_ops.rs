@@ -14,6 +14,12 @@ impl EditorWorkbench {
     }
 
     pub fn apply_all_safe_fixes(&mut self) -> usize {
+        if self.imported_report_stale {
+            self.toast = Some(ToastState::warning(
+                "Imported report is stale; automatic fixes are blocked",
+            ));
+            return 0;
+        }
         let mut applied = 0usize;
         let mut guard = 0usize;
 
@@ -53,6 +59,9 @@ impl EditorWorkbench {
         &mut self,
         include_review: bool,
     ) -> Result<usize, String> {
+        if self.imported_report_stale {
+            return Err("imported report is stale; automatic fixes are blocked".to_string());
+        }
         let plan = self.build_autofix_plan(include_review);
         if plan.is_empty() {
             return Err("no auto-fix candidates available".to_string());

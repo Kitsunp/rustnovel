@@ -6,10 +6,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use visual_novel_engine::{
-    compute_script_id, export_bundle, run_repro_case, BundleIntegrity, Engine, ExportBundleSpec,
-    ExportTargetPlatform, ImportFallbackPolicy, ImportProfile, ReproCase, ResourceLimiter,
-    SaveData, ScriptCompiled, ScriptRaw, SecurityPolicy, UiTrace, AUTH_SAVE_KEY,
-    SCRIPT_SCHEMA_VERSION,
+    compute_script_id, export_bundle, load_runtime_script_from_entry, run_repro_case,
+    BundleIntegrity, Engine, ExportBundleSpec, ExportTargetPlatform, ImportFallbackPolicy,
+    ImportProfile, ReproCase, ResourceLimiter, SaveData, ScriptCompiled, SecurityPolicy, UiTrace,
+    AUTH_SAVE_KEY, SCRIPT_SCHEMA_VERSION,
 };
 use vnengine_assets::{AssetEntry, AssetManifest};
 use walkdir::WalkDir;
@@ -31,6 +31,8 @@ enum Command {
     /// Validate editor/authoring graph semantics from a script JSON file.
     AuthoringValidate {
         script: PathBuf,
+        #[arg(long)]
+        project_root: Option<PathBuf>,
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
@@ -206,9 +208,15 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Validate { script } => validate_script(&script),
-        Command::AuthoringValidate { script, output } => {
-            authoring::validate_authoring_script(&script, output.as_deref())
-        }
+        Command::AuthoringValidate {
+            script,
+            project_root,
+            output,
+        } => authoring::validate_authoring_script(
+            &script,
+            project_root.as_deref(),
+            output.as_deref(),
+        ),
         Command::Compile { script, output } => compile_script(&script, &output),
         Command::Trace {
             script,
@@ -270,8 +278,7 @@ fn main() -> Result<()> {
 }
 
 fn validate_script(path: &Path) -> Result<()> {
-    let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let script = ScriptRaw::from_json(&raw).context("parse script")?;
+    let script = load_runtime_script_from_entry(path).context("load script")?;
     let policy = SecurityPolicy::default();
     let limits = ResourceLimiter::default();
     policy.validate_raw(&script, limits)?;
@@ -281,8 +288,7 @@ fn validate_script(path: &Path) -> Result<()> {
 }
 
 fn compile_script(path: &Path, output: &Path) -> Result<()> {
-    let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let script = ScriptRaw::from_json(&raw).context("parse script")?;
+    let script = load_runtime_script_from_entry(path).context("load script")?;
     let compiled = script.compile()?;
     let bytes = compiled.to_binary()?;
     if let Some(parent) = output.parent() {
@@ -293,8 +299,7 @@ fn compile_script(path: &Path, output: &Path) -> Result<()> {
 }
 
 fn trace_script(path: &Path, steps: usize, output: &Path) -> Result<()> {
-    let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let script = ScriptRaw::from_json(&raw).context("parse script")?;
+    let script = load_runtime_script_from_entry(path).context("load script")?;
     let mut engine = Engine::new(
         script,
         SecurityPolicy::default(),

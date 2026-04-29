@@ -51,7 +51,10 @@ impl<'a> NodeEditorPanel<'a> {
                 // Then Node Drag
                 for (id, _, n_pos) in nodes.iter().rev() {
                     let screen_pos = self.graph_to_screen(rect, *n_pos);
-                    let height = self.get_node_height(self.graph.get_node(*id).unwrap());
+                    let Some(node) = self.graph.get_node(*id) else {
+                        continue;
+                    };
+                    let height = self.get_node_height(node);
                     let size = egui::vec2(NODE_WIDTH, height) * self.graph.zoom();
                     let node_rect = egui::Rect::from_min_size(screen_pos, size);
                     if node_rect.contains(pos) {
@@ -80,25 +83,26 @@ impl<'a> NodeEditorPanel<'a> {
                 if let Some(pos) = response.interact_pointer_pos() {
                     for (to_id, _, to_pos) in nodes.iter().rev() {
                         let screen_pos = self.graph_to_screen(rect, *to_pos);
-                        let height = self.get_node_height(self.graph.get_node(*to_id).unwrap());
+                        let Some(node) = self.graph.get_node(*to_id) else {
+                            continue;
+                        };
+                        let height = self.get_node_height(node);
                         let size = egui::vec2(NODE_WIDTH, height) * self.graph.zoom();
                         let node_rect = egui::Rect::from_min_size(screen_pos, size);
 
                         if node_rect.contains(pos) {
-                            if from != *to_id {
-                                // FINALIZE CONNECTION
-                                let port = self.graph.connecting_from.unwrap().1;
-                                self.graph.connect_port(from, port, *to_id);
-                            }
+                            let port = self
+                                .graph
+                                .connecting_from
+                                .map(|(_, port)| port)
+                                .unwrap_or(0);
+                            self.graph.connect_port(from, port, *to_id);
                             dropped_on_node = true;
                             break;
                         }
                     }
                 }
-                if !dropped_on_node {
-                    let port = self.graph.connecting_from.unwrap().1;
-                    self.graph.disconnect_port(from, port);
-                }
+                let _ = dropped_on_node;
                 self.graph.connecting_from = None;
             }
         }

@@ -83,6 +83,10 @@ fn title_es(code: LintCode) -> &'static str {
         }
         LintCode::EmptySpeakerName => "Speaker vacio",
         LintCode::EmptyJumpTarget => "Jump sin destino",
+        LintCode::MissingJumpTarget => "Jump apunta a un destino inexistente",
+        LintCode::EmptyStateKey => "Llave de estado vacia",
+        LintCode::InvalidLayoutPosition => "Posicion visual invalida",
+        LintCode::PlaceholderChoiceOption => "Opcion placeholder sin editar",
         LintCode::ContractUnsupportedExport | LintCode::GenericEventUnchecked => {
             "Contrato de exportacion incompleto"
         }
@@ -119,6 +123,10 @@ fn title_en(code: LintCode) -> &'static str {
         }
         LintCode::EmptySpeakerName => "Empty speaker",
         LintCode::EmptyJumpTarget => "Empty jump target",
+        LintCode::MissingJumpTarget => "Jump target does not exist",
+        LintCode::EmptyStateKey => "Empty state key",
+        LintCode::InvalidLayoutPosition => "Invalid visual position",
+        LintCode::PlaceholderChoiceOption => "Unedited placeholder option",
         LintCode::ContractUnsupportedExport | LintCode::GenericEventUnchecked => {
             "Incomplete export contract"
         }

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     AudioActionRaw, ChoiceOptionRaw, ChoiceRaw, DialogueRaw, EventRaw, SceneTransitionRaw,
-    SceneUpdateRaw, ScriptRaw, SetCharacterPositionRaw,
+    SceneUpdateRaw, ScriptRaw, SetCharacterPositionRaw, VnError, VnResult,
 };
 
 use super::{AuthoringPosition, NodeGraph, StoryNode, NODE_VERTICAL_SPACING};
@@ -61,7 +61,15 @@ pub fn from_script(script: &ScriptRaw) -> NodeGraph {
         })
         .collect::<Vec<_>>();
     for id in dangling {
-        graph.connect(id, end_id);
+        let Some(index) = index_to_id
+            .iter()
+            .find_map(|(idx, node_id)| (*node_id == id).then_some(*idx))
+        else {
+            continue;
+        };
+        if should_autoconnect_dangling(&script.events[index]) {
+            graph.connect(id, end_id);
+        }
     }
 
     graph.clear_modified();
@@ -101,6 +109,26 @@ pub fn to_script(graph: &NodeGraph) -> ScriptRaw {
         labels.entry("start".to_string()).or_insert(0);
     }
     ScriptRaw::new(events, labels)
+}
+
+pub fn to_script_lossy_for_diagnostics(graph: &NodeGraph) -> ScriptRaw {
+    to_script(graph)
+}
+
+pub fn to_script_strict(graph: &NodeGraph) -> VnResult<ScriptRaw> {
+    validate_strict_graph_export(graph)?;
+    let script = to_script(graph);
+    script
+        .compile()
+        .map(|_| script)
+        .map_err(|err| VnError::invalid_script(format!("strict authoring export failed: {err}")))
+}
+
+fn should_autoconnect_dangling(event: &EventRaw) -> bool {
+    !matches!(
+        event,
+        EventRaw::Jump { .. } | EventRaw::JumpIf { .. } | EventRaw::Choice(_)
+    )
 }
 
 fn node_from_event(event: &EventRaw) -> StoryNode {
@@ -341,4 +369,66 @@ fn targets_end_label(event: &EventRaw) -> bool {
         EventRaw::Choice(choice) => choice.options.iter().any(|option| option.target == "__end"),
         _ => false,
     }
+}
+
+fn validate_strict_graph_export(graph: &NodeGraph) -> VnResult<()> {
+    let node_lookup = graph
+        .nodes()
+        .map(|(id, node, _)| (*id, node))
+        .collect::<BTreeMap<_, _>>();
+    let connected_ports = graph
+        .connections()
+        .map(|conn| (conn.from, conn.from_port))
+        .collect::<BTreeSet<_>>();
+
+    for (node_id, node, _) in graph.nodes() {
+        match node {
+            StoryNode::Choice { options, .. } => {
+                if options.is_empty() {
+                    return Err(VnError::invalid_script(format!(
+                        "choice node {node_id} has no options"
+                    )));
+                }
+                for port in 0..options.len() {
+                    if options[port].trim() == format!("Option {}", port + 1) {
+                        return Err(VnError::invalid_script(format!(
+                            "choice node {node_id} option {port} still uses placeholder text"
+                        )));
+                    }
+                    if !connected_ports.contains(&(*node_id, port)) {
+                        return Err(VnError::invalid_script(format!(
+                            "choice node {node_id} option {port} has no target"
+                        )));
+                    }
+                }
+            }
+            StoryNode::Jump { target } => {
+                if target.trim().is_empty() {
+                    return Err(VnError::invalid_script(format!(
+                        "jump node {node_id} has empty target"
+                    )));
+                }
+            }
+            StoryNode::JumpIf { target, .. } => {
+                let has_target_connection = connected_ports.contains(&(*node_id, 0));
+                if target.trim().is_empty() && !has_target_connection {
+                    return Err(VnError::invalid_script(format!(
+                        "jump_if node {node_id} has empty target"
+                    )));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for connection in graph.connections() {
+        if !node_lookup.contains_key(&connection.from) || !node_lookup.contains_key(&connection.to)
+        {
+            return Err(VnError::invalid_script(format!(
+                "connection {}:{} -> {} references a missing node",
+                connection.from, connection.from_port, connection.to
+            )));
+        }
+    }
+    Ok(())
 }

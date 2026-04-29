@@ -23,7 +23,7 @@ use winit::{
 };
 
 pub use self::assets::{AssetStore, MemoryAssetStore};
-pub use self::audio::{Audio, RodioBackend, SilentAudio};
+pub use self::audio::{Audio, AudioCapabilities, RodioBackend, SilentAudio};
 pub use self::input::{ConfigurableInput, Input, InputAction};
 use self::render::{BuiltinSoftwareDrawer, RenderBackend, SoftwareBackend, WgpuBackend};
 
@@ -163,10 +163,15 @@ where
                     path,
                     r#loop,
                     volume,
+                    fade_in,
                     ..
                 } => {
-                    self.audio
-                        .play_music_with_options(path.as_ref(), *r#loop, *volume);
+                    self.audio.play_music_with_transition(
+                        path.as_ref(),
+                        *r#loop,
+                        *volume,
+                        Some(*fade_in),
+                    );
                     self.last_bgm_path = Some(path.as_ref().to_string());
                 }
                 AudioCommand::StopBgm { fade_out } => {
@@ -225,16 +230,26 @@ where
     A: Audio + 'static,
     S: AssetStore + 'static,
 {
-    let event_loop = EventLoop::new().expect("failed to create event loop");
+    let event_loop = match EventLoop::new() {
+        Ok(event_loop) => event_loop,
+        Err(err) => {
+            eprintln!("failed to create event loop: {err}");
+            std::process::exit(1);
+        }
+    };
     #[allow(deprecated)]
-    let window = Arc::new(
-        WindowBuilder::new()
-            .with_title("VN Runtime")
-            .with_inner_size(LogicalSize::new(960.0, 540.0))
-            .with_min_inner_size(LogicalSize::new(640.0, 360.0))
-            .build(&event_loop)
-            .expect("failed to build runtime window"),
-    );
+    let window = match WindowBuilder::new()
+        .with_title("VN Runtime")
+        .with_inner_size(LogicalSize::new(960.0, 540.0))
+        .with_min_inner_size(LogicalSize::new(640.0, 360.0))
+        .build(&event_loop)
+    {
+        Ok(window) => Arc::new(window),
+        Err(err) => {
+            eprintln!("failed to build runtime window: {err}");
+            std::process::exit(1);
+        }
+    };
 
     let size = window.inner_size();
 
@@ -250,53 +265,61 @@ where
                     "WGPU Backend initialization failed: {}. Falling back to Software Backend.",
                     err
                 );
-                Box::new(SoftwareBackend::new(
+                let software = match SoftwareBackend::try_new(
                     window.clone(),
                     size.width,
                     size.height,
                     Box::new(BuiltinSoftwareDrawer),
-                ))
+                ) {
+                    Ok(backend) => backend,
+                    Err(err) => {
+                        eprintln!("Software Backend initialization failed: {err}");
+                        std::process::exit(1);
+                    }
+                };
+                Box::new(software)
             }
         };
 
-    event_loop
-        .run(move |event, elwt| {
-            match event {
-                Event::WindowEvent { event, .. } => match event {
-                    WindowEvent::CloseRequested => {
+    if let Err(err) = event_loop.run(move |event, elwt| {
+        match event {
+            Event::WindowEvent { event, .. } => match event {
+                WindowEvent::CloseRequested => {
+                    elwt.exit();
+                }
+                WindowEvent::Resized(size) => {
+                    backend.resize(size.width, size.height);
+                }
+                WindowEvent::RedrawRequested => {
+                    if let Err(e) = backend.render(app.ui()) {
+                        eprintln!("Render error: {}", e);
                         elwt.exit();
                     }
-                    WindowEvent::Resized(size) => {
-                        backend.resize(size.width, size.height);
-                    }
-                    WindowEvent::RedrawRequested => {
-                        if let Err(e) = backend.render(app.ui()) {
-                            eprintln!("Render error: {}", e);
+                }
+                _ => {
+                    let action = app.input.handle_window_event(&event);
+                    match app.handle_action(action) {
+                        Ok(true) => {
+                            window.request_redraw();
+                        }
+                        Ok(false) => {
+                            elwt.exit();
+                        }
+                        Err(_) => {
                             elwt.exit();
                         }
                     }
-                    _ => {
-                        let action = app.input.handle_window_event(&event);
-                        match app.handle_action(action) {
-                            Ok(true) => {
-                                window.request_redraw();
-                            }
-                            Ok(false) => {
-                                elwt.exit();
-                            }
-                            Err(_) => {
-                                elwt.exit();
-                            }
-                        }
-                    }
-                },
-                Event::AboutToWait => {
-                    // window.request_redraw();
                 }
-                _ => {}
+            },
+            Event::AboutToWait => {
+                // window.request_redraw();
             }
-        })
-        .expect("event loop error");
+            _ => {}
+        }
+    }) {
+        eprintln!("event loop error: {err}");
+        std::process::exit(1);
+    }
 
     // The run function in 0.29 may return, but we treat this as a divergent function
     std::process::exit(0);

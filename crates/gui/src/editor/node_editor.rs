@@ -303,7 +303,7 @@ impl<'a> NodeEditorPanel<'a> {
             self.graph.reset_view();
         }
         if ui.input(|i| i.key_pressed(egui::Key::H)) {
-            self.graph.zoom_to_fit();
+            self.graph.zoom_to_fit_viewport(response.rect.size());
         }
 
         // === Node Action Shortcuts ===

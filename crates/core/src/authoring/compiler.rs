@@ -118,6 +118,7 @@ pub struct DryRunStepTrace {
     pub event_ip: u32,
     pub event_kind: String,
     pub event_signature: String,
+    pub simulation_note: Option<String>,
     pub visual_background: Option<String>,
     pub visual_music: Option<String>,
     pub character_count: usize,
@@ -176,7 +177,7 @@ pub fn compile_authoring_graph(
         ok: true,
         detail: "Graph converted to ScriptRaw".to_string(),
     });
-    let script = graph.to_script();
+    let mut script = graph.to_script_lossy_for_diagnostics();
 
     let mut issues = if let Some(root) = project_root {
         validate_authoring_graph_with_project_root(graph, root)
@@ -192,14 +193,40 @@ pub fn compile_authoring_graph(
     });
 
     let mut dry_run_report = None;
-    let engine_result = match script.compile() {
-        Ok(compiled) => {
+    let strict_script = match graph.to_script_strict() {
+        Ok(script) => {
             phase_trace.push(PhaseTrace {
                 phase: CompilationPhase::ScriptCompile,
                 ok: true,
-                detail: "ScriptRaw compiled successfully".to_string(),
+                detail: "Strict authoring export succeeded".to_string(),
             });
-
+            script
+        }
+        Err(err) => {
+            let message = format!("Strict authoring export failed: {err}");
+            phase_trace.push(PhaseTrace {
+                phase: CompilationPhase::ScriptCompile,
+                ok: false,
+                detail: message.clone(),
+            });
+            issues.push(LintIssue::error(
+                None,
+                ValidationPhase::Compile,
+                LintCode::CompileError,
+                message.clone(),
+            ));
+            return CompilationResult {
+                script,
+                engine_result: Err(message),
+                issues,
+                phase_trace,
+                dry_run_report,
+            };
+        }
+    };
+    script = strict_script;
+    let engine_result = match script.compile() {
+        Ok(compiled) => {
             let story_graph = StoryGraph::from_script(&compiled);
             for event_ip in story_graph.unreachable_nodes() {
                 let incoming = story_graph

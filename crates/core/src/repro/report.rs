@@ -82,6 +82,8 @@ pub struct ReproStepTrace {
     pub event_ip: u32,
     pub event_kind: String,
     pub event_signature: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simulation_note: Option<String>,
     pub visual_background: Option<String>,
     pub visual_music: Option<String>,
     pub character_count: usize,

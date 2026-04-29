@@ -22,80 +22,10 @@ impl Engine {
 
     /// Returns the unique upcoming asset ids that can be prefetched safely.
     pub fn peek_next_assets(&self, depth: usize) -> Vec<AssetId> {
-        let mut seen = HashSet::new();
-        let mut assets = Vec::new();
-        let start = self.state().position as usize;
-        let end = (start + depth).min(self.script().events.len());
-        for event in &self.script().events[start..end] {
-            match event {
-                EventCompiled::Scene(scene) => {
-                    if let Some(background) = &scene.background {
-                        let id = AssetId::from_path(background.as_ref());
-                        if seen.insert(id) {
-                            assets.push(id);
-                        }
-                    }
-                    if let Some(music) = &scene.music {
-                        let id = AssetId::from_path(music.as_ref());
-                        if seen.insert(id) {
-                            assets.push(id);
-                        }
-                    }
-                    for character in &scene.characters {
-                        let id = AssetId::from_path(character.name.as_ref());
-                        if seen.insert(id) {
-                            assets.push(id);
-                        }
-                        if let Some(expression) = &character.expression {
-                            let id = AssetId::from_path(expression.as_ref());
-                            if seen.insert(id) {
-                                assets.push(id);
-                            }
-                        }
-                    }
-                }
-                EventCompiled::Patch(patch) => {
-                    if let Some(background) = &patch.background {
-                        let id = AssetId::from_path(background.as_ref());
-                        if seen.insert(id) {
-                            assets.push(id);
-                        }
-                    }
-                    if let Some(music) = &patch.music {
-                        let id = AssetId::from_path(music.as_ref());
-                        if seen.insert(id) {
-                            assets.push(id);
-                        }
-                    }
-                    for character in &patch.add {
-                        let id = AssetId::from_path(character.name.as_ref());
-                        if seen.insert(id) {
-                            assets.push(id);
-                        }
-                        if let Some(expression) = &character.expression {
-                            let id = AssetId::from_path(expression.as_ref());
-                            if seen.insert(id) {
-                                assets.push(id);
-                            }
-                        }
-                    }
-                    for character in &patch.update {
-                        let id = AssetId::from_path(character.name.as_ref());
-                        if seen.insert(id) {
-                            assets.push(id);
-                        }
-                        if let Some(expression) = &character.expression {
-                            let id = AssetId::from_path(expression.as_ref());
-                            if seen.insert(id) {
-                                assets.push(id);
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        assets
+        self.peek_next_asset_paths(depth)
+            .into_iter()
+            .map(|path| AssetId::from_path(&path))
+            .collect()
     }
 }
 

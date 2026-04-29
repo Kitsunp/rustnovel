@@ -54,6 +54,8 @@ pub fn run_dry_run(mut engine: Engine, policy: &ChoicePolicy, max_steps: usize) 
             event_ip: ip,
             event_kind: event_kind_compiled(&event).to_string(),
             event_signature: compiled_event_signature(&event),
+            simulation_note: matches!(event, EventCompiled::ExtCall { .. })
+                .then(|| "external_call_simulated".to_string()),
             visual_background: engine
                 .state()
                 .visual

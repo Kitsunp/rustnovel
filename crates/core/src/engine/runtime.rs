@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use crate::audio::AudioCommand;
 use crate::error::{VnError, VnResult};
-use crate::event::{CmpOp, CondCompiled, EventCompiled};
+use crate::event::{CmpOp, CondCompiled, EventCompiled, SceneTransitionCompiled};
 use crate::render::{RenderBackend, RenderOutput};
 use crate::resource::ResourceLimiter;
 use crate::script::{ScriptCompiled, ScriptRaw};
@@ -29,6 +29,7 @@ pub struct Engine {
     state: EngineState,
     policy: SecurityPolicy,
     queued_audio: Vec<AudioCommand>,
+    pending_transition: Option<SceneTransitionCompiled>,
     read_dialogue_ips: BTreeSet<u32>,
     choice_history: VecDeque<ChoiceHistoryEntry>,
 }
@@ -63,6 +64,7 @@ impl Engine {
             state,
             policy,
             queued_audio,
+            pending_transition: None,
             read_dialogue_ips: BTreeSet::new(),
             choice_history: VecDeque::with_capacity(64),
         }
@@ -135,6 +137,7 @@ impl Engine {
         audio_commands: &mut Vec<AudioCommand>,
     ) -> VnResult<()> {
         let current_ip = self.state.position;
+        self.pending_transition = None;
         match event {
             EventCompiled::Jump { target_ip } => {
                 self.jump_to_ip_with_audio(*target_ip, audio_commands)
@@ -183,7 +186,10 @@ impl Engine {
                 self.state.visual.set_character_position(pos);
                 self.advance_position()
             }
-            EventCompiled::Transition(_) => self.advance_position(),
+            EventCompiled::Transition(transition) => {
+                self.pending_transition = Some(transition.clone());
+                self.advance_position()
+            }
         }
     }
 
@@ -263,6 +269,10 @@ impl Engine {
         &self.state.visual
     }
 
+    pub fn pending_transition(&self) -> Option<&SceneTransitionCompiled> {
+        self.pending_transition.as_ref()
+    }
+
     /// Returns the configured flag count.
     pub fn flag_count(&self) -> u32 {
         self.script.flag_count
@@ -314,6 +324,7 @@ impl Engine {
             )));
         }
         self.state = state;
+        self.pending_transition = None;
         self.read_dialogue_ips.clear();
         self.choice_history.clear();
         Ok(())

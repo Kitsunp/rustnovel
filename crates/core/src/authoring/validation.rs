@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 
 mod flow;
@@ -6,7 +7,7 @@ mod trace;
 use flow::unreachable_blocker_context;
 use trace::parse_import_trace_context;
 
-use crate::EventRaw;
+use crate::{CharacterPlacementRaw, CondRaw, EventRaw};
 
 use super::{GraphConnection, LintCode, LintIssue, NodeGraph, StoryNode, ValidationPhase};
 
@@ -42,7 +43,7 @@ where
             "Missing Start node",
         )),
         1 => {}
-        count => issues.push(LintIssue::warning(
+        count => issues.push(LintIssue::error(
             None,
             ValidationPhase::Graph,
             LintCode::MultipleStart,
@@ -50,7 +51,10 @@ where
         )),
     }
     let flow = graph.flow_analysis(&start_nodes);
-    for (id, node, _) in graph.nodes() {
+    let script = graph.to_script_lossy_for_diagnostics();
+    let script_labels = script.labels.keys().cloned().collect::<BTreeSet<_>>();
+    for (id, node, position) in graph.nodes() {
+        validate_layout_position(*id, position.x, position.y, &mut issues);
         if !flow.reachable.contains(id) {
             let (edge_from, blocked_by) = unreachable_blocker_context(graph, *id, &flow.reachable);
             let mut issue = LintIssue::warning(
@@ -65,8 +69,9 @@ where
             }
             issues.push(issue);
         }
-        validate_node(graph, *id, node, &asset_exists, &mut issues);
+        validate_node(graph, *id, node, &script_labels, &asset_exists, &mut issues);
     }
+    validate_scene_profiles(graph, &asset_exists, &mut issues);
     for node_id in flow.reachable_cycle_nodes {
         issues.push(LintIssue::warning(
             Some(node_id),
@@ -88,6 +93,7 @@ fn validate_node<F>(
     graph: &NodeGraph,
     id: u32,
     node: &StoryNode,
+    script_labels: &BTreeSet<String>,
     asset_exists: &F,
     issues: &mut Vec<LintIssue>,
 ) where
@@ -112,23 +118,57 @@ fn validate_node<F>(
         }
         StoryNode::Choice { options, .. } => validate_choice(graph, id, options, issues),
         StoryNode::Scene {
+            profile,
             background,
             music,
             characters,
-            ..
-        } => validate_scene(id, background, music, characters, asset_exists, issues),
+        } => {
+            if let Some(profile) = profile {
+                if graph.scene_profile(profile).is_none() {
+                    issues.push(
+                        LintIssue::error(
+                            Some(id),
+                            ValidationPhase::Graph,
+                            LintCode::AssetReferenceMissing,
+                            "Scene profile does not exist",
+                        )
+                        .with_asset_path(Some(profile.clone())),
+                    );
+                }
+            }
+            validate_scene(id, background, music, characters, asset_exists, issues)
+        }
         StoryNode::ScenePatch(patch) => {
             validate_scene_patch(id, patch, asset_exists, issues);
         }
-        StoryNode::Jump { target } | StoryNode::JumpIf { target, .. }
-            if target.trim().is_empty() =>
-        {
-            issues.push(LintIssue::warning(
-                Some(id),
-                ValidationPhase::Graph,
-                LintCode::EmptyJumpTarget,
-                "Jump target is empty",
-            ));
+        StoryNode::Jump { target } => {
+            validate_jump_target(id, target, script_labels, issues);
+        }
+        StoryNode::JumpIf { target, cond } => {
+            if cond_key_empty(cond) {
+                issues.push(LintIssue::error(
+                    Some(id),
+                    ValidationPhase::Graph,
+                    LintCode::EmptyStateKey,
+                    "JumpIf condition key is empty",
+                ));
+            }
+            let has_connected_target = graph
+                .connections()
+                .any(|conn| conn.from == id && conn.from_port == 0);
+            if !has_connected_target {
+                validate_jump_target(id, target, script_labels, issues);
+            }
+        }
+        StoryNode::SetVariable { key, .. } | StoryNode::SetFlag { key, .. } => {
+            if key.trim().is_empty() {
+                issues.push(LintIssue::error(
+                    Some(id),
+                    ValidationPhase::Graph,
+                    LintCode::EmptyStateKey,
+                    "State key is empty",
+                ));
+            }
         }
         StoryNode::AudioAction {
             channel,
@@ -202,11 +242,120 @@ fn validate_node<F>(
     }
 }
 
+fn validate_layout_position(id: u32, x: f32, y: f32, issues: &mut Vec<LintIssue>) {
+    const MAX_AUTHORING_COORD: f32 = 1_000_000.0;
+    if !x.is_finite()
+        || !y.is_finite()
+        || x.abs() > MAX_AUTHORING_COORD
+        || y.abs() > MAX_AUTHORING_COORD
+    {
+        issues.push(LintIssue::error(
+            Some(id),
+            ValidationPhase::Graph,
+            LintCode::InvalidLayoutPosition,
+            "Node layout position is invalid",
+        ));
+    }
+}
+
+fn validate_jump_target(
+    id: u32,
+    target: &str,
+    script_labels: &BTreeSet<String>,
+    issues: &mut Vec<LintIssue>,
+) {
+    let target = target.trim();
+    if target.is_empty() {
+        issues.push(LintIssue::warning(
+            Some(id),
+            ValidationPhase::Graph,
+            LintCode::EmptyJumpTarget,
+            "Jump target is empty",
+        ));
+    } else if !script_labels.contains(target) {
+        issues.push(LintIssue::error(
+            Some(id),
+            ValidationPhase::Graph,
+            LintCode::MissingJumpTarget,
+            format!("Jump target '{target}' does not exist"),
+        ));
+    }
+}
+
+fn cond_key_empty(cond: &CondRaw) -> bool {
+    match cond {
+        CondRaw::Flag { key, .. } | CondRaw::VarCmp { key, .. } => key.trim().is_empty(),
+    }
+}
+
+fn validate_scene_profiles<F>(graph: &NodeGraph, asset_exists: &F, issues: &mut Vec<LintIssue>)
+where
+    F: Fn(&str) -> bool,
+{
+    for (profile_id, profile) in graph.scene_profiles() {
+        validate_asset(0, &profile.background, "background", asset_exists, issues);
+        validate_asset(0, &profile.music, "music", asset_exists, issues);
+        validate_scene_profile_characters(profile_id, &profile.characters, asset_exists, issues);
+        for layer in &profile.layers {
+            validate_asset(0, &layer.background, "background", asset_exists, issues);
+            validate_scene_profile_characters(profile_id, &layer.characters, asset_exists, issues);
+        }
+        for pose in &profile.poses {
+            validate_asset(
+                0,
+                &Some(pose.image.clone()),
+                "character_expression",
+                asset_exists,
+                issues,
+            );
+            if pose.character.trim().is_empty() || pose.pose.trim().is_empty() {
+                issues.push(
+                    LintIssue::warning(
+                        None,
+                        ValidationPhase::Graph,
+                        LintCode::EmptyCharacterName,
+                        format!("Scene profile '{profile_id}' has an incomplete pose binding"),
+                    )
+                    .with_asset_path(Some(pose.image.clone())),
+                );
+            }
+        }
+    }
+}
+
+fn validate_scene_profile_characters<F>(
+    profile_id: &str,
+    characters: &[CharacterPlacementRaw],
+    asset_exists: &F,
+    issues: &mut Vec<LintIssue>,
+) where
+    F: Fn(&str) -> bool,
+{
+    for character in characters {
+        if character.name.trim().is_empty() {
+            issues.push(LintIssue::error(
+                None,
+                ValidationPhase::Graph,
+                LintCode::EmptyCharacterName,
+                format!("Scene profile '{profile_id}' has an empty character name"),
+            ));
+        }
+        validate_asset(
+            0,
+            &character.expression,
+            "character_expression",
+            asset_exists,
+            issues,
+        );
+        validate_character_scale(0, &character.scale, issues);
+    }
+}
+
 fn validate_scene<F>(
     id: u32,
     background: &Option<String>,
     music: &Option<String>,
-    characters: &[crate::CharacterPlacementRaw],
+    characters: &[CharacterPlacementRaw],
     asset_exists: &F,
     issues: &mut Vec<LintIssue>,
 ) where
@@ -224,6 +373,16 @@ fn validate_scene<F>(
             LintCode::EmptyCharacterName,
             "Scene has an empty character name",
         ));
+    }
+    for character in characters {
+        validate_asset(
+            id,
+            &character.expression,
+            "character_expression",
+            asset_exists,
+            issues,
+        );
+        validate_character_scale(id, &character.scale, issues);
     }
 }
 
@@ -261,6 +420,25 @@ fn validate_scene_patch<F>(
             "Scene patch has an empty character name in remove-list",
         ));
     }
+    for character in &patch.add {
+        validate_asset(
+            id,
+            &character.expression,
+            "character_expression",
+            asset_exists,
+            issues,
+        );
+        validate_character_scale(id, &character.scale, issues);
+    }
+    for character in &patch.update {
+        validate_asset(
+            id,
+            &character.expression,
+            "character_expression",
+            asset_exists,
+            issues,
+        );
+    }
 }
 
 fn validate_choice(graph: &NodeGraph, id: u32, options: &[String], issues: &mut Vec<LintIssue>) {
@@ -271,6 +449,16 @@ fn validate_choice(graph: &NodeGraph, id: u32, options: &[String], issues: &mut 
             LintCode::ChoiceNoOptions,
             "Choice has no options",
         ));
+    }
+    for (idx, option) in options.iter().enumerate() {
+        if is_placeholder_option(option, idx) {
+            issues.push(LintIssue::warning(
+                Some(id),
+                ValidationPhase::Graph,
+                LintCode::PlaceholderChoiceOption,
+                format!("Choice option {idx} still uses placeholder text"),
+            ));
+        }
     }
     let outgoing = graph
         .connections()
@@ -302,6 +490,10 @@ fn validate_choice(graph: &NodeGraph, id: u32, options: &[String], issues: &mut 
             );
         }
     }
+}
+
+fn is_placeholder_option(option: &str, index: usize) -> bool {
+    option.trim() == format!("Option {}", index + 1)
 }
 
 struct AudioValidation<'a> {
@@ -391,6 +583,10 @@ fn validate_character(id: u32, name: &str, scale: &Option<f32>, issues: &mut Vec
             "Character name is empty",
         ));
     }
+    validate_character_scale(id, scale, issues);
+}
+
+fn validate_character_scale(id: u32, scale: &Option<f32>, issues: &mut Vec<LintIssue>) {
     if scale.is_some_and(|value| !value.is_finite() || value <= 0.0) {
         issues.push(LintIssue::error(
             Some(id),

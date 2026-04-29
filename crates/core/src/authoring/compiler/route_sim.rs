@@ -84,6 +84,7 @@ pub fn enumerate_choice_routes_with_report(
     let mut routes = Vec::new();
     let mut route_limit_hit = false;
     let mut depth_limit_hit = false;
+    let mut visited = HashSet::new();
     let start_ip = match script.start_index() {
         Ok(idx) => idx,
         Err(_) => return RouteEnumerationReport::default(),
@@ -103,6 +104,11 @@ pub fn enumerate_choice_routes_with_report(
         if routes.len() >= max_routes {
             route_limit_hit = true;
             break;
+        }
+        if !visited.insert(route_frame_signature(&frame)) {
+            depth_limit_hit = true;
+            routes.push(frame.choices);
+            continue;
         }
         if frame.steps >= max_steps || frame.ip >= script.events.len() {
             routes.push(frame.choices);
@@ -197,6 +203,7 @@ pub fn simulate_raw_sequence(
     let mut state = RawSimulationState::default();
     let mut steps = 0usize;
     let mut choice_cursor = 0usize;
+    let mut visited = HashSet::new();
     let mut ip = match script.start_index() {
         Ok(idx) => idx,
         Err(_) => return out,
@@ -204,6 +211,9 @@ pub fn simulate_raw_sequence(
     bootstrap_initial_state(script, ip, &mut state);
 
     while ip < script.events.len() && steps < max_steps {
+        if !visited.insert(raw_state_signature(ip, &state)) {
+            break;
+        }
         let event = &script.events[ip];
         out.push(RawStepTrace {
             event_ip: ip as u32,
@@ -253,6 +263,35 @@ pub fn simulate_raw_sequence(
     }
 
     out
+}
+
+fn route_frame_signature(frame: &RawRouteFrame) -> String {
+    raw_state_signature(frame.ip, &frame.state)
+}
+
+fn raw_state_signature(ip: usize, state: &RawSimulationState) -> String {
+    let mut flags = state
+        .flags
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>();
+    flags.sort();
+    let mut vars = state
+        .vars
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>();
+    vars.sort();
+    let mut characters = state.visual.characters.iter().cloned().collect::<Vec<_>>();
+    characters.sort();
+    format!(
+        "ip={ip};bg={};music={};flags={};vars={};chars={}",
+        state.visual.background.as_deref().unwrap_or(""),
+        state.visual.music.as_deref().unwrap_or(""),
+        flags.join(","),
+        vars.join(","),
+        characters.join(",")
+    )
 }
 
 fn bootstrap_initial_state(script: &ScriptRaw, ip: usize, state: &mut RawSimulationState) {

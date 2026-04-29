@@ -11,28 +11,35 @@ pub(super) fn fix_names(graph: &mut NodeGraph, node_id: u32) -> Result<bool, Str
             Ok(true)
         }
         StoryNode::Scene { characters, .. } => {
-            let before = characters.len();
-            characters.retain(|character| !character.name.trim().is_empty());
-            let changed = before != characters.len();
+            let mut changed = false;
+            for character in characters {
+                if character.name.trim().is_empty() {
+                    character.name = "Character".to_string();
+                    changed = true;
+                }
+            }
             if changed {
                 graph.mark_modified();
             }
             Ok(changed)
         }
         StoryNode::ScenePatch(patch) => {
-            let before_add = patch.add.len();
-            let before_update = patch.update.len();
             let before_remove = patch.remove.len();
-            patch
-                .add
-                .retain(|character| !character.name.trim().is_empty());
-            patch
-                .update
-                .retain(|character| !character.name.trim().is_empty());
+            let mut changed = false;
+            for character in &mut patch.add {
+                if character.name.trim().is_empty() {
+                    character.name = "Character".to_string();
+                    changed = true;
+                }
+            }
+            for character in &mut patch.update {
+                if character.name.trim().is_empty() {
+                    character.name = "Character".to_string();
+                    changed = true;
+                }
+            }
             patch.remove.retain(|name| !name.trim().is_empty());
-            let changed = before_add != patch.add.len()
-                || before_update != patch.update.len()
-                || before_remove != patch.remove.len();
+            let changed = changed || before_remove != patch.remove.len();
             if changed {
                 graph.mark_modified();
             }

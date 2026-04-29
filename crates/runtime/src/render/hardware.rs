@@ -80,7 +80,7 @@ impl<'a> RenderBackend for WgpuBackend<'a> {
         }
     }
 
-    fn render(&mut self, _ui: &UiState) -> Result<(), String> {
+    fn render(&mut self, ui: &UiState) -> Result<(), String> {
         let output = self
             .surface
             .get_current_texture()
@@ -96,18 +96,28 @@ impl<'a> RenderBackend for WgpuBackend<'a> {
             });
 
         {
+            let clear_color = if ui.pending_transition.is_some() {
+                Color {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 1.0,
+                }
+            } else {
+                Color {
+                    r: 0.1,
+                    g: 0.2,
+                    b: 0.3,
+                    a: 1.0,
+                }
+            };
             let _render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
                     ops: Operations {
-                        load: LoadOp::Clear(Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3, // Dark blueish
-                            a: 1.0,
-                        }),
+                        load: LoadOp::Clear(clear_color),
                         store: StoreOp::Store,
                     },
                 })],

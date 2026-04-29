@@ -68,6 +68,7 @@ impl EditorWorkbench {
                             "event_ip": step.event_ip,
                             "event_kind": step.event_kind,
                             "event_signature": step.event_signature,
+                            "simulation_note": step.simulation_note,
                             "visual_background": step.visual_background,
                             "visual_music": step.visual_music,
                             "character_count": step.character_count,
@@ -140,7 +141,13 @@ impl EditorWorkbench {
         match std::fs::read_to_string(path) {
             Ok(payload) => match self.apply_diagnostic_report_json(&payload) {
                 Ok(()) => {
-                    self.toast = Some(ToastState::success("Diagnostic report imported"));
+                    self.toast = if self.imported_report_stale {
+                        Some(ToastState::warning(
+                            "Diagnostic report imported as stale; automatic fixes blocked",
+                        ))
+                    } else {
+                        Some(ToastState::success("Diagnostic report imported"))
+                    };
                 }
                 Err(err) => {
                     self.toast = Some(ToastState::error(format!(
@@ -166,6 +173,10 @@ impl EditorWorkbench {
         if schema != "vneditor.diagnostic_report.v1" {
             return Err(format!("unsupported report schema '{schema}'"));
         }
+        let current_fingerprints = current_fingerprints_value(self)?;
+        let imported_fingerprints = parsed.get("fingerprints");
+        self.imported_report_stale =
+            imported_fingerprints.is_some_and(|fingerprints| fingerprints != &current_fingerprints);
 
         if let Some(language) = parsed
             .get("language")
@@ -252,6 +263,15 @@ impl EditorWorkbench {
         self.show_validation = !self.validation_issues.is_empty();
         Ok(())
     }
+}
+
+fn current_fingerprints_value(workbench: &EditorWorkbench) -> Result<serde_json::Value, String> {
+    let script = workbench.node_graph.to_script();
+    let fingerprints = visual_novel_engine::authoring::build_authoring_report_fingerprint(
+        workbench.node_graph.authoring_graph(),
+        &script,
+    );
+    serde_json::to_value(fingerprints).map_err(|err| format!("fingerprint serialization: {err}"))
 }
 
 fn language_code(language: DiagnosticLanguage) -> &'static str {

@@ -4,7 +4,7 @@ use std::collections::{HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::{analyze_flow_graph, FlowGraphAnalysis};
-use crate::{CharacterPlacementRaw, ScriptRaw};
+use crate::{CharacterPlacementRaw, ScriptRaw, VnResult};
 
 use super::script_sync;
 use super::{AuthoringPosition, StoryNode};
@@ -65,6 +65,14 @@ impl NodeGraph {
 
     pub fn to_script(&self) -> ScriptRaw {
         script_sync::to_script(self)
+    }
+
+    pub fn to_script_strict(&self) -> VnResult<ScriptRaw> {
+        script_sync::to_script_strict(self)
+    }
+
+    pub fn to_script_lossy_for_diagnostics(&self) -> ScriptRaw {
+        script_sync::to_script_lossy_for_diagnostics(self)
     }
 
     pub fn add_node(&mut self, node: StoryNode, pos: AuthoringPosition) -> u32 {
@@ -199,9 +207,6 @@ impl NodeGraph {
     }
 
     pub fn connect_port(&mut self, from: u32, from_port: usize, to: u32) {
-        if from == to {
-            return;
-        }
         let Some(from_node) = self.get_node(from).cloned() else {
             return;
         };

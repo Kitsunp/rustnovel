@@ -38,140 +38,163 @@ pub struct QuickFixCandidate {
 }
 
 pub fn suggest_fixes(issue: &LintIssue, graph: &NodeGraph) -> Vec<QuickFixCandidate> {
-    let Some(candidate) = (match issue.code {
-        LintCode::MissingStart => Some(candidate(
+    let mut candidates = Vec::new();
+    match issue.code {
+        LintCode::MissingStart => candidates.push(candidate(
             "graph_add_start",
             "Agregar nodo Start",
             "Add Start node",
             QuickFixRisk::Review,
             true,
         )),
-        LintCode::DeadEnd => Some(candidate(
+        LintCode::DeadEnd => candidates.push(candidate(
             "node_connect_dead_end_to_end",
             "Conectar a End",
             "Connect to End",
             QuickFixRisk::Review,
             true,
         )),
-        LintCode::ChoiceNoOptions => Some(candidate(
-            "choice_add_default_option",
-            "Agregar opcion",
-            "Add option",
-            QuickFixRisk::Safe,
-            false,
-        )),
-        LintCode::ChoiceOptionUnlinked => Some(candidate(
+        LintCode::ChoiceNoOptions => {
+            candidates.push(candidate(
+                "choice_add_default_option",
+                "Agregar opcion placeholder",
+                "Add placeholder option",
+                QuickFixRisk::Review,
+                false,
+            ));
+            candidates.push(candidate(
+                "choice_add_default_option_to_end",
+                "Agregar opcion y conectar a End",
+                "Add option and connect to End",
+                QuickFixRisk::Safe,
+                true,
+            ));
+        }
+        LintCode::ChoiceOptionUnlinked => candidates.push(candidate(
             "choice_link_unlinked_to_end",
             "Conectar opciones sin salida",
             "Connect unlinked options",
             QuickFixRisk::Review,
             true,
         )),
-        LintCode::ChoicePortOutOfRange => Some(candidate(
+        LintCode::ChoicePortOutOfRange => candidates.push(candidate(
             "choice_expand_options_to_ports",
             "Sincronizar opciones con puertos",
             "Sync options with ports",
             QuickFixRisk::Safe,
             false,
         )),
-        LintCode::EmptySpeakerName => Some(candidate(
+        LintCode::EmptySpeakerName => candidates.push(candidate(
             "dialogue_fill_speaker",
             "Rellenar speaker",
             "Fill speaker",
             QuickFixRisk::Safe,
             false,
         )),
-        LintCode::EmptyJumpTarget => Some(candidate(
-            "jump_set_start_target",
-            "Usar start como destino",
-            "Use start as target",
-            QuickFixRisk::Review,
-            false,
-        )),
-        LintCode::InvalidTransitionKind => Some(candidate(
+        LintCode::EmptyJumpTarget => {
+            if existing_jump_target(graph).is_some() {
+                candidates.push(candidate(
+                    "jump_set_existing_target",
+                    "Usar destino existente",
+                    "Use existing target",
+                    QuickFixRisk::Review,
+                    false,
+                ));
+            }
+        }
+        LintCode::InvalidTransitionKind => candidates.push(candidate(
             "transition_set_fade",
             "Usar fade",
             "Use fade",
             QuickFixRisk::Safe,
             false,
         )),
-        LintCode::InvalidTransitionDuration => Some(candidate(
+        LintCode::InvalidTransitionDuration => candidates.push(candidate(
             "transition_set_default_duration",
             "Usar duracion por defecto",
             "Use default duration",
             QuickFixRisk::Safe,
             false,
         )),
-        LintCode::InvalidAudioChannel => Some(candidate(
+        LintCode::InvalidAudioChannel => candidates.push(candidate(
             "audio_normalize_channel",
             "Normalizar canal",
             "Normalize channel",
             QuickFixRisk::Safe,
             false,
         )),
-        LintCode::InvalidAudioAction => Some(candidate(
+        LintCode::InvalidAudioAction => candidates.push(candidate(
             "audio_normalize_action",
             "Normalizar accion",
             "Normalize action",
             QuickFixRisk::Safe,
             false,
         )),
-        LintCode::InvalidAudioVolume => Some(candidate(
+        LintCode::InvalidAudioVolume => candidates.push(candidate(
             "audio_clamp_volume",
             "Ajustar volumen",
             "Clamp volume",
             QuickFixRisk::Safe,
             false,
         )),
-        LintCode::InvalidAudioFade => Some(candidate(
+        LintCode::InvalidAudioFade => candidates.push(candidate(
             "audio_set_default_fade",
             "Usar fade por defecto",
             "Use default fade",
             QuickFixRisk::Safe,
             false,
         )),
-        LintCode::SceneBackgroundEmpty => Some(candidate(
+        LintCode::SceneBackgroundEmpty => candidates.push(candidate(
             "scene_clear_empty_background",
             "Limpiar background vacio",
             "Clear empty background",
             QuickFixRisk::Safe,
             false,
         )),
-        LintCode::AudioAssetEmpty => assets::empty_asset_candidate(issue, graph),
-        LintCode::AudioAssetMissing => assets::missing_audio_candidate(issue, graph),
-        LintCode::AssetReferenceMissing => assets::clear_asset_candidate(
-            issue,
-            graph,
-            "clear_missing_asset_reference",
-            "Limpiar asset inexistente",
-            "Clear missing asset",
+        LintCode::AudioAssetEmpty => {
+            extend_optional(&mut candidates, assets::empty_asset_candidate(issue, graph))
+        }
+        LintCode::AudioAssetMissing => extend_optional(
+            &mut candidates,
+            assets::missing_audio_candidate(issue, graph),
         ),
-        LintCode::UnsafeAssetPath => assets::clear_asset_candidate(
-            issue,
-            graph,
-            "clear_unsafe_asset_reference",
-            "Limpiar asset inseguro",
-            "Clear unsafe asset",
+        LintCode::AssetReferenceMissing => extend_optional(
+            &mut candidates,
+            assets::clear_asset_candidate(
+                issue,
+                graph,
+                "clear_missing_asset_reference",
+                "Limpiar asset inexistente",
+                "Clear missing asset",
+            ),
         ),
-        LintCode::EmptyCharacterName => Some(candidate(
+        LintCode::UnsafeAssetPath => extend_optional(
+            &mut candidates,
+            assets::clear_asset_candidate(
+                issue,
+                graph,
+                "clear_unsafe_asset_reference",
+                "Limpiar asset inseguro",
+                "Clear unsafe asset",
+            ),
+        ),
+        LintCode::EmptyCharacterName => candidates.push(candidate(
             "character_prune_or_fill_invalid_names",
             "Corregir nombres vacios",
             "Fix empty names",
-            QuickFixRisk::Safe,
+            QuickFixRisk::Review,
             false,
         )),
-        LintCode::InvalidCharacterScale => Some(candidate(
+        LintCode::InvalidCharacterScale => candidates.push(candidate(
             "character_set_default_scale",
             "Usar escala por defecto",
             "Use default scale",
             QuickFixRisk::Safe,
             false,
         )),
-        _ => None,
-    }) else {
-        return Vec::new();
-    };
-    vec![candidate]
+        _ => {}
+    }
+    candidates
 }
 
 pub fn apply_fix(graph: &mut NodeGraph, issue: &LintIssue, fix_id: &str) -> Result<bool, String> {
@@ -197,12 +220,13 @@ pub fn apply_fix(graph: &mut NodeGraph, issue: &LintIssue, fix_id: &str) -> Resu
         "graph_add_start" => Ok(add_start(graph)),
         "node_connect_dead_end_to_end" => connect_dead_end(graph, require_node(issue)?),
         "choice_add_default_option" => add_choice_option(graph, require_node(issue)?),
+        "choice_add_default_option_to_end" => add_choice_option_to_end(graph, require_node(issue)?),
         "choice_link_unlinked_to_end" => link_unlinked_choice_options(graph, require_node(issue)?),
         "choice_expand_options_to_ports" => {
             expand_choice_options_to_ports(graph, require_node(issue)?)
         }
         "dialogue_fill_speaker" => fill_speaker(graph, require_node(issue)?),
-        "jump_set_start_target" => set_jump_target_start(graph, require_node(issue)?),
+        "jump_set_existing_target" => set_jump_target_existing(graph, require_node(issue)?),
         "transition_set_fade" => set_transition_kind(graph, require_node(issue)?),
         "transition_set_default_duration" => set_transition_duration(graph, require_node(issue)?),
         "audio_normalize_channel" => normalize_audio_channel(graph, require_node(issue)?),
@@ -241,6 +265,12 @@ fn candidate(
         postconditions_en: "The graph is updated deterministically.",
         risk,
         structural,
+    }
+}
+
+fn extend_optional(candidates: &mut Vec<QuickFixCandidate>, candidate: Option<QuickFixCandidate>) {
+    if let Some(candidate) = candidate {
+        candidates.push(candidate);
     }
 }
 
@@ -297,6 +327,16 @@ fn add_choice_option(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String
     options.push("Option 1".to_string());
     graph.mark_modified();
     Ok(true)
+}
+
+fn add_choice_option_to_end(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
+    let added = add_choice_option(graph, node_id)?;
+    let end = ensure_end(graph, node_id)?;
+    graph.connect_port(node_id, 0, end);
+    Ok(added
+        || graph
+            .connections()
+            .any(|conn| conn.from == node_id && conn.from_port == 0 && conn.to == end))
 }
 
 fn link_unlinked_choice_options(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
@@ -360,7 +400,9 @@ fn fill_speaker(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
     Ok(true)
 }
 
-fn set_jump_target_start(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
+fn set_jump_target_existing(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
+    let target_label = existing_jump_target(graph)
+        .ok_or_else(|| "no existing target label available for empty jump".to_string())?;
     let Some(node) = graph.get_node_mut(node_id) else {
         return Err(format!("node_id {node_id} not found"));
     };
@@ -368,13 +410,26 @@ fn set_jump_target_start(graph: &mut NodeGraph, node_id: u32) -> Result<bool, St
         StoryNode::Jump { target } | StoryNode::JumpIf { target, .. }
             if target.trim().is_empty() =>
         {
-            *target = "start".to_string();
+            *target = target_label;
             graph.mark_modified();
             Ok(true)
         }
         StoryNode::Jump { .. } | StoryNode::JumpIf { .. } => Ok(false),
         _ => Err(format!("node_id {node_id} is not Jump/JumpIf")),
     }
+}
+
+fn existing_jump_target(graph: &NodeGraph) -> Option<String> {
+    if graph
+        .nodes()
+        .any(|(_, node, _)| matches!(node, StoryNode::Start))
+    {
+        return Some("start".to_string());
+    }
+    graph
+        .nodes()
+        .find(|(_, node, _)| !node.is_marker())
+        .map(|(id, _, _)| format!("node_{id}"))
 }
 
 fn set_transition_kind(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {

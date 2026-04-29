@@ -23,9 +23,19 @@ impl<'a> SoftwareBackend<'a> {
         height: u32,
         strategy: Box<dyn SoftwareDrawStrategy>,
     ) -> Self {
+        Self::try_new(window, width, height, strategy)
+            .unwrap_or_else(|err| panic!("failed to create pixel surface: {err}"))
+    }
+
+    pub fn try_new(
+        window: Arc<Window>,
+        width: u32,
+        height: u32,
+        strategy: Box<dyn SoftwareDrawStrategy>,
+    ) -> Result<Self, String> {
         let surface = SurfaceTexture::new(width, height, window);
-        let pixels = Pixels::new(width, height, surface).expect("failed to create pixel surface");
-        Self { pixels, strategy }
+        let pixels = Pixels::new(width, height, surface).map_err(|err| err.to_string())?;
+        Ok(Self { pixels, strategy })
     }
 }
 
@@ -120,6 +130,25 @@ impl SoftwareDrawStrategy for BuiltinSoftwareDrawer {
                 );
                 y = y.saturating_add(option_height + 8);
             }
+        }
+
+        if let Some(transition) = &ui.pending_transition {
+            let alpha = if transition.kind == "dissolve" {
+                96
+            } else {
+                160
+            };
+            draw_rect(
+                frame,
+                (width, height),
+                RectSpec {
+                    x: 0,
+                    y: 0,
+                    width,
+                    height,
+                    color: [0, 0, 0, alpha],
+                },
+            );
         }
     }
 }
