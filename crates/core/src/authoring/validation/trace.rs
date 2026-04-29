@@ -1,56 +1,4 @@
-use std::collections::HashSet;
-
 use serde_json::Value;
-
-use crate::editor::node_graph::NodeGraph;
-use crate::editor::node_types::StoryNode;
-
-pub(super) fn unreachable_blocker_context(
-    graph: &NodeGraph,
-    node_id: u32,
-    visited: &HashSet<u32>,
-) -> (Option<u32>, String) {
-    let incoming = graph.incoming_nodes(node_id);
-    if incoming.is_empty() {
-        return (
-            None,
-            "no incoming edges from any reachable path".to_string(),
-        );
-    }
-
-    if let Some(from_id) = incoming
-        .iter()
-        .copied()
-        .find(|candidate| visited.contains(candidate))
-    {
-        return (
-            Some(from_id),
-            format!("reachable predecessor {from_id} cannot advance into this branch"),
-        );
-    }
-
-    let incoming_summary = incoming
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
-    (
-        incoming.first().copied(),
-        format!("all predecessors are unreachable [{incoming_summary}]"),
-    )
-}
-
-pub(super) fn non_exportable_event_name(node: &StoryNode, fallback_name: &str) -> String {
-    match node {
-        StoryNode::Generic(event) => event
-            .to_json_value()
-            .get("type")
-            .and_then(Value::as_str)
-            .unwrap_or(fallback_name)
-            .to_string(),
-        _ => fallback_name.to_string(),
-    }
-}
 
 pub(super) struct ImportTraceContext {
     pub trace_id: String,
@@ -97,7 +45,7 @@ pub(super) fn parse_import_trace_context(args: &[String]) -> Option<ImportTraceC
         let snippet = parsed
             .get("snippet")
             .and_then(Value::as_str)
-            .map(|value| value.to_string());
+            .map(std::string::ToString::to_string);
         let active_label = parsed
             .get("active_label")
             .and_then(Value::as_str)

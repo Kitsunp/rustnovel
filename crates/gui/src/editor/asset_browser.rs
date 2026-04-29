@@ -18,6 +18,7 @@ pub struct AssetBrowserPanel<'a> {
     project_root: Option<&'a Path>,
     image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     image_failures: &'a mut HashMap<String, String>,
+    asset_store: Option<vnengine_assets::AssetStore>,
 }
 
 impl<'a> AssetBrowserPanel<'a> {
@@ -32,6 +33,7 @@ impl<'a> AssetBrowserPanel<'a> {
             project_root,
             image_cache,
             image_failures,
+            asset_store: None,
         }
     }
 
@@ -74,7 +76,7 @@ impl<'a> AssetBrowserPanel<'a> {
                 } else {
                     for (name, path) in &self.manifest.assets.audio {
                         ui.horizontal(|ui| {
-                            let asset_path = path.to_string_lossy().replace('\\', "/");
+                            let asset_path = normalize_asset_path(&path.to_string_lossy());
                             let button = ui.add(egui::Button::new(format!("Audio {name}")));
                             if button.drag_started() {
                                 let payload = format!("asset://audio/{asset_path}");
@@ -128,12 +130,12 @@ impl<'a> AssetBrowserPanel<'a> {
                         let response = self.render_image_asset_card(ui, type_id, &name, &path);
 
                         let value = match type_id {
-                            "bg" => path.to_string_lossy().replace('\\', "/"),
+                            "bg" => normalize_asset_path(&path.to_string_lossy()),
                             "char" => name.clone(),
                             _ => name.clone(),
                         };
                         if response.drag_started() {
-                            let asset_path = path.to_string_lossy().replace('\\', "/");
+                            let asset_path = normalize_asset_path(&path.to_string_lossy());
                             let payload = asset_drag_payload(type_id, &value, &asset_path);
                             ui.memory_mut(|mem| {
                                 mem.data
@@ -164,7 +166,7 @@ impl<'a> AssetBrowserPanel<'a> {
             egui::Stroke::new(1.0, egui::Color32::from_gray(72)),
         );
 
-        let asset_path = path.to_string_lossy().replace('\\', "/");
+        let asset_path = normalize_asset_path(&path.to_string_lossy());
         let image_rect =
             egui::Rect::from_min_size(rect.min + egui::vec2(6.0, 6.0), egui::vec2(84.0, 72.0));
         if let Some(texture_id) = self.thumbnail_texture(ui.ctx(), &asset_path) {
@@ -211,14 +213,7 @@ impl<'a> AssetBrowserPanel<'a> {
         let Some(project_root) = self.project_root else {
             return None;
         };
-        let store = vnengine_assets::AssetStore::new(
-            project_root.to_path_buf(),
-            vnengine_assets::SecurityMode::Trusted,
-            None,
-            false,
-        )
-        .ok()?;
-        let image = match store.load_image(asset_path) {
+        let image = match self.asset_store(project_root)?.load_image(asset_path) {
             Ok(image) => image,
             Err(err) => {
                 self.image_failures.insert(cache_key, err.to_string());
@@ -235,6 +230,19 @@ impl<'a> AssetBrowserPanel<'a> {
         self.image_cache.insert(cache_key, texture);
         Some(id)
     }
+
+    fn asset_store(&mut self, project_root: &Path) -> Option<&vnengine_assets::AssetStore> {
+        if self.asset_store.is_none() {
+            self.asset_store = vnengine_assets::AssetStore::new(
+                project_root.to_path_buf(),
+                vnengine_assets::SecurityMode::Trusted,
+                None,
+                false,
+            )
+            .ok();
+        }
+        self.asset_store.as_ref()
+    }
 }
 
 fn asset_drag_payload(type_id: &str, value: &str, asset_path: &str) -> String {
@@ -247,6 +255,10 @@ fn asset_drag_payload(type_id: &str, value: &str, asset_path: &str) -> String {
 
 fn thumbnail_cache_key(asset_path: &str) -> String {
     format!("asset_browser::thumb::{asset_path}")
+}
+
+fn normalize_asset_path(path: &str) -> String {
+    path.replace('\\', "/")
 }
 
 fn truncate_label(label: &str, max_chars: usize) -> String {

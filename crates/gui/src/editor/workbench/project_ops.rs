@@ -205,8 +205,9 @@ impl EditorWorkbench {
     pub fn prepare_save_confirmation(&mut self) {
         let maybe_path = self.pending_save_path.clone().or_else(|| {
             rfd::FileDialog::new()
-                .add_filter("Script JSON", &["json"])
-                .set_file_name("script.json")
+                .add_filter("Authoring Project", &["vnauthoring", "vnproject"])
+                .add_filter("Legacy Script JSON", &["json"])
+                .set_file_name("game.vnauthoring")
                 .save_file()
         });
 

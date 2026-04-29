@@ -57,8 +57,8 @@ fn auto_layout_hierarchical_resolves_overlaps_in_dense_graph() {
         .nodes()
         .map(|(id, node, pos)| {
             let rect =
-                egui::Rect::from_min_size(*pos, egui::vec2(NODE_WIDTH, node_visual_height(node)));
-            (*id, rect)
+                egui::Rect::from_min_size(pos, egui::vec2(NODE_WIDTH, node_visual_height(&node)));
+            (id, rect)
         })
         .collect();
 

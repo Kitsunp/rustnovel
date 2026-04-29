@@ -1,6 +1,5 @@
 //! GUI adapter for the core execution contract matrix.
 
-use crate::editor::authoring_adapter::to_authoring_node;
 use crate::editor::node_types::StoryNode;
 
 pub use visual_novel_engine::{
@@ -8,7 +7,7 @@ pub use visual_novel_engine::{
 };
 
 pub fn contract_for_node(node: &StoryNode) -> EventExecutionContract {
-    visual_novel_engine::contract_for_authoring_node(&to_authoring_node(node))
+    visual_novel_engine::contract_for_authoring_node(node)
 }
 
 pub fn is_preview_only_node(node: &StoryNode) -> bool {

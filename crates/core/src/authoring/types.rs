@@ -39,6 +39,10 @@ pub enum StoryNode {
         key: String,
         value: i32,
     },
+    SetFlag {
+        key: String,
+        value: bool,
+    },
     ScenePatch(ScenePatchRaw),
     JumpIf {
         target: String,
@@ -85,6 +89,7 @@ impl StoryNode {
             StoryNode::Scene { .. } => "Scene",
             StoryNode::Jump { .. } => "Jump",
             StoryNode::SetVariable { .. } => "Set Var",
+            StoryNode::SetFlag { .. } => "Set Flag",
             StoryNode::ScenePatch(_) => "Scene Patch",
             StoryNode::JumpIf { .. } => "Branch (If)",
             StoryNode::Start => "Start",
@@ -113,6 +118,9 @@ impl StoryNode {
         !matches!(
             self,
             StoryNode::Start | StoryNode::End | StoryNode::Generic(_)
-        ) || matches!(self, StoryNode::Generic(EventRaw::ExtCall { .. }))
+        ) || matches!(
+            self,
+            StoryNode::Generic(EventRaw::ExtCall { .. } | EventRaw::SetFlag { .. })
+        )
     }
 }

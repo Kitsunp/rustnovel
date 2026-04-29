@@ -4,11 +4,13 @@
 //! the story flow. It handles node management and connections.
 //! Script synchronization is in the `script_sync` module.
 
-use std::collections::BTreeMap;
-
 use eframe::egui;
 use serde::{Deserialize, Serialize};
-use visual_novel_engine::{CharacterPlacementRaw, ScriptRaw};
+pub use visual_novel_engine::authoring::{GraphConnection, SceneProfile};
+use visual_novel_engine::{
+    authoring::{AuthoringPosition, NodeGraph as AuthoringGraph},
+    ScriptRaw,
+};
 
 use super::node_types::{
     node_visual_height, ContextMenu, StoryNode, NODE_HEIGHT, NODE_VERTICAL_SPACING, NODE_WIDTH,
@@ -23,59 +25,20 @@ mod navigation;
 mod search;
 mod view;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GraphConnection {
-    pub from: u32,
-    pub from_port: usize,
-    pub to: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SceneLayer {
-    pub name: String,
-    pub visible: bool,
-    pub background: Option<String>,
-    pub characters: Vec<CharacterPlacementRaw>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CharacterPoseBinding {
-    pub character: String,
-    pub pose: String,
-    pub image: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SceneProfile {
-    pub background: Option<String>,
-    pub music: Option<String>,
-    pub characters: Vec<CharacterPlacementRaw>,
-    #[serde(default)]
-    pub layers: Vec<SceneLayer>,
-    #[serde(default)]
-    pub poses: Vec<CharacterPoseBinding>,
-}
-
 /// A node graph representing the story structure.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeGraph {
-    /// Nodes: (id, node, position in graph space)
-    pub(crate) nodes: Vec<(u32, StoryNode, egui::Pos2)>,
-    /// Connections: structured connections with ports
-    pub(crate) connections: Vec<GraphConnection>,
-    /// Reusable scene presets/environments.
-    pub(crate) scene_profiles: BTreeMap<String, SceneProfile>,
-    /// Named anchors for fast navigation in large graphs.
-    #[serde(default)]
-    pub(crate) bookmarks: BTreeMap<String, u32>,
-    /// Next available node ID
-    next_id: u32,
+    /// Headless semantic graph. GUI state below is view/interaction only.
+    #[serde(flatten)]
+    pub(crate) authoring: AuthoringGraph,
     /// Currently selected node
     #[serde(skip)]
     pub selected: Option<u32>,
     /// Pan offset (world-space translation)
+    #[serde(default)]
     pub(crate) pan: egui::Vec2,
     /// Zoom level
+    #[serde(default = "default_zoom")]
     pub(crate) zoom: f32,
     /// Node being edited inline
     #[serde(skip)]
@@ -89,19 +52,12 @@ pub struct NodeGraph {
     /// Active context menu
     #[serde(skip)]
     pub context_menu: Option<ContextMenu>,
-    /// Dirty flag (script modified since last save)
-    #[serde(skip)]
-    pub(crate) modified: bool,
 }
 
 impl Default for NodeGraph {
     fn default() -> Self {
         Self {
-            nodes: Vec::new(),
-            connections: Vec::new(),
-            scene_profiles: BTreeMap::new(),
-            bookmarks: BTreeMap::new(),
-            next_id: 0,
+            authoring: AuthoringGraph::new(),
             selected: None,
             pan: egui::Vec2::ZERO,
             zoom: ZOOM_DEFAULT,
@@ -109,7 +65,6 @@ impl Default for NodeGraph {
             dragging_node: None,
             connecting_from: None,
             context_menu: None,
-            modified: false,
         }
     }
 }
@@ -121,28 +76,13 @@ impl NodeGraph {
 
     /// Adds a node at the specified position. Returns the node ID.
     pub fn add_node(&mut self, node: StoryNode, pos: egui::Pos2) -> u32 {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.nodes.push((id, node, pos));
-        self.modified = true;
-        id
-    }
-
-    pub(crate) fn add_node_with_id(&mut self, id: u32, node: StoryNode, pos: egui::Pos2) -> bool {
-        if self.nodes.iter().any(|(node_id, _, _)| *node_id == id) {
-            return false;
-        }
-        self.next_id = self.next_id.max(id.saturating_add(1));
-        self.nodes.push((id, node, pos));
-        self.modified = true;
-        true
+        self.authoring
+            .add_node(node, AuthoringPosition::new(pos.x, pos.y))
     }
 
     /// Removes a node and all its connections.
     pub fn remove_node(&mut self, id: u32) {
-        self.nodes.retain(|(nid, _, _)| *nid != id);
-        self.connections.retain(|c| c.from != id && c.to != id);
-        self.bookmarks.retain(|_, target| *target != id);
+        self.authoring.remove_node(id);
 
         if self.selected == Some(id) {
             self.selected = None;
@@ -155,36 +95,34 @@ impl NodeGraph {
                 self.connecting_from = None;
             }
         }
-
-        self.modified = true;
     }
 
     /// Returns the number of nodes.
     #[inline]
     pub fn len(&self) -> usize {
-        self.nodes.len()
+        self.authoring.len()
     }
 
     /// Returns true if the graph is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
+        self.authoring.is_empty()
     }
 
     /// Returns true if the graph has been modified since last save.
     #[inline]
     pub fn is_modified(&self) -> bool {
-        self.modified
+        self.authoring.is_modified()
     }
 
     /// Clears the modified flag.
     pub fn clear_modified(&mut self) {
-        self.modified = false;
+        self.authoring.clear_modified();
     }
 
     /// Marks the graph as modified.
     pub fn mark_modified(&mut self) {
-        self.modified = true;
+        self.authoring.mark_modified();
     }
 
     /// Creates a node graph from a raw script.
@@ -199,11 +137,11 @@ impl NodeGraph {
 
     /// Returns the node at the given graph position, if any.
     pub fn node_at_position(&self, graph_pos: egui::Pos2) -> Option<u32> {
-        for (id, node, pos) in &self.nodes {
+        for (id, node, pos) in self.nodes() {
             let node_rect =
-                egui::Rect::from_min_size(*pos, egui::vec2(NODE_WIDTH, node_visual_height(node)));
+                egui::Rect::from_min_size(pos, egui::vec2(NODE_WIDTH, node_visual_height(&node)));
             if node_rect.contains(graph_pos) {
-                return Some(*id);
+                return Some(id);
             }
         }
         None
@@ -211,49 +149,62 @@ impl NodeGraph {
 
     /// Gets a reference to a node by ID.
     pub fn get_node(&self, id: u32) -> Option<&StoryNode> {
-        self.nodes
-            .iter()
-            .find(|(nid, _, _)| *nid == id)
-            .map(|(_, node, _)| node)
+        self.authoring.get_node(id)
     }
 
     /// Gets a mutable reference to a node by ID.
     pub fn get_node_mut(&mut self, id: u32) -> Option<&mut StoryNode> {
-        self.nodes
-            .iter_mut()
-            .find(|(nid, _, _)| *nid == id)
-            .map(|(_, node, _)| node)
+        self.authoring.get_node_mut(id)
     }
 
-    /// Gets a mutable reference to a node position by ID.
-    pub fn get_node_pos_mut(&mut self, id: u32) -> Option<&mut egui::Pos2> {
-        self.nodes
-            .iter_mut()
-            .find(|(nid, _, _)| *nid == id)
-            .map(|(_, _, pos)| pos)
+    pub fn get_node_pos(&self, id: u32) -> Option<egui::Pos2> {
+        self.authoring
+            .get_node_pos(id)
+            .map(|pos| egui::pos2(pos.x, pos.y))
     }
 
-    /// Returns an iterator over all nodes.
-    pub fn nodes(&self) -> impl Iterator<Item = &(u32, StoryNode, egui::Pos2)> {
-        self.nodes.iter()
+    pub fn set_node_pos(&mut self, id: u32, pos: egui::Pos2) -> bool {
+        self.authoring
+            .set_node_pos(id, AuthoringPosition::new(pos.x, pos.y))
     }
 
-    /// Returns an iterator over all connections.
-    pub fn connections(&self) -> impl Iterator<Item = &GraphConnection> {
-        self.connections.iter()
+    pub fn translate_node(&mut self, id: u32, delta: egui::Vec2) -> bool {
+        let Some(pos) = self.get_node_pos(id) else {
+            return false;
+        };
+        self.set_node_pos(id, pos + delta)
     }
 
-    /// Returns a slice of all nodes (internal use).
-    #[allow(dead_code)]
-    pub(crate) fn nodes_slice(&self) -> &[(u32, StoryNode, egui::Pos2)] {
-        &self.nodes
+    /// Returns an iterator over all nodes as GUI-positioned snapshots.
+    pub fn nodes(&self) -> impl Iterator<Item = (u32, StoryNode, egui::Pos2)> + '_ {
+        self.authoring
+            .nodes()
+            .map(|(id, node, pos)| (*id, node.clone(), egui::pos2(pos.x, pos.y)))
     }
 
-    /// Returns a slice of all connections (internal use).
-    #[allow(dead_code)]
-    pub(crate) fn connections_slice(&self) -> &[GraphConnection] {
-        &self.connections
+    /// Returns an iterator over all connections as snapshots.
+    pub fn connections(&self) -> impl Iterator<Item = GraphConnection> + '_ {
+        self.authoring.connections().cloned()
     }
+
+    pub(crate) fn from_authoring_graph(authoring: AuthoringGraph) -> Self {
+        Self {
+            authoring,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn authoring_graph(&self) -> &AuthoringGraph {
+        &self.authoring
+    }
+
+    pub(crate) fn replace_authoring_graph(&mut self, authoring: AuthoringGraph) {
+        self.authoring = authoring;
+    }
+}
+
+fn default_zoom() -> f32 {
+    ZOOM_DEFAULT
 }
 
 #[cfg(test)]

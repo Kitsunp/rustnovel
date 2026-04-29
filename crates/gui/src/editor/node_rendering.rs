@@ -260,6 +260,13 @@ pub fn render_inline_editor(graph: &mut NodeGraph, ui: &egui::Ui) {
                         changed |= ui.add(egui::DragValue::new(value)).changed();
                     });
                 }
+                StoryNode::SetFlag { key, value } => {
+                    ui.horizontal(|ui| {
+                        ui.label("Flag:");
+                        changed |= ui.text_edit_singleline(key).changed();
+                        changed |= ui.checkbox(value, "Set").changed();
+                    });
+                }
                 StoryNode::JumpIf { target, .. } => {
                     ui.horizontal(|ui| {
                         ui.label("Target:");

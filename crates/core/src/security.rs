@@ -26,7 +26,7 @@ impl SecurityPolicy {
             if label.len() > limits.max_label_length {
                 return Err(VnError::ResourceLimit(format!("label '{label}' too long")));
             }
-            if *index >= script.events.len() {
+            if *index > script.events.len() {
                 return Err(VnError::InvalidScript(format!(
                     "label '{label}' points outside events"
                 )));
@@ -217,7 +217,7 @@ impl SecurityPolicy {
             match event {
                 EventCompiled::Choice(choice) => {
                     for option in &choice.options {
-                        if option.target_ip as usize >= script.events.len() {
+                        if option.target_ip as usize > script.events.len() {
                             return Err(VnError::InvalidScript(format!(
                                 "choice target_ip {} outside events",
                                 option.target_ip
@@ -226,9 +226,17 @@ impl SecurityPolicy {
                     }
                 }
                 EventCompiled::Jump { target_ip } => {
-                    if *target_ip as usize >= script.events.len() {
+                    if *target_ip as usize > script.events.len() {
                         return Err(VnError::InvalidScript(format!(
                             "jump target_ip {} outside events",
+                            target_ip
+                        )));
+                    }
+                }
+                EventCompiled::JumpIf { target_ip, .. } => {
+                    if *target_ip as usize > script.events.len() {
+                        return Err(VnError::InvalidScript(format!(
+                            "jump_if target_ip {} outside events",
                             target_ip
                         )));
                     }

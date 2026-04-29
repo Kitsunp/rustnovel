@@ -7,7 +7,10 @@ mod signatures;
 
 pub use dry_run::{run_dry_run, DryRunOutcome};
 pub use repro::{build_minimal_repro_script, check_preview_runtime_parity};
-pub use route_sim::{enumerate_choice_routes, simulate_raw_sequence, RawStepTrace};
+pub use route_sim::{
+    enumerate_choice_routes, enumerate_choice_routes_with_report, simulate_raw_sequence,
+    RawStepTrace, RouteEnumerationReport,
+};
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -15,7 +18,8 @@ use std::path::Path;
 use crate::{Engine, ResourceLimiter, ScriptRaw, SecurityPolicy, StoryGraph};
 
 use super::{
-    validate_authoring_graph_with_probe, LintCode, LintIssue, LintSeverity, NodeGraph,
+    default_asset_exists, validate_authoring_graph_with_project_root,
+    validate_authoring_graph_with_resolver, LintCode, LintIssue, LintSeverity, NodeGraph,
     ValidationPhase,
 };
 
@@ -123,6 +127,10 @@ pub struct DryRunStepTrace {
 pub struct DryRunReport {
     pub max_steps: usize,
     pub executed_steps: usize,
+    pub routes_discovered: usize,
+    pub routes_executed: usize,
+    pub route_limit_hit: bool,
+    pub depth_limit_hit: bool,
     pub stop_reason: DryRunStopReason,
     pub stop_message: String,
     pub failing_event_ip: Option<u32>,
@@ -171,11 +179,9 @@ pub fn compile_authoring_graph(
     let script = graph.to_script();
 
     let mut issues = if let Some(root) = project_root {
-        validate_authoring_graph_with_probe(graph, |asset| {
-            asset_exists_from_project_root(root, asset)
-        })
+        validate_authoring_graph_with_project_root(graph, root)
     } else {
-        validate_authoring_graph_with_probe(graph, default_asset_exists)
+        validate_authoring_graph_with_resolver(graph, default_asset_exists)
     };
     phase_trace.push(PhaseTrace {
         phase: CompilationPhase::GraphValidation,
@@ -244,25 +250,34 @@ pub fn compile_authoring_graph(
                     }
                     issues.extend(parity_issues);
 
-                    let mut route_policies = vec![
-                        ChoicePolicy::Strategy(ChoiceStrategy::Last),
-                        ChoicePolicy::Strategy(ChoiceStrategy::Alternating),
-                    ];
-                    for path in enumerate_choice_routes(
+                    let route_report = enumerate_choice_routes_with_report(
                         &script,
                         DRY_RUN_MAX_STEPS,
                         DRY_RUN_EXHAUSTIVE_ROUTE_LIMIT,
                         DRY_RUN_EXHAUSTIVE_CHOICE_DEPTH,
-                    ) {
+                    );
+                    if let Some(report) = dry_run_report.as_mut() {
+                        report.routes_discovered = route_report.routes_discovered;
+                        report.route_limit_hit = route_report.route_limit_hit;
+                        report.depth_limit_hit = route_report.depth_limit_hit;
+                    }
+
+                    let mut route_policies = vec![
+                        ChoicePolicy::Strategy(ChoiceStrategy::Last),
+                        ChoicePolicy::Strategy(ChoiceStrategy::Alternating),
+                    ];
+                    for path in route_report.routes {
                         route_policies.push(ChoicePolicy::Scripted(path));
                     }
 
                     let mut seen_policies = HashSet::new();
                     seen_policies.insert(primary_policy);
+                    let mut routes_executed = 1usize;
                     for policy in route_policies {
                         if !seen_policies.insert(policy.clone()) {
                             continue;
                         }
+                        routes_executed = routes_executed.saturating_add(1);
                         append_route_dry_run_issues(
                             &script,
                             &compiled,
@@ -270,6 +285,9 @@ pub fn compile_authoring_graph(
                             &mut issues,
                             &mut dry_run_report,
                         );
+                    }
+                    if let Some(report) = dry_run_report.as_mut() {
+                        report.routes_executed = routes_executed;
                     }
 
                     let dry_run_errors = issues
@@ -380,24 +398,4 @@ fn append_route_dry_run_issues(
             ));
         }
     }
-}
-
-fn default_asset_exists(path: &str) -> bool {
-    let candidate = Path::new(path.trim());
-    if candidate.is_absolute() {
-        return candidate.is_file();
-    }
-
-    match std::env::current_dir() {
-        Ok(cwd) => cwd.join(candidate).is_file(),
-        Err(_) => candidate.is_file(),
-    }
-}
-
-fn asset_exists_from_project_root(project_root: &Path, path: &str) -> bool {
-    let candidate = Path::new(path.trim());
-    if candidate.is_absolute() {
-        return candidate.is_file();
-    }
-    project_root.join(candidate).is_file()
 }

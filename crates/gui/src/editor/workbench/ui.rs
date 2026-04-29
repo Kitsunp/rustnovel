@@ -431,7 +431,7 @@ impl EditorWorkbench {
             self.refresh_scene_from_engine_preview();
         }
 
-        if self.node_graph.modified {
+        if self.node_graph.is_modified() {
             self.undo_stack.push(self.node_graph.clone());
             self.node_graph.clear_modified();
             let _ = self.sync_graph_to_script();

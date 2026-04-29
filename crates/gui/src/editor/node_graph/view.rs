@@ -36,7 +36,7 @@ impl NodeGraph {
 
     /// Adjusts pan and zoom to show all nodes.
     pub fn zoom_to_fit(&mut self) {
-        if self.nodes.is_empty() {
+        if self.is_empty() {
             self.reset_view();
             return;
         }
@@ -46,11 +46,11 @@ impl NodeGraph {
         let mut max_x = f32::MIN;
         let mut max_y = f32::MIN;
 
-        for (_, node, pos) in &self.nodes {
+        for (_, node, pos) in self.nodes() {
             min_x = min_x.min(pos.x);
             min_y = min_y.min(pos.y);
             max_x = max_x.max(pos.x + NODE_WIDTH);
-            max_y = max_y.max(pos.y + node_visual_height(node));
+            max_y = max_y.max(pos.y + node_visual_height(&node));
         }
 
         let padding = 50.0;
@@ -80,8 +80,10 @@ impl NodeGraph {
 
     /// Duplicates a node at an offset position.
     pub fn duplicate_node(&mut self, node_id: u32) {
-        let Some((_, node, pos)) = self.nodes.iter().find(|(id, _, _)| *id == node_id).cloned()
-        else {
+        let Some(node) = self.get_node(node_id).cloned() else {
+            return;
+        };
+        let Some(pos) = self.get_node_pos(node_id) else {
             return;
         };
 

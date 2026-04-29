@@ -147,6 +147,19 @@ impl NodeGraph {
             .map(|(_, _, pos)| *pos)
     }
 
+    pub fn set_node_pos(&mut self, id: u32, pos: AuthoringPosition) -> bool {
+        let Some((_, _, current)) = self.nodes.iter_mut().find(|(node_id, _, _)| *node_id == id)
+        else {
+            return false;
+        };
+        if *current == pos {
+            return false;
+        }
+        *current = pos;
+        self.modified = true;
+        true
+    }
+
     pub fn nodes(&self) -> impl Iterator<Item = &(u32, StoryNode, AuthoringPosition)> {
         self.nodes.iter()
     }
@@ -213,6 +226,10 @@ impl NodeGraph {
         }
         if matches!(from_node, StoryNode::Choice { .. }) {
             self.ensure_choice_option(from, from_port);
+        } else if matches!(from_node, StoryNode::JumpIf { .. }) {
+            if from_port > 1 {
+                return;
+            }
         } else if from_port != 0 {
             return;
         }
@@ -298,7 +315,13 @@ impl NodeGraph {
                 .iter()
                 .filter(|connection| connection.from == id)
                 .collect();
-            outgoing.sort_by_key(|connection| (connection.from_port, connection.to));
+            let from_node = self.get_node(id);
+            outgoing.sort_by_key(|connection| {
+                (
+                    script_order_port_key(from_node, connection.from_port),
+                    connection.to,
+                )
+            });
             for connection in outgoing {
                 if !visited_set.contains(&connection.to) && queued.insert(connection.to) {
                     queue.push_back(connection.to);
@@ -407,7 +430,9 @@ fn searchable_text(node: &StoryNode) -> String {
         StoryNode::Jump { target } | StoryNode::JumpIf { target, .. } => {
             fields.push(target.to_ascii_lowercase());
         }
-        StoryNode::SetVariable { key, .. } => fields.push(key.to_ascii_lowercase()),
+        StoryNode::SetVariable { key, .. } | StoryNode::SetFlag { key, .. } => {
+            fields.push(key.to_ascii_lowercase())
+        }
         StoryNode::AudioAction {
             channel,
             action,
@@ -427,4 +452,16 @@ fn searchable_text(node: &StoryNode) -> String {
         StoryNode::ScenePatch(_) | StoryNode::Start | StoryNode::End => {}
     }
     fields.join(" ")
+}
+
+fn script_order_port_key(node: Option<&StoryNode>, port: usize) -> usize {
+    if matches!(node, Some(StoryNode::JumpIf { .. })) {
+        match port {
+            1 => 0,
+            0 => 1,
+            other => other.saturating_add(1),
+        }
+    } else {
+        port
+    }
 }

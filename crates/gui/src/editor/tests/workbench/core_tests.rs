@@ -8,7 +8,7 @@ fn test_workbench_initialization() {
 
     // Assert default state
     assert_eq!(workbench.mode, EditorMode::Editor);
-    assert!(workbench.node_graph.nodes.is_empty());
+    assert!(workbench.node_graph.is_empty());
     assert!(!workbench.is_playing);
 
     // Add dummy track
@@ -196,6 +196,24 @@ fn workbench_diagnostic_report_json_contains_bilingual_fields() {
     assert!(issue["message_en"].as_str().is_some());
     assert!(issue["why_failed_es"].as_str().is_some());
     assert!(issue["why_failed_en"].as_str().is_some());
+    assert_eq!(
+        parsed["fingerprints"]["fingerprint_schema_version"],
+        "vnengine.authoring.fingerprint.v1"
+    );
+    assert_eq!(
+        parsed["fingerprints"]["script_sha256"]
+            .as_str()
+            .expect("script hash")
+            .len(),
+        64
+    );
+    assert_eq!(
+        parsed["fingerprints"]["graph_sha256"]
+            .as_str()
+            .expect("graph hash")
+            .len(),
+        64
+    );
 }
 
 #[test]

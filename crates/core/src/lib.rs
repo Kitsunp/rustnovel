@@ -29,12 +29,15 @@ mod visual;
 pub use assets::{AssetId, AssetId128, AssetManifest};
 pub use audio::AudioCommand;
 pub use authoring::{
-    quick_fix as authoring_quick_fix, validate_authoring_graph,
-    validate_authoring_graph_with_probe, AuthoringPosition, CharacterPoseBinding,
+    asset_exists_from_project_root, default_asset_exists, is_unsafe_asset_ref,
+    quick_fix as authoring_quick_fix, should_probe_asset_exists, validate_authoring_graph,
+    validate_authoring_graph_no_io, validate_authoring_graph_with_probe,
+    validate_authoring_graph_with_project_root, validate_authoring_graph_with_resolver,
+    AuthoringDocument, AuthoringPosition, CharacterPoseBinding,
     GraphConnection as AuthoringGraphConnection, LintCode as AuthoringLintCode,
     LintIssue as AuthoringLintIssue, LintSeverity as AuthoringLintSeverity,
     NodeGraph as AuthoringGraph, QuickFixCandidate, QuickFixRisk, SceneLayer, SceneProfile,
-    StoryNode as AuthoringStoryNode, ValidationPhase,
+    StoryNode as AuthoringStoryNode, ValidationPhase, AUTHORING_DOCUMENT_SCHEMA_VERSION,
 };
 pub use bundle::{
     export_bundle, BundleAssetEntry, BundleIntegrity, ExportBundleReport, ExportBundleSpec,

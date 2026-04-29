@@ -11,7 +11,7 @@ impl<'a> NodeEditorPanel<'a> {
         let mut clicked_node = None;
         let mut right_clicked_node = None;
         let mut double_clicked_node = None;
-        let nodes: Vec<_> = self.graph.nodes().cloned().collect();
+        let nodes: Vec<_> = self.graph.nodes().collect();
 
         // 1. Handle Drag Start (Nodes)
         if response.drag_started_by(egui::PointerButton::Primary) {
@@ -26,6 +26,15 @@ impl<'a> NodeEditorPanel<'a> {
                             if screen_pos.distance(pos) < 10.0 * self.graph.zoom() {
                                 self.graph.connecting_from = Some((*id, i));
                                 return; // Consumed by port drag
+                            }
+                        }
+                    } else if let StoryNode::JumpIf { .. } = node {
+                        for port in 0..=1 {
+                            let port_pos = self.calculate_port_pos(*n_pos, node, port);
+                            let screen_pos = self.graph_to_screen(rect, port_pos);
+                            if screen_pos.distance(pos) < 10.0 * self.graph.zoom() {
+                                self.graph.connecting_from = Some((*id, port));
+                                return;
                             }
                         }
                     } else if node.can_connect_from() {
@@ -57,11 +66,8 @@ impl<'a> NodeEditorPanel<'a> {
         if response.dragged_by(egui::PointerButton::Primary) && self.graph.context_menu.is_none() {
             if let Some(id) = self.graph.dragging_node {
                 let delta = ui.input(|i| i.pointer.delta()) / self.graph.zoom();
-                if let Some(node_pos) = self.graph.get_node_pos_mut(id) {
-                    if delta.length_sq() > 0.0 {
-                        *node_pos += delta;
-                        self.graph.mark_modified();
-                    }
+                if delta.length_sq() > 0.0 {
+                    self.graph.translate_node(id, delta);
                 }
             }
         }
@@ -246,6 +252,46 @@ impl<'a> NodeEditorPanel<'a> {
                         },
                     );
                 }
+                StoryNode::JumpIf { .. } => {
+                    painter.text(
+                        node_rect.min + egui::vec2(8.0, 28.0) * self.graph.zoom(),
+                        egui::Align2::LEFT_TOP,
+                        self.get_node_preview(node),
+                        egui::FontId::proportional(11.0 * self.graph.zoom()),
+                        egui::Color32::from_gray(200),
+                    );
+                    for (port, label) in [(0, "True"), (1, "False")] {
+                        let socket_center =
+                            self.graph_to_screen(rect, self.calculate_port_pos(*pos, node, port));
+                        let hover_radius = 8.0 * self.graph.zoom();
+                        let is_hovered = response
+                            .hover_pos()
+                            .is_some_and(|p| p.distance(socket_center) < hover_radius);
+                        let color = if is_hovered {
+                            egui::Color32::YELLOW
+                        } else if port == 0 {
+                            egui::Color32::LIGHT_GREEN
+                        } else {
+                            egui::Color32::LIGHT_BLUE
+                        };
+                        painter.circle_filled(
+                            socket_center,
+                            if is_hovered {
+                                6.0 * self.graph.zoom()
+                            } else {
+                                4.0 * self.graph.zoom()
+                            },
+                            color,
+                        );
+                        painter.text(
+                            socket_center + egui::vec2(8.0, -8.0),
+                            egui::Align2::LEFT_BOTTOM,
+                            label,
+                            egui::FontId::proportional(10.0 * self.graph.zoom()),
+                            color,
+                        );
+                    }
+                }
                 _ => {
                     painter.text(
                         node_rect.min + egui::vec2(8.0, 28.0) * self.graph.zoom(),
@@ -346,6 +392,7 @@ impl<'a> NodeEditorPanel<'a> {
                 format!("→ {}", target.chars().take(10).collect::<String>())
             }
             StoryNode::SetVariable { key, value } => format!("{} = {}", key, value),
+            StoryNode::SetFlag { key, value } => format!("{} = {}", key, value),
             StoryNode::ScenePatch(patch) => {
                 let bg = patch
                     .background
@@ -404,7 +451,7 @@ impl<'a> NodeEditorPanel<'a> {
             if let Some((_, node, pos)) = self.graph.nodes().find(|(id, _, _)| *id == from_id) {
                 if let Some(cursor) = response.hover_pos() {
                     let from =
-                        self.graph_to_screen(rect, self.calculate_port_pos(*pos, node, from_port));
+                        self.graph_to_screen(rect, self.calculate_port_pos(pos, &node, from_port));
                     painter.line_segment(
                         [from, cursor],
                         egui::Stroke::new(2.0, egui::Color32::YELLOW),

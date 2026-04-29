@@ -107,6 +107,10 @@ pub fn run_dry_run(mut engine: Engine, policy: &ChoicePolicy, max_steps: usize) 
         report: DryRunReport {
             max_steps,
             executed_steps: steps,
+            routes_discovered: 0,
+            routes_executed: 1,
+            route_limit_hit: false,
+            depth_limit_hit: false,
             stop_reason,
             stop_message,
             failing_event_ip,

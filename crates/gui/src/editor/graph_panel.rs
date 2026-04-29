@@ -34,7 +34,7 @@ impl<'a> GraphPanel<'a> {
             .graph
             .nodes()
             .map(|(id, node, _)| {
-                let info = match node {
+                let info = match &node {
                     StoryNode::Dialogue { speaker, text } => {
                         format!("Dialogue {}: {}", speaker, truncate(text, 20))
                     }
@@ -48,6 +48,7 @@ impl<'a> GraphPanel<'a> {
                     }
                     StoryNode::Jump { target } => format!("Jump to {}", target),
                     StoryNode::SetVariable { key, value } => format!("Set {} = {}", key, value),
+                    StoryNode::SetFlag { key, value } => format!("Flag {} = {}", key, value),
                     StoryNode::ScenePatch(_) => "Scene Patch".to_string(),
                     StoryNode::JumpIf { target, .. } => format!("If -> {}", target),
                     StoryNode::Start => "Start".to_string(),
@@ -77,7 +78,7 @@ impl<'a> GraphPanel<'a> {
                         format!("Placement: {} ({}, {})", name, x, y)
                     }
                 };
-                (*id, info, node.color())
+                (id, info, node.color())
             })
             .collect();
 

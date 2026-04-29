@@ -1,10 +1,31 @@
+use std::path::Path;
+
+mod flow;
+mod trace;
+
+use flow::unreachable_blocker_context;
+use trace::parse_import_trace_context;
+
+use crate::EventRaw;
+
 use super::{GraphConnection, LintCode, LintIssue, NodeGraph, StoryNode, ValidationPhase};
 
 pub fn validate(graph: &NodeGraph) -> Vec<LintIssue> {
-    validate_with_asset_probe(graph, |_| true)
+    validate_no_io(graph)
+}
+
+pub fn validate_no_io(graph: &NodeGraph) -> Vec<LintIssue> {
+    validate_with_asset_resolver(graph, |_| true)
 }
 
 pub fn validate_with_asset_probe<F>(graph: &NodeGraph, asset_exists: F) -> Vec<LintIssue>
+where
+    F: Fn(&str) -> bool,
+{
+    validate_with_asset_resolver(graph, asset_exists)
+}
+
+pub fn validate_with_asset_resolver<F>(graph: &NodeGraph, asset_exists: F) -> Vec<LintIssue>
 where
     F: Fn(&str) -> bool,
 {
@@ -31,12 +52,18 @@ where
     let flow = graph.flow_analysis(&start_nodes);
     for (id, node, _) in graph.nodes() {
         if !flow.reachable.contains(id) {
-            issues.push(LintIssue::warning(
+            let (edge_from, blocked_by) = unreachable_blocker_context(graph, *id, &flow.reachable);
+            let mut issue = LintIssue::warning(
                 Some(*id),
                 ValidationPhase::Graph,
                 LintCode::UnreachableNode,
                 "Unreachable node",
-            ));
+            )
+            .with_blocked_by(blocked_by);
+            if let Some(from_id) = edge_from {
+                issue = issue.with_edge(Some(from_id), Some(*id));
+            }
+            issues.push(issue);
         }
         validate_node(graph, *id, node, &asset_exists, &mut issues);
     }
@@ -49,6 +76,12 @@ where
         ));
     }
     issues
+}
+
+pub fn validate_with_project_root(graph: &NodeGraph, project_root: &Path) -> Vec<LintIssue> {
+    validate_with_asset_resolver(graph, |asset| {
+        asset_exists_from_project_root(project_root, asset)
+    })
 }
 
 fn validate_node<F>(
@@ -84,6 +117,9 @@ fn validate_node<F>(
             characters,
             ..
         } => validate_scene(id, background, music, characters, asset_exists, issues),
+        StoryNode::ScenePatch(patch) => {
+            validate_scene_patch(id, patch, asset_exists, issues);
+        }
         StoryNode::Jump { target } | StoryNode::JumpIf { target, .. }
             if target.trim().is_empty() =>
         {
@@ -116,6 +152,41 @@ fn validate_node<F>(
         } => validate_transition(id, kind, *duration_ms, issues),
         StoryNode::CharacterPlacement { name, scale, .. } => {
             validate_character(id, name, scale, issues)
+        }
+        StoryNode::Generic(event) => {
+            let mut issue = LintIssue::warning(
+                Some(id),
+                ValidationPhase::Graph,
+                LintCode::GenericEventUnchecked,
+                "Generic event has limited semantic validation",
+            );
+            if let EventRaw::ExtCall { command, args } = event {
+                if let Some(trace) = parse_import_trace_context(args) {
+                    let ip_segment = trace
+                        .event_ip
+                        .map(|ip| format!(" ip={ip}"))
+                        .unwrap_or_default();
+                    let snippet_segment = trace
+                        .snippet
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                        .map(|value| format!(" snippet='{}'", value.trim()))
+                        .unwrap_or_default();
+                    issue.message = format!(
+                        "Import fallback extcall '{}' requires review (trace_id={}, code={}, source={}, area={}, phase={}{}{})",
+                        command,
+                        trace.trace_id,
+                        trace.issue_code,
+                        trace.source_command,
+                        trace.area,
+                        trace.phase,
+                        ip_segment,
+                        snippet_segment
+                    );
+                    issue = issue.with_blocked_by(trace.blocked_by);
+                }
+            }
+            issues.push(issue);
         }
         _ => {}
     }
@@ -154,9 +225,45 @@ fn validate_scene<F>(
     }
 }
 
+fn validate_scene_patch<F>(
+    id: u32,
+    patch: &crate::ScenePatchRaw,
+    asset_exists: &F,
+    issues: &mut Vec<LintIssue>,
+) where
+    F: Fn(&str) -> bool,
+{
+    validate_asset(id, &patch.background, "background", asset_exists, issues);
+    validate_asset(id, &patch.music, "music", asset_exists, issues);
+    if patch
+        .add
+        .iter()
+        .any(|character| character.name.trim().is_empty())
+        || patch
+            .update
+            .iter()
+            .any(|character| character.name.trim().is_empty())
+    {
+        issues.push(LintIssue::error(
+            Some(id),
+            ValidationPhase::Graph,
+            LintCode::EmptyCharacterName,
+            "Scene patch has an empty character name",
+        ));
+    }
+    if patch.remove.iter().any(|name| name.trim().is_empty()) {
+        issues.push(LintIssue::warning(
+            Some(id),
+            ValidationPhase::Graph,
+            LintCode::EmptyCharacterName,
+            "Scene patch has an empty character name in remove-list",
+        ));
+    }
+}
+
 fn validate_choice(graph: &NodeGraph, id: u32, options: &[String], issues: &mut Vec<LintIssue>) {
     if options.is_empty() {
-        issues.push(LintIssue::warning(
+        issues.push(LintIssue::error(
             Some(id),
             ValidationPhase::Graph,
             LintCode::ChoiceNoOptions,
@@ -169,12 +276,15 @@ fn validate_choice(graph: &NodeGraph, id: u32, options: &[String], issues: &mut 
         .collect::<Vec<&GraphConnection>>();
     for idx in 0..options.len() {
         if !outgoing.iter().any(|conn| conn.from_port == idx) {
-            issues.push(LintIssue::warning(
-                Some(id),
-                ValidationPhase::Graph,
-                LintCode::ChoiceOptionUnlinked,
-                format!("Choice option {idx} is unlinked"),
-            ));
+            issues.push(
+                LintIssue::warning(
+                    Some(id),
+                    ValidationPhase::Graph,
+                    LintCode::ChoiceOptionUnlinked,
+                    format!("Choice option {idx} is unlinked"),
+                )
+                .with_edge(Some(id), None),
+            );
         }
     }
     for conn in outgoing {
@@ -205,7 +315,7 @@ fn validate_audio<F>(
     F: Fn(&str) -> bool,
 {
     if !matches!(channel, "bgm" | "sfx" | "voice") {
-        issues.push(LintIssue::warning(
+        issues.push(LintIssue::error(
             Some(id),
             ValidationPhase::Graph,
             LintCode::InvalidAudioChannel,
@@ -213,7 +323,7 @@ fn validate_audio<F>(
         ));
     }
     if !matches!(action, "play" | "stop" | "fade_out") {
-        issues.push(LintIssue::warning(
+        issues.push(LintIssue::error(
             Some(id),
             ValidationPhase::Graph,
             LintCode::InvalidAudioAction,
@@ -221,7 +331,7 @@ fn validate_audio<F>(
         ));
     }
     if volume.is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value)) {
-        issues.push(LintIssue::warning(
+        issues.push(LintIssue::error(
             Some(id),
             ValidationPhase::Graph,
             LintCode::InvalidAudioVolume,
@@ -234,6 +344,14 @@ fn validate_audio<F>(
             ValidationPhase::Graph,
             LintCode::InvalidAudioFade,
             "Missing audio fade duration",
+        ));
+    }
+    if action == "play" && asset.is_none() {
+        issues.push(LintIssue::warning(
+            Some(id),
+            ValidationPhase::Graph,
+            LintCode::AudioAssetMissing,
+            "Audio asset path is missing",
         ));
     }
     validate_asset(id, asset, "audio", asset_exists, issues);
@@ -311,7 +429,7 @@ fn validate_asset<F>(
             )
             .with_asset_path(Some(path.clone())),
         );
-    } else if !asset_exists(path) {
+    } else if should_probe_asset_exists(path) && !asset_exists(path) {
         issues.push(
             LintIssue::error(
                 Some(id),
@@ -324,10 +442,50 @@ fn validate_asset<F>(
     }
 }
 
-fn is_unsafe_asset_ref(path: &str) -> bool {
+pub fn default_asset_exists(path: &str) -> bool {
+    let candidate = Path::new(path.trim());
+    if candidate.is_absolute() {
+        return candidate.is_file();
+    }
+
+    match std::env::current_dir() {
+        Ok(cwd) => cwd.join(candidate).is_file(),
+        Err(_) => candidate.is_file(),
+    }
+}
+
+pub fn asset_exists_from_project_root(project_root: &Path, path: &str) -> bool {
+    let candidate = Path::new(path.trim());
+    if candidate.is_absolute() {
+        return candidate.is_file();
+    }
+    project_root.join(candidate).is_file()
+}
+
+pub fn should_probe_asset_exists(path: &str) -> bool {
+    let p = path.trim();
+    if p.is_empty() {
+        return false;
+    }
+
+    p.contains('/')
+        || p.contains('\\')
+        || Path::new(p).extension().is_some()
+        || p.starts_with("assets/")
+        || p.starts_with("assets\\")
+}
+
+pub fn is_unsafe_asset_ref(path: &str) -> bool {
+    let path = path.trim();
+    if path.is_empty() {
+        return false;
+    }
     let lower = path.to_ascii_lowercase();
     path.starts_with('/')
         || path.starts_with('\\')
         || lower.contains("://")
+        || path.chars().nth(1).is_some_and(|second| {
+            second == ':' && path.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        })
         || path.split(['/', '\\']).any(|part| part == "..")
 }

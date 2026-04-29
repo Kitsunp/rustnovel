@@ -99,3 +99,53 @@ fn composer_runtime_preview_can_start_from_selected_node_and_advance() {
         .and_then(|engine| engine.current_event().ok())
         .is_none());
 }
+
+#[test]
+fn composer_owner_map_does_not_treat_dialogue_speaker_as_visual_character() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+
+    let scene = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: None,
+            music: None,
+            characters: vec![visual_novel_engine::CharacterPlacementRaw {
+                name: "Ava".to_string(),
+                expression: Some("ava/smile.png".to_string()),
+                position: None,
+                x: Some(300),
+                y: Some(200),
+                scale: Some(1.0),
+            }],
+        },
+        egui::pos2(0.0, 0.0),
+    );
+    let dialogue = workbench.node_graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Ava".to_string(),
+            text: "This speaker is not a visual placement".to_string(),
+        },
+        egui::pos2(0.0, 100.0),
+    );
+    workbench.selected_node = Some(scene);
+    workbench.refresh_scene_from_selected_node();
+    workbench.composer_entity_owners.clear();
+
+    let owners = workbench.build_entity_node_map();
+    let character_entity = workbench
+        .scene
+        .iter()
+        .find_map(|entity| match &entity.kind {
+            visual_novel_engine::EntityKind::Character(character)
+                if character.name.as_ref() == "Ava" =>
+            {
+                Some(entity.id.raw())
+            }
+            _ => None,
+        })
+        .expect("character entity should exist");
+
+    assert_eq!(owners.get(&character_entity), Some(&scene));
+    assert_ne!(owners.get(&character_entity), Some(&dialogue));
+}

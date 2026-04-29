@@ -1,0 +1,152 @@
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use crate::{CharacterPlacementRaw, EventRaw, ScenePatchRaw, ScriptRaw};
+
+use super::{NodeGraph, SceneProfile, StoryNode, AUTHORING_DOCUMENT_SCHEMA_VERSION};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthoringReportBuildInfo {
+    pub engine_version: String,
+    pub build_profile: String,
+    pub target_os: String,
+    pub target_arch: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthoringReportFingerprint {
+    pub fingerprint_schema_version: String,
+    pub authoring_schema_version: String,
+    pub script_sha256: String,
+    pub graph_sha256: String,
+    pub asset_refs_sha256: String,
+    pub asset_refs_count: usize,
+    pub build: AuthoringReportBuildInfo,
+}
+
+pub fn build_authoring_report_fingerprint(
+    graph: &NodeGraph,
+    script: &ScriptRaw,
+) -> AuthoringReportFingerprint {
+    let mut asset_refs = collect_asset_refs(graph);
+    asset_refs.sort();
+    asset_refs.dedup();
+
+    AuthoringReportFingerprint {
+        fingerprint_schema_version: "vnengine.authoring.fingerprint.v1".to_string(),
+        authoring_schema_version: AUTHORING_DOCUMENT_SCHEMA_VERSION.to_string(),
+        script_sha256: sha256_json(script),
+        graph_sha256: sha256_json(graph),
+        asset_refs_sha256: sha256_json(&asset_refs),
+        asset_refs_count: asset_refs.len(),
+        build: AuthoringReportBuildInfo {
+            engine_version: env!("CARGO_PKG_VERSION").to_string(),
+            build_profile: build_profile().to_string(),
+            target_os: std::env::consts::OS.to_string(),
+            target_arch: std::env::consts::ARCH.to_string(),
+        },
+    }
+}
+
+fn collect_asset_refs(graph: &NodeGraph) -> Vec<String> {
+    let mut refs = Vec::new();
+    for (_, node, _) in graph.nodes() {
+        collect_node_asset_refs(node, &mut refs);
+    }
+    for (_, profile) in graph.scene_profiles() {
+        collect_profile_asset_refs(profile, &mut refs);
+    }
+    refs
+}
+
+fn collect_node_asset_refs(node: &StoryNode, refs: &mut Vec<String>) {
+    match node {
+        StoryNode::Scene {
+            background,
+            music,
+            characters,
+            ..
+        } => {
+            push_optional(background, refs);
+            push_optional(music, refs);
+            collect_character_assets(characters, refs);
+        }
+        StoryNode::ScenePatch(patch) => collect_patch_asset_refs(patch, refs),
+        StoryNode::AudioAction {
+            asset: Some(asset), ..
+        } => refs.push(asset.clone()),
+        StoryNode::Generic(event) => collect_event_asset_refs(event, refs),
+        _ => {}
+    }
+}
+
+fn collect_event_asset_refs(event: &EventRaw, refs: &mut Vec<String>) {
+    match event {
+        EventRaw::Scene(scene) => {
+            push_optional(&scene.background, refs);
+            push_optional(&scene.music, refs);
+            collect_character_assets(&scene.characters, refs);
+        }
+        EventRaw::Patch(patch) => collect_patch_asset_refs(patch, refs),
+        EventRaw::AudioAction(action) => push_optional(&action.asset, refs),
+        _ => {}
+    }
+}
+
+fn collect_patch_asset_refs(patch: &ScenePatchRaw, refs: &mut Vec<String>) {
+    push_optional(&patch.background, refs);
+    push_optional(&patch.music, refs);
+    collect_character_assets(&patch.add, refs);
+    for character in &patch.update {
+        push_optional(&character.expression, refs);
+    }
+}
+
+fn collect_profile_asset_refs(profile: &SceneProfile, refs: &mut Vec<String>) {
+    push_optional(&profile.background, refs);
+    push_optional(&profile.music, refs);
+    collect_character_assets(&profile.characters, refs);
+    for layer in &profile.layers {
+        push_optional(&layer.background, refs);
+        collect_character_assets(&layer.characters, refs);
+    }
+    for pose in &profile.poses {
+        refs.push(pose.image.clone());
+    }
+}
+
+fn collect_character_assets(characters: &[CharacterPlacementRaw], refs: &mut Vec<String>) {
+    for character in characters {
+        push_optional(&character.expression, refs);
+    }
+}
+
+fn push_optional(value: &Option<String>, refs: &mut Vec<String>) {
+    if let Some(value) = value
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        refs.push(value.to_string());
+    }
+}
+
+fn sha256_json<T: Serialize>(value: &T) -> String {
+    match serde_json::to_vec(value) {
+        Ok(bytes) => sha256_bytes(&bytes),
+        Err(error) => sha256_bytes(error.to_string().as_bytes()),
+    }
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn build_profile() -> &'static str {
+    if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    }
+}

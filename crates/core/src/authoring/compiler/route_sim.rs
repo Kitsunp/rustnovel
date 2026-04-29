@@ -49,6 +49,14 @@ pub struct RawStepTrace {
     pub character_count: usize,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RouteEnumerationReport {
+    pub routes: Vec<Vec<usize>>,
+    pub routes_discovered: usize,
+    pub route_limit_hit: bool,
+    pub depth_limit_hit: bool,
+}
+
 #[derive(Debug, Clone)]
 struct RawRouteFrame {
     ip: usize,
@@ -64,10 +72,21 @@ pub fn enumerate_choice_routes(
     max_routes: usize,
     max_choice_depth: usize,
 ) -> Vec<Vec<usize>> {
+    enumerate_choice_routes_with_report(script, max_steps, max_routes, max_choice_depth).routes
+}
+
+pub fn enumerate_choice_routes_with_report(
+    script: &ScriptRaw,
+    max_steps: usize,
+    max_routes: usize,
+    max_choice_depth: usize,
+) -> RouteEnumerationReport {
     let mut routes = Vec::new();
+    let mut route_limit_hit = false;
+    let mut depth_limit_hit = false;
     let start_ip = match script.start_index() {
         Ok(idx) => idx,
-        Err(_) => return routes,
+        Err(_) => return RouteEnumerationReport::default(),
     };
 
     let mut initial_state = RawSimulationState::default();
@@ -82,6 +101,7 @@ pub fn enumerate_choice_routes(
 
     while let Some(frame) = stack.pop() {
         if routes.len() >= max_routes {
+            route_limit_hit = true;
             break;
         }
         if frame.steps >= max_steps || frame.ip >= script.events.len() {
@@ -91,7 +111,12 @@ pub fn enumerate_choice_routes(
 
         let event = &script.events[frame.ip];
         if let EventRaw::Choice(choice) = event {
-            if choice.options.is_empty() || frame.choice_depth >= max_choice_depth {
+            if choice.options.is_empty() {
+                routes.push(frame.choices);
+                continue;
+            }
+            if frame.choice_depth >= max_choice_depth {
+                depth_limit_hit = true;
                 routes.push(frame.choices);
                 continue;
             }
@@ -152,8 +177,17 @@ pub fn enumerate_choice_routes(
     }
     routes.sort();
     routes.dedup();
+    let routes_discovered = routes.len();
+    if routes.len() > max_routes {
+        route_limit_hit = true;
+    }
     routes.truncate(max_routes);
-    routes
+    RouteEnumerationReport {
+        routes,
+        routes_discovered,
+        route_limit_hit,
+        depth_limit_hit,
+    }
 }
 
 pub fn simulate_raw_sequence(

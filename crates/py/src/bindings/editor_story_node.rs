@@ -80,6 +80,13 @@ impl PyStoryNode {
     }
 
     #[staticmethod]
+    fn set_flag(key: String, value: bool) -> Self {
+        Self {
+            inner: StoryNode::SetFlag { key, value },
+        }
+    }
+
+    #[staticmethod]
     fn jump_if_flag(key: String, is_set: bool, target: String) -> Self {
         Self {
             inner: StoryNode::JumpIf {

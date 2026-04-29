@@ -226,10 +226,14 @@ impl Engine {
         target_ip: u32,
         audio_commands: &mut Vec<AudioCommand>,
     ) -> VnResult<()> {
-        if target_ip as usize >= self.script.events.len() {
+        if target_ip as usize > self.script.events.len() {
             return Err(VnError::InvalidScript(format!(
                 "jump target '{target_ip}' outside script"
             )));
+        }
+        if target_ip as usize == self.script.events.len() {
+            self.state.position = target_ip;
+            return Ok(());
         }
         let scene = match self.script.events.get(target_ip as usize) {
             Some(EventCompiled::Scene(scene)) => Some(scene.clone()),

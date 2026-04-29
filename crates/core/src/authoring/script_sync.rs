@@ -129,6 +129,10 @@ fn node_from_event(event: &EventRaw) -> StoryNode {
         EventRaw::Jump { target } => StoryNode::Jump {
             target: target.clone(),
         },
+        EventRaw::SetFlag { key, value } => StoryNode::SetFlag {
+            key: key.clone(),
+            value: *value,
+        },
         EventRaw::SetVar { key, value } => StoryNode::SetVariable {
             key: key.clone(),
             value: *value,
@@ -157,7 +161,7 @@ fn node_from_event(event: &EventRaw) -> StoryNode {
             y: pos.y,
             scale: pos.scale,
         },
-        EventRaw::ExtCall { .. } | EventRaw::SetFlag { .. } => StoryNode::Generic(event.clone()),
+        EventRaw::ExtCall { .. } => StoryNode::Generic(event.clone()),
     }
 }
 
@@ -209,7 +213,7 @@ fn connect_event_flow(
                 event_count,
             );
             if let Some(next_id) = index_to_id.get(&(idx + 1)).copied() {
-                graph.connect(from_id, next_id);
+                graph.connect_port(from_id, 1, next_id);
             }
         }
         _ => {
@@ -279,9 +283,13 @@ fn event_from_node(
             key: key.clone(),
             value: *value,
         },
+        StoryNode::SetFlag { key, value } => EventRaw::SetFlag {
+            key: key.clone(),
+            value: *value,
+        },
         StoryNode::JumpIf { cond, target } => EventRaw::JumpIf {
             cond: cond.clone(),
-            target: target.clone(),
+            target: jump_if_target_label(id, target, node_lookup, choice_targets),
         },
         StoryNode::ScenePatch(patch) => EventRaw::Patch(patch.clone()),
         StoryNode::AudioAction {
@@ -319,6 +327,24 @@ fn event_from_node(
         StoryNode::Generic(event) => event.clone(),
         StoryNode::Start | StoryNode::End => return None,
     })
+}
+
+fn jump_if_target_label(
+    node_id: u32,
+    fallback_target: &str,
+    node_lookup: &BTreeMap<u32, &StoryNode>,
+    choice_targets: &BTreeMap<(u32, usize), u32>,
+) -> String {
+    choice_targets
+        .get(&(node_id, 0))
+        .and_then(|target_id| {
+            node_lookup.get(target_id).map(|node| match node {
+                StoryNode::Start => "start".to_string(),
+                StoryNode::End => "__end".to_string(),
+                _ => format!("node_{target_id}"),
+            })
+        })
+        .unwrap_or_else(|| fallback_target.to_string())
 }
 
 fn target_label(

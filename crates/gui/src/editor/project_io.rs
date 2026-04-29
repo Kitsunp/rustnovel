@@ -1,7 +1,9 @@
+use crate::editor::authoring_adapter::{from_authoring_graph, to_authoring_graph};
 use crate::editor::errors::EditorError;
 use crate::editor::{node_graph::NodeGraph, script_sync};
 use std::path::{Component, Path, PathBuf};
 use visual_novel_engine::{
+    authoring::AuthoringDocument,
     manifest::{ManifestMigrationReport, ProjectManifest},
     ScriptRaw,
 };
@@ -96,7 +98,14 @@ pub fn load_project(path: PathBuf) -> Result<LoadedProject, EditorError> {
 pub fn load_script(path: PathBuf) -> Result<LoadedScript, EditorError> {
     let content = std::fs::read_to_string(&path).map_err(EditorError::IoError)?;
 
-    // Try parsing as ScriptRaw (JSON)
+    if let Ok(document) = AuthoringDocument::from_json(&content) {
+        return Ok(LoadedScript {
+            graph: from_authoring_graph(&document.graph),
+            was_imported: false,
+        });
+    }
+
+    // Legacy/import path: parse executable ScriptRaw and lift it into authoring.
     let script = ScriptRaw::from_json(&content)
         .map_err(|e| EditorError::CompileError(format!("Parse error: {}", e)))?;
 
@@ -108,8 +117,8 @@ pub fn load_script(path: PathBuf) -> Result<LoadedScript, EditorError> {
 }
 
 pub fn save_script(path: &std::path::Path, graph: &NodeGraph) -> Result<(), EditorError> {
-    let script = script_sync::to_script(graph);
-    let json = script
+    let document = AuthoringDocument::new(to_authoring_graph(graph));
+    let json = document
         .to_json()
         .map_err(|e| EditorError::CompileError(format!("Serialization error: {}", e)))?;
 
@@ -121,6 +130,8 @@ pub fn save_script(path: &std::path::Path, graph: &NodeGraph) -> Result<(), Edit
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::StoryNode;
+    use eframe::egui;
     use std::fs;
     use tempfile::tempdir;
     use visual_novel_engine::manifest::MANIFEST_SCHEMA_VERSION;
@@ -212,5 +223,40 @@ entry_point = "../outside.json"
             }
             Err(other) => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[test]
+    fn authoring_save_load_preserves_disconnected_draft_nodes() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("draft.vnauthoring");
+        let mut graph = NodeGraph::new();
+        let start = graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+        let live = graph.add_node(
+            StoryNode::Dialogue {
+                speaker: "Narrator".to_string(),
+                text: "Connected".to_string(),
+            },
+            egui::pos2(0.0, 100.0),
+        );
+        let draft = graph.add_node(
+            StoryNode::Dialogue {
+                speaker: "Draft".to_string(),
+                text: "Disconnected but important".to_string(),
+            },
+            egui::pos2(240.0, 100.0),
+        );
+        graph.connect(start, live);
+
+        save_script(&path, &graph).expect("save authoring document");
+        let saved = fs::read_to_string(&path).expect("read saved document");
+        assert!(saved.contains("authoring_schema_version"));
+
+        let loaded = load_script(path).expect("load authoring document");
+        assert_eq!(loaded.graph.len(), graph.len());
+        assert!(matches!(
+            loaded.graph.get_node(draft),
+            Some(StoryNode::Dialogue { speaker, text })
+                if speaker == "Draft" && text == "Disconnected but important"
+        ));
     }
 }

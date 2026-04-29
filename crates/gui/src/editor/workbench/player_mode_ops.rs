@@ -287,14 +287,7 @@ impl EditorWorkbench {
                             .insert(pos.name.to_string(), owner_id);
                     }
                 }
-                visual_novel_engine::EventCompiled::Dialogue(dialogue) => {
-                    if let Some(owner_id) = owner {
-                        owner_hints
-                            .character_owners
-                            .entry(dialogue.speaker.to_string())
-                            .or_insert(owner_id);
-                    }
-                }
+                visual_novel_engine::EventCompiled::Dialogue(_) => {}
                 _ => {}
             }
         }

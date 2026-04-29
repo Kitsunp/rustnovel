@@ -1,9 +1,13 @@
 use super::{AuthoringPosition, LintCode, LintIssue, NodeGraph, StoryNode};
 
 mod assets;
+mod character;
 mod display;
+mod preconditions;
 
 use std::collections::HashSet;
+
+use preconditions::issue_still_matches;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuickFixRisk {
@@ -171,6 +175,24 @@ pub fn suggest_fixes(issue: &LintIssue, graph: &NodeGraph) -> Vec<QuickFixCandid
 }
 
 pub fn apply_fix(graph: &mut NodeGraph, issue: &LintIssue, fix_id: &str) -> Result<bool, String> {
+    if !suggest_fixes(issue, graph)
+        .iter()
+        .any(|candidate| candidate.fix_id == fix_id)
+    {
+        return Err(format!(
+            "stale quick-fix {fix_id}: issue {} no longer matches graph",
+            issue.diagnostic_id()
+        ));
+    }
+    if (issue.node_id.is_some() || issue.code == LintCode::MissingStart)
+        && !issue_still_matches(issue, graph)
+    {
+        return Err(format!(
+            "stale quick-fix {fix_id}: issue {} no longer matches graph",
+            issue.diagnostic_id()
+        ));
+    }
+
     match fix_id {
         "graph_add_start" => Ok(add_start(graph)),
         "node_connect_dead_end_to_end" => connect_dead_end(graph, require_node(issue)?),
@@ -194,8 +216,10 @@ pub fn apply_fix(graph: &mut NodeGraph, issue: &LintIssue, fix_id: &str) -> Resu
         "clear_missing_asset_reference" | "clear_unsafe_asset_reference" => {
             assets::clear_asset_reference(graph, issue)
         }
-        "character_prune_or_fill_invalid_names" => fix_character_names(graph, require_node(issue)?),
-        "character_set_default_scale" => set_character_scale(graph, require_node(issue)?),
+        "character_prune_or_fill_invalid_names" => {
+            character::fix_names(graph, require_node(issue)?)
+        }
+        "character_set_default_scale" => character::set_scale(graph, require_node(issue)?),
         other => Err(format!("unknown quick-fix id {other}")),
     }
 }
@@ -449,60 +473,6 @@ fn set_audio_fade(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
         return Ok(false);
     }
     *fade_duration_ms = Some(250);
-    graph.mark_modified();
-    Ok(true)
-}
-
-fn fix_character_names(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
-    let Some(node) = graph.get_node_mut(node_id) else {
-        return Err(format!("node_id {node_id} not found"));
-    };
-    match node {
-        StoryNode::CharacterPlacement { name, .. } if name.trim().is_empty() => {
-            *name = "Character".to_string();
-            graph.mark_modified();
-            Ok(true)
-        }
-        StoryNode::Scene { characters, .. } => {
-            let before = characters.len();
-            characters.retain(|character| !character.name.trim().is_empty());
-            let changed = before != characters.len();
-            if changed {
-                graph.mark_modified();
-            }
-            Ok(changed)
-        }
-        StoryNode::ScenePatch(patch) => {
-            let before_add = patch.add.len();
-            let before_update = patch.update.len();
-            let before_remove = patch.remove.len();
-            patch
-                .add
-                .retain(|character| !character.name.trim().is_empty());
-            patch
-                .update
-                .retain(|character| !character.name.trim().is_empty());
-            patch.remove.retain(|name| !name.trim().is_empty());
-            let changed = before_add != patch.add.len()
-                || before_update != patch.update.len()
-                || before_remove != patch.remove.len();
-            if changed {
-                graph.mark_modified();
-            }
-            Ok(changed)
-        }
-        _ => Ok(false),
-    }
-}
-
-fn set_character_scale(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
-    let Some(StoryNode::CharacterPlacement { scale, .. }) = graph.get_node_mut(node_id) else {
-        return Err(format!("node_id {node_id} is not CharacterPlacement"));
-    };
-    if !scale.is_some_and(|value| !value.is_finite() || value <= 0.0) {
-        return Ok(false);
-    }
-    *scale = Some(1.0);
     graph.mark_modified();
     Ok(true)
 }

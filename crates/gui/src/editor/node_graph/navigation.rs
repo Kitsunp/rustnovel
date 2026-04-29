@@ -1,33 +1,24 @@
 use super::*;
-use crate::editor::authoring_adapter::to_authoring_graph;
 
 impl NodeGraph {
     /// Returns node ids that directly connect into `node_id`.
     pub fn incoming_nodes(&self, node_id: u32) -> Vec<u32> {
-        self.connections
-            .iter()
-            .filter(|connection| connection.to == node_id)
-            .map(|connection| connection.from)
-            .collect()
+        self.authoring.incoming_nodes(node_id)
     }
 
     /// Returns node ids directly reachable from `node_id`.
     pub fn outgoing_nodes(&self, node_id: u32) -> Vec<u32> {
-        self.connections
-            .iter()
-            .filter(|connection| connection.from == node_id)
-            .map(|connection| connection.to)
-            .collect()
+        self.authoring.outgoing_nodes(node_id)
     }
 
     /// Maps an event_ip from compiled/raw script flow back to the source node id.
     pub fn node_for_event_ip(&self, event_ip: u32) -> Option<u32> {
-        to_authoring_graph(self).node_for_event_ip(event_ip)
+        self.authoring.node_for_event_ip(event_ip)
     }
 
     /// Returns the event_ip index for a node in script traversal order.
     pub fn event_ip_for_node(&self, node_id: u32) -> Option<u32> {
-        to_authoring_graph(self).event_ip_for_node(node_id)
+        self.authoring.event_ip_for_node(node_id)
     }
 
     /// Returns nodes that reference a concrete asset path.
@@ -37,11 +28,10 @@ impl NodeGraph {
             return Vec::new();
         }
 
-        self.nodes
-            .iter()
+        self.nodes()
             .filter_map(|(node_id, node, _)| {
-                if node_references_asset(node, needle) {
-                    Some(*node_id)
+                if node_references_asset(&node, needle) {
+                    Some(node_id)
                 } else {
                     None
                 }

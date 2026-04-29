@@ -51,3 +51,23 @@ fn background_images_fill_stage_rect() {
     );
     assert_eq!(rect, geometry.stage_rect);
 }
+
+#[test]
+fn character_drag_is_clamped_inside_stage() {
+    let geometry = stage_geometry(
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 720.0)),
+        (1280.0, 720.0),
+        StageFit::Fill,
+    );
+    let kind = EntityKind::Character(visual_novel_engine::CharacterData {
+        name: SharedStr::from("hero"),
+        expression: Some(SharedStr::from("hero.png")),
+    });
+    let mut transform = Transform::at(5000, -20);
+    transform.scale = 1000;
+
+    clamp_transform_to_stage(&mut transform, &kind, &geometry);
+
+    assert_eq!(transform.x, 1060);
+    assert_eq!(transform.y, 0);
+}

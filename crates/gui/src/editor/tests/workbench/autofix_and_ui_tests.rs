@@ -36,7 +36,7 @@ fn workbench_autofix_batch_can_prepare_and_apply_complete_mode() {
         .nodes()
         .any(|(_, node, _)| matches!(node, StoryNode::Start)));
     let fixed_speaker = workbench.node_graph.nodes().find_map(|(id, node, _)| {
-        if *id == dialogue {
+        if id == dialogue {
             if let StoryNode::Dialogue { speaker, .. } = node {
                 return Some(speaker.clone());
             }

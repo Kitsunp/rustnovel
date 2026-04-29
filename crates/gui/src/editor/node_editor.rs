@@ -229,9 +229,9 @@ impl<'a> NodeEditorPanel<'a> {
                 if let Some(start_pos) = ui.input(|i| i.pointer.press_origin()) {
                     let mut started_on_node = false;
                     for (_, node, n_pos) in self.graph.nodes() {
-                        let screen_pos = self.graph_to_screen(response.rect, *n_pos);
+                        let screen_pos = self.graph_to_screen(response.rect, n_pos);
                         let size =
-                            egui::vec2(NODE_WIDTH, node_visual_height(node)) * self.graph.zoom();
+                            egui::vec2(NODE_WIDTH, node_visual_height(&node)) * self.graph.zoom();
                         let rect = egui::Rect::from_min_size(screen_pos, size);
                         if rect.contains(start_pos) {
                             started_on_node = true;
@@ -331,23 +331,23 @@ impl<'a> NodeEditorPanel<'a> {
                 .graph
                 .nodes()
                 .find(|(id, _, _)| *id == conn.from)
-                .map(|(_, node, p)| (*p, node));
+                .map(|(_, node, p)| (p, node));
             let to_pos = self
                 .graph
                 .nodes()
                 .find(|(id, _, _)| *id == conn.to)
-                .map(|(_, node, p)| (*p, node));
+                .map(|(_, node, p)| (p, node));
 
             if let (Some((from_base, from_node)), Some((to_base, to_node))) = (from_pos, to_pos) {
                 // Determine source port position
                 let from_screen = self.graph_to_screen(
                     rect,
-                    self.calculate_port_pos(from_base, from_node, conn.from_port),
+                    self.calculate_port_pos(from_base, &from_node, conn.from_port),
                 );
 
                 let to_node_top_left = self.graph_to_screen(rect, to_base);
                 let to_node_size =
-                    egui::vec2(NODE_WIDTH, node_visual_height(to_node)) * self.graph.zoom();
+                    egui::vec2(NODE_WIDTH, node_visual_height(&to_node)) * self.graph.zoom();
                 let to_rect = egui::Rect::from_min_size(to_node_top_left, to_node_size);
                 let to_screen = if from_screen.y <= to_rect.top() {
                     egui::pos2(to_rect.center().x, to_rect.top())
@@ -379,6 +379,14 @@ impl<'a> NodeEditorPanel<'a> {
                     header_height + (port as f32 * option_height) + (option_height / 2.0);
 
                 node_pos + egui::vec2(NODE_WIDTH / 2.0, option_offset + 15.0)
+            }
+            StoryNode::JumpIf { .. } => {
+                let y = if port == 0 {
+                    node_visual_height(node) * 0.68
+                } else {
+                    node_visual_height(node) * 0.92
+                };
+                node_pos + egui::vec2(NODE_WIDTH / 2.0, y)
             }
             _ => {
                 // Standard single output (Bottom Center)

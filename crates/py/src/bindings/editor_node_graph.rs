@@ -1,7 +1,9 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use visual_novel_engine::authoring::quick_fix::{apply_fix, suggest_fixes};
-use visual_novel_engine::authoring::{validate_authoring_graph, AuthoringPosition, NodeGraph};
+use visual_novel_engine::authoring::{
+    validate_authoring_graph, AuthoringDocument, AuthoringPosition, NodeGraph,
+};
 
 use super::diagnostics::{PyLintIssue, PyQuickFixCandidate};
 use super::story_node::PyStoryNode;
@@ -37,6 +39,10 @@ impl PyNodeGraph {
         self.inner.connect(from_id, to_id);
     }
 
+    fn connect_port(&mut self, from_id: u32, from_port: usize, to_id: u32) {
+        self.inner.connect_port(from_id, from_port, to_id);
+    }
+
     fn remove_node(&mut self, node_id: u32) {
         self.inner.remove_node(node_id);
     }
@@ -56,6 +62,15 @@ impl PyNodeGraph {
     fn to_script_json(&self) -> PyResult<String> {
         let script = self.inner.to_script();
         serde_json::to_string_pretty(&script).map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    #[staticmethod]
+    fn from_script_json(script_json: &str) -> PyResult<Self> {
+        let script = visual_novel_engine::ScriptRaw::from_json(script_json)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(Self {
+            inner: NodeGraph::from_script(&script),
+        })
     }
 
     fn search_nodes(&self, query: &str) -> Vec<u32> {
@@ -129,8 +144,9 @@ impl PyNodeGraph {
     }
 
     fn save(&self, path: &str) -> PyResult<()> {
-        let script = self.inner.to_script();
-        let json = serde_json::to_string_pretty(&script)
+        let document = AuthoringDocument::new(self.inner.clone());
+        let json = document
+            .to_json()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         std::fs::write(path, json).map_err(|e| PyValueError::new_err(e.to_string()))
     }
@@ -139,10 +155,16 @@ impl PyNodeGraph {
     fn load(path: &str) -> PyResult<Self> {
         let content =
             std::fs::read_to_string(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        if let Ok(document) = AuthoringDocument::from_json(&content) {
+            return Ok(Self {
+                inner: document.graph,
+            });
+        }
         let script: visual_novel_engine::ScriptRaw =
             serde_json::from_str(&content).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let graph = NodeGraph::from_script(&script);
-        Ok(Self { inner: graph })
+        Ok(Self {
+            inner: NodeGraph::from_script(&script),
+        })
     }
 
     fn __repr__(&self) -> String {

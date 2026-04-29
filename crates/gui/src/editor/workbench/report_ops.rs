@@ -52,6 +52,10 @@ impl EditorWorkbench {
             json!({
                 "max_steps": report.max_steps,
                 "executed_steps": report.executed_steps,
+                "routes_discovered": report.routes_discovered,
+                "routes_executed": report.routes_executed,
+                "route_limit_hit": report.route_limit_hit,
+                "depth_limit_hit": report.depth_limit_hit,
                 "stop_reason": report.stop_reason.label(),
                 "stop_message": report.stop_message,
                 "failing_event_ip": report.failing_event_ip,
@@ -72,10 +76,16 @@ impl EditorWorkbench {
                     .collect::<Vec<_>>(),
             })
         });
+        let report_script = self.node_graph.to_script();
+        let fingerprints = visual_novel_engine::authoring::build_authoring_report_fingerprint(
+            self.node_graph.authoring_graph(),
+            &report_script,
+        );
 
         let payload = json!({
             "schema": "vneditor.diagnostic_report.v1",
             "generated_unix_ms": now_unix_ms(),
+            "fingerprints": fingerprints,
             "language": language_code(self.diagnostic_language),
             "player_locale": self.player_locale,
             "localization": {

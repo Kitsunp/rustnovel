@@ -23,19 +23,18 @@ impl NodeGraph {
     /// - Very linear graphs are wrapped into columns (avoid single straight line).
     /// - Output is deterministic for the same graph topology.
     pub fn auto_layout_hierarchical(&mut self) -> bool {
-        if self.nodes.is_empty() {
+        if self.is_empty() {
             return false;
         }
 
         let mut roots: Vec<u32> = self
-            .nodes
-            .iter()
+            .nodes()
             .filter(|(_, node, _)| matches!(node, StoryNode::Start))
-            .map(|(id, _, _)| *id)
+            .map(|(id, _, _)| id)
             .collect();
         roots.sort_unstable();
         if roots.is_empty() {
-            let mut fallback: Vec<u32> = self.nodes.iter().map(|(id, _, _)| *id).collect();
+            let mut fallback: Vec<u32> = self.nodes().map(|(id, _, _)| id).collect();
             fallback.sort_unstable();
             if let Some(first) = fallback.first().copied() {
                 roots.push(first);
@@ -51,14 +50,13 @@ impl NodeGraph {
 
         while let Some(node_id) = queue.pop_front() {
             let layer = layers.get(&node_id).copied().unwrap_or(0);
-            let mut outgoing: Vec<&GraphConnection> = self
-                .connections
-                .iter()
+            let mut outgoing: Vec<GraphConnection> = self
+                .connections()
                 .filter(|connection| connection.from == node_id)
                 .collect();
             outgoing.sort_by_key(|connection| (connection.from_port, connection.to));
 
-            for connection in outgoing {
+            for connection in &outgoing {
                 let candidate = layer.saturating_add(1);
                 let update = match layers.get(&connection.to) {
                     Some(existing) => candidate < *existing,
@@ -73,9 +71,8 @@ impl NodeGraph {
 
         let mut max_layer = layers.values().copied().max().unwrap_or(0);
         let mut missing: Vec<u32> = self
-            .nodes
-            .iter()
-            .map(|(id, _, _)| *id)
+            .nodes()
+            .map(|(id, _, _)| id)
             .filter(|id| !layers.contains_key(id))
             .collect();
         missing.sort_unstable();
@@ -93,7 +90,7 @@ impl NodeGraph {
         }
 
         let max_nodes_per_layer = grouped.values().map(Vec::len).max().unwrap_or(0);
-        let mostly_linear = max_nodes_per_layer <= 1 && self.nodes.len() >= 6;
+        let mostly_linear = max_nodes_per_layer <= 1 && self.len() >= 6;
 
         let mut changed = if mostly_linear {
             self.apply_wrapped_linear_layout(&grouped)
@@ -102,9 +99,6 @@ impl NodeGraph {
         };
         if self.resolve_layout_overlaps() {
             changed = true;
-        }
-        if changed {
-            self.modified = true;
         }
         changed
     }
@@ -160,11 +154,8 @@ impl NodeGraph {
             let x =
                 AUTO_LAYOUT_CENTER_X + (col as f32) * AUTO_LAYOUT_LINEAR_COLUMN_SPACING + zigzag;
             let y = row_y[row];
-            if let Some(pos) = self.get_node_pos_mut(node_id) {
-                if (pos.x - x).abs() > f32::EPSILON || (pos.y - y).abs() > f32::EPSILON {
-                    *pos = egui::pos2(x, y);
-                    changed = true;
-                }
+            if self.set_node_pos(node_id, egui::pos2(x, y)) {
+                changed = true;
             }
         }
         changed
@@ -202,11 +193,8 @@ impl NodeGraph {
             for (index, node_id) in ordered.into_iter().enumerate() {
                 let x = start_x + (index as f32) * AUTO_LAYOUT_LAYER_HORIZONTAL_SPACING;
                 assigned_x.insert(node_id, x);
-                if let Some(pos) = self.get_node_pos_mut(node_id) {
-                    if (pos.x - x).abs() > f32::EPSILON || (pos.y - y).abs() > f32::EPSILON {
-                        *pos = egui::pos2(x, y);
-                        changed = true;
-                    }
+                if self.set_node_pos(node_id, egui::pos2(x, y)) {
+                    changed = true;
                 }
             }
         }
@@ -216,7 +204,7 @@ impl NodeGraph {
     fn estimated_parent_center_x(&self, node_id: u32, assigned_x: &BTreeMap<u32, f32>) -> f32 {
         let mut sum = 0.0f32;
         let mut count = 0usize;
-        for connection in self.connections.iter().filter(|conn| conn.to == node_id) {
+        for connection in self.connections().filter(|conn| conn.to == node_id) {
             if let Some(x) = assigned_x.get(&connection.from) {
                 sum += *x;
                 count += 1;
@@ -229,19 +217,19 @@ impl NodeGraph {
     }
 
     fn resolve_layout_overlaps(&mut self) -> bool {
-        if self.nodes.len() < 2 {
+        if self.len() < 2 {
             return false;
         }
 
         let mut changed = false;
         for _ in 0..AUTO_LAYOUT_OVERLAP_MAX_PASSES {
             let mut pass_changed = false;
-            let len = self.nodes.len();
+            let nodes = self.nodes().collect::<Vec<_>>();
+            let len = nodes.len();
             for i in 0..len {
                 for j in (i + 1)..len {
-                    let (left, right) = self.nodes.split_at_mut(j);
-                    let (_, node_a, pos_a) = &mut left[i];
-                    let (_, node_b, pos_b) = &mut right[0];
+                    let (id_a, node_a, pos_a) = &nodes[i];
+                    let (id_b, node_b, pos_b) = &nodes[j];
 
                     let half_w_a = (NODE_WIDTH + AUTO_LAYOUT_OVERLAP_PAD_X) * 0.5;
                     let half_w_b = (NODE_WIDTH + AUTO_LAYOUT_OVERLAP_PAD_X) * 0.5;
@@ -260,13 +248,13 @@ impl NodeGraph {
                     if overlap_y <= overlap_x {
                         let direction = if dy >= 0.0 { 1.0 } else { -1.0 };
                         let shift = (overlap_y * 0.5) + 1.0;
-                        pos_a.y -= shift * direction;
-                        pos_b.y += shift * direction;
+                        self.set_node_pos(*id_a, egui::pos2(pos_a.x, pos_a.y - shift * direction));
+                        self.set_node_pos(*id_b, egui::pos2(pos_b.x, pos_b.y + shift * direction));
                     } else {
                         let direction = if dx >= 0.0 { 1.0 } else { -1.0 };
                         let shift = (overlap_x * 0.5) + 1.0;
-                        pos_a.x -= shift * direction;
-                        pos_b.x += shift * direction;
+                        self.set_node_pos(*id_a, egui::pos2(pos_a.x - shift * direction, pos_a.y));
+                        self.set_node_pos(*id_b, egui::pos2(pos_b.x + shift * direction, pos_b.y));
                     }
 
                     pass_changed = true;

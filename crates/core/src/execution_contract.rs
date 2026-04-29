@@ -53,6 +53,7 @@ const CHOICE: EventExecutionContract = runtime_real("Choice");
 const SCENE: EventExecutionContract = runtime_real("Scene");
 const JUMP: EventExecutionContract = runtime_real("Jump");
 const SET_VAR: EventExecutionContract = runtime_real("SetVariable");
+const SET_FLAG: EventExecutionContract = runtime_real("SetFlag");
 const SCENE_PATCH: EventExecutionContract = runtime_real("ScenePatch");
 const JUMP_IF: EventExecutionContract = runtime_real("JumpIf");
 const AUDIO_ACTION: EventExecutionContract = runtime_real("AudioAction");
@@ -69,12 +70,13 @@ const GENERIC_EVENT: EventExecutionContract = EventExecutionContract {
     fidelity: FidelityClass::PreviewOnly,
 };
 
-const CONTRACT_MATRIX: [EventExecutionContract; 14] = [
+const CONTRACT_MATRIX: [EventExecutionContract; 15] = [
     DIALOGUE,
     CHOICE,
     SCENE,
     JUMP,
     SET_VAR,
+    SET_FLAG,
     SCENE_PATCH,
     JUMP_IF,
     AUDIO_ACTION,
@@ -97,6 +99,7 @@ pub fn contract_for_authoring_node(node: &StoryNode) -> EventExecutionContract {
         StoryNode::Scene { .. } => SCENE,
         StoryNode::Jump { .. } => JUMP,
         StoryNode::SetVariable { .. } => SET_VAR,
+        StoryNode::SetFlag { .. } => SET_FLAG,
         StoryNode::ScenePatch(_) => SCENE_PATCH,
         StoryNode::JumpIf { .. } => JUMP_IF,
         StoryNode::Start => START_MARKER,
@@ -105,6 +108,7 @@ pub fn contract_for_authoring_node(node: &StoryNode) -> EventExecutionContract {
         StoryNode::Transition { .. } => TRANSITION,
         StoryNode::CharacterPlacement { .. } => CHARACTER_PLACEMENT,
         StoryNode::Generic(EventRaw::ExtCall { .. }) => EXT_CALL,
+        StoryNode::Generic(EventRaw::SetFlag { .. }) => SET_FLAG,
         StoryNode::Generic(_) => GENERIC_EVENT,
     }
 }
@@ -115,7 +119,8 @@ pub fn contract_for_event_raw(event: &EventRaw) -> EventExecutionContract {
         EventRaw::Choice(_) => CHOICE,
         EventRaw::Scene(_) => SCENE,
         EventRaw::Jump { .. } => JUMP,
-        EventRaw::SetFlag { .. } | EventRaw::SetVar { .. } => SET_VAR,
+        EventRaw::SetFlag { .. } => SET_FLAG,
+        EventRaw::SetVar { .. } => SET_VAR,
         EventRaw::JumpIf { .. } => JUMP_IF,
         EventRaw::Patch(_) => SCENE_PATCH,
         EventRaw::ExtCall { .. } => EXT_CALL,

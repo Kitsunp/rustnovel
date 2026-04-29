@@ -260,3 +260,78 @@ class GuiBindingTests(unittest.TestCase):
             all(issue.code != "VAL_SPEAKER_EMPTY" for issue in post_issues),
             "speaker-empty issue should be auto-fixed",
         )
+
+    def test_node_graph_set_flag_and_authoring_save_contract(self):
+        import tempfile
+        from pathlib import Path
+
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+
+        graph = vn.NodeGraph()
+        start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)
+        flag = graph.add_node(vn.StoryNode.set_flag("met_ava", True), 0.0, 100.0)
+        end = graph.add_node(vn.StoryNode.end(), 0.0, 200.0)
+        graph.connect(start, flag)
+        graph.connect(flag, end)
+
+        script_payload = json.loads(graph.to_script_json())
+        self.assertEqual(script_payload["events"][0]["type"], "set_flag")
+        self.assertEqual(script_payload["events"][0]["key"], "met_ava")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "game.vnauthoring"
+            graph.save(str(path))
+            saved = path.read_text()
+            self.assertIn("authoring_schema_version", saved)
+            loaded = vn.NodeGraph.load(str(path))
+            self.assertEqual(loaded.node_count(), graph.node_count())
+
+    def test_node_graph_jump_if_two_ports_roundtrip_and_engine_compile(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+        if not hasattr(vn.NodeGraph, "connect_port"):
+            self.skipTest("Native graph binding does not expose port connections")
+
+        graph = vn.NodeGraph()
+        start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)
+        jump_if = graph.add_node(
+            vn.StoryNode.jump_if_flag("seen_true", True, "true_branch"), 0.0, 100.0
+        )
+        false_branch = graph.add_node(
+            vn.StoryNode.dialogue("Narrator", "False branch"), -100.0, 200.0
+        )
+        true_branch = graph.add_node(
+            vn.StoryNode.dialogue("Narrator", "True branch"), 100.0, 200.0
+        )
+        end = graph.add_node(vn.StoryNode.end(), 0.0, 300.0)
+        graph.connect(start, jump_if)
+        graph.connect_port(jump_if, 0, true_branch)
+        graph.connect_port(jump_if, 1, false_branch)
+        graph.connect(false_branch, end)
+        graph.connect(true_branch, end)
+
+        payload = json.loads(graph.to_script_json())
+        self.assertEqual(payload["events"][0]["type"], "jump_if")
+        target_ip = payload["labels"][payload["events"][0]["target"]]
+        self.assertEqual(payload["events"][target_ip]["text"], "True branch")
+        self.assertEqual(payload["events"][1]["text"], "False branch")
+        self.native.Engine(json.dumps(payload))
+
+        restored = vn.NodeGraph.from_script_json(json.dumps(payload))
+        self.assertEqual(json.loads(restored.to_script_json())["events"][0]["type"], "jump_if")
+
+    def test_node_graph_validate_rejects_windows_drive_asset_path(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+
+        graph = vn.NodeGraph()
+        graph.add_node(vn.StoryNode.scene(r"C:\temp\evil.png", None, []), 0.0, 0.0)
+        codes = {issue.code for issue in graph.validate()}
+        self.assertIn("VAL_UNSAFE_ASSET_PATH", codes)

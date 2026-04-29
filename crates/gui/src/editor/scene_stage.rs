@@ -24,6 +24,7 @@ pub(crate) struct SceneStagePainter<'a> {
     preview_quality: PreviewQuality,
     image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     image_failures: &'a mut HashMap<String, String>,
+    asset_store: Option<vnengine_assets::AssetStore>,
 }
 
 pub(crate) struct SceneStageInteraction {
@@ -51,6 +52,7 @@ impl<'a> SceneStagePainter<'a> {
             preview_quality,
             image_cache,
             image_failures,
+            asset_store: None,
         }
     }
 
@@ -126,8 +128,9 @@ impl<'a> SceneStagePainter<'a> {
         let moved_character = moved_entity.and_then(|(raw_id, delta)| {
             let id = EntityId::new(raw_id);
             let entity = scene.get_mut(id)?;
-            entity.transform.x += delta.x as i32;
-            entity.transform.y += delta.y as i32;
+            entity.transform.x += delta.x.round() as i32;
+            entity.transform.y += delta.y.round() as i32;
+            clamp_transform_to_stage(&mut entity.transform, &entity.kind, &geometry);
             let EntityKind::Character(character) = &entity.kind else {
                 return None;
             };
@@ -248,22 +251,23 @@ impl<'a> SceneStagePainter<'a> {
         ctx: &egui::Context,
         asset_path: &str,
     ) -> Option<egui::TextureId> {
+        let asset_path = normalize_asset_path(asset_path);
         let cache_key = format!("{}::{asset_path}", self.preview_quality.label());
         if let Some(texture) = self.image_cache.get(&cache_key) {
             return Some(texture.id());
         }
-        if self.image_failures.contains_key(asset_path) {
+        if self.image_failures.contains_key(&asset_path) {
             return None;
         }
         let Some(project_root) = self.project_root else {
             self.image_failures.insert(
-                asset_path.to_string(),
+                asset_path.clone(),
                 format!("image '{asset_path}' project_root not available"),
             );
             return None;
         };
 
-        let image = self.load_image(project_root, asset_path).ok()?;
+        let image = self.load_image(project_root, &asset_path).ok()?;
         let (size, pixels) = self.preview_quality.scaled_image(image.size, &image.pixels);
         let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_ref());
         let texture = ctx.load_texture(
@@ -281,22 +285,9 @@ impl<'a> SceneStagePainter<'a> {
         project_root: &Path,
         asset_path: &str,
     ) -> Result<vnengine_assets::LoadedImage, ()> {
-        let store = match vnengine_assets::AssetStore::new(
-            project_root.to_path_buf(),
-            vnengine_assets::SecurityMode::Trusted,
-            None,
-            false,
-        ) {
-            Ok(store) => store,
-            Err(err) => {
-                self.image_failures.insert(
-                    asset_path.to_string(),
-                    format!("image '{asset_path}' asset store initialization failed: {err}"),
-                );
-                return Err(());
-            }
+        let Some(store) = self.asset_store(project_root, asset_path) else {
+            return Err(());
         };
-
         match store.load_image(asset_path) {
             Ok(image) => Ok(image),
             Err(err) => {
@@ -307,6 +298,31 @@ impl<'a> SceneStagePainter<'a> {
                 Err(())
             }
         }
+    }
+
+    fn asset_store(
+        &mut self,
+        project_root: &Path,
+        asset_path: &str,
+    ) -> Option<&vnengine_assets::AssetStore> {
+        if self.asset_store.is_none() {
+            self.asset_store = match vnengine_assets::AssetStore::new(
+                project_root.to_path_buf(),
+                vnengine_assets::SecurityMode::Trusted,
+                None,
+                false,
+            ) {
+                Ok(store) => Some(store),
+                Err(err) => {
+                    self.image_failures.insert(
+                        asset_path.to_string(),
+                        format!("image '{asset_path}' asset store initialization failed: {err}"),
+                    );
+                    None
+                }
+            };
+        }
+        self.asset_store.as_ref()
     }
 }
 
@@ -379,6 +395,27 @@ pub(crate) fn is_background_image(kind: &EntityKind, z_order: i32) -> bool {
     matches!(kind, EntityKind::Image(_)) && z_order <= -50
 }
 
+pub(crate) fn clamp_transform_to_stage(
+    transform: &mut Transform,
+    kind: &EntityKind,
+    geometry: &StageGeometry,
+) {
+    if is_background_image(kind, transform.z_order) {
+        transform.x = 0;
+        transform.y = 0;
+        return;
+    }
+    let logical_stage = egui::vec2(
+        geometry.stage_rect.width() / geometry.scale,
+        geometry.stage_rect.height() / geometry.scale,
+    );
+    let logical_size = entity_logical_size(kind, transform);
+    let max_x = (logical_stage.x - logical_size.x).max(0.0).round() as i32;
+    let max_y = (logical_stage.y - logical_size.y).max(0.0).round() as i32;
+    transform.x = transform.x.clamp(0, max_x);
+    transform.y = transform.y.clamp(0, max_y);
+}
+
 fn entity_rect(kind: &EntityKind, transform: &Transform, geometry: &StageGeometry) -> egui::Rect {
     if is_background_image(kind, transform.z_order) {
         return geometry.stage_rect;
@@ -388,6 +425,13 @@ fn entity_rect(kind: &EntityKind, transform: &Transform, geometry: &StageGeometr
             transform.x as f32 * geometry.scale,
             transform.y as f32 * geometry.scale,
         );
+    egui::Rect::from_min_size(
+        position,
+        entity_logical_size(kind, transform) * geometry.scale,
+    )
+}
+
+fn entity_logical_size(kind: &EntityKind, transform: &Transform) -> egui::Vec2 {
     let scale = (transform.scale as f32 / 1000.0).clamp(0.1, 4.0);
     let base_size = match kind {
         EntityKind::Character(_) => egui::vec2(220.0, 340.0),
@@ -396,7 +440,11 @@ fn entity_rect(kind: &EntityKind, transform: &Transform, geometry: &StageGeometr
         EntityKind::Audio(_) => egui::vec2(300.0, 36.0),
         EntityKind::Text(_) => egui::vec2(300.0, 54.0),
     };
-    egui::Rect::from_min_size(position, base_size * geometry.scale * scale)
+    base_size * scale
+}
+
+fn normalize_asset_path(path: &str) -> String {
+    path.replace('\\', "/")
 }
 
 #[cfg(test)]

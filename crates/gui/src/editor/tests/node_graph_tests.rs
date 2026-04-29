@@ -335,22 +335,22 @@ fn auto_layout_hierarchical_creates_non_flat_branch_layout() {
     let start_pos = graph
         .nodes()
         .find(|(id, _, _)| *id == start)
-        .map(|(_, _, pos)| *pos)
+        .map(|(_, _, pos)| pos)
         .expect("start pos");
     let choice_pos = graph
         .nodes()
         .find(|(id, _, _)| *id == choice)
-        .map(|(_, _, pos)| *pos)
+        .map(|(_, _, pos)| pos)
         .expect("choice pos");
     let branch_a_pos = graph
         .nodes()
         .find(|(id, _, _)| *id == branch_a)
-        .map(|(_, _, pos)| *pos)
+        .map(|(_, _, pos)| pos)
         .expect("branch a pos");
     let branch_b_pos = graph
         .nodes()
         .find(|(id, _, _)| *id == branch_b)
-        .map(|(_, _, pos)| *pos)
+        .map(|(_, _, pos)| pos)
         .expect("branch b pos");
 
     assert!(
@@ -433,13 +433,13 @@ fn auto_layout_hierarchical_avoids_overlap_for_mixed_heights() {
         .nodes()
         .map(|(id, node, node_pos)| {
             let rect = egui::Rect::from_min_size(
-                *node_pos,
+                node_pos,
                 egui::vec2(
                     NODE_WIDTH,
-                    crate::editor::node_types::node_visual_height(node),
+                    crate::editor::node_types::node_visual_height(&node),
                 ),
             );
-            (*id, rect)
+            (id, rect)
         })
         .collect();
 

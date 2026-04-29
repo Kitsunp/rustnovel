@@ -195,7 +195,7 @@ impl EditorWorkbench {
     pub fn new(config: VnConfig) -> Self {
         // Initialize with default/empty state
         let graph = NodeGraph::default();
-        if graph.nodes.is_empty() {
+        if graph.is_empty() {
             // Optional: graph.add_node(...)
         }
 

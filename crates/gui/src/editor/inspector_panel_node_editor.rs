@@ -83,6 +83,11 @@ impl<'a> InspectorPanel<'a> {
                     ui.label("Value (i32):");
                     standard_changed |= ui.add(egui::DragValue::new(value)).changed();
                 }
+                StoryNode::SetFlag { key, value } => {
+                    ui.label("Flag Name:");
+                    standard_changed |= ui.text_edit_singleline(key).changed();
+                    standard_changed |= ui.checkbox(value, "Set").changed();
+                }
                 StoryNode::JumpIf { target, cond } => {
                     node_sections::render_jump_if_node(ui, target, cond, &mut standard_changed);
                 }

@@ -92,9 +92,6 @@ impl EditorWorkbench {
         // Fallback ownership map when preview trace ownership is unavailable.
         for (nid, node, _) in self.node_graph.nodes() {
             match node {
-                StoryNode::Dialogue { speaker, .. } => {
-                    bind_matches(characters_by_name.get(speaker.as_str()), *nid, false);
-                }
                 StoryNode::Scene {
                     background,
                     music,
@@ -102,43 +99,43 @@ impl EditorWorkbench {
                     ..
                 } => {
                     if let Some(background) = background {
-                        bind_matches(images_by_path.get(background.as_str()), *nid, false);
+                        bind_matches(images_by_path.get(background.as_str()), nid, false);
                     }
                     if let Some(music) = music {
-                        bind_matches(audio_by_path.get(music.as_str()), *nid, false);
+                        bind_matches(audio_by_path.get(music.as_str()), nid, false);
                     }
                     for character in characters {
-                        bind_matches(characters_by_name.get(character.name.as_str()), *nid, false);
+                        bind_matches(characters_by_name.get(character.name.as_str()), nid, false);
                         if let Some(expression) = &character.expression {
-                            bind_matches(images_by_path.get(expression.as_str()), *nid, false);
+                            bind_matches(images_by_path.get(expression.as_str()), nid, false);
                         }
                     }
                 }
                 StoryNode::ScenePatch(patch) => {
                     if let Some(background) = &patch.background {
-                        bind_matches(images_by_path.get(background.as_str()), *nid, false);
+                        bind_matches(images_by_path.get(background.as_str()), nid, false);
                     }
                     if let Some(music) = &patch.music {
-                        bind_matches(audio_by_path.get(music.as_str()), *nid, false);
+                        bind_matches(audio_by_path.get(music.as_str()), nid, false);
                     }
                     for character in &patch.add {
-                        bind_matches(characters_by_name.get(character.name.as_str()), *nid, false);
+                        bind_matches(characters_by_name.get(character.name.as_str()), nid, false);
                     }
                     for character in &patch.update {
-                        bind_matches(characters_by_name.get(character.name.as_str()), *nid, false);
+                        bind_matches(characters_by_name.get(character.name.as_str()), nid, false);
                     }
                 }
                 StoryNode::CharacterPlacement { name, .. } => {
-                    bind_matches(characters_by_name.get(name.as_str()), *nid, false);
+                    bind_matches(characters_by_name.get(name.as_str()), nid, false);
                 }
                 StoryNode::AudioAction {
                     asset: Some(asset), ..
                 } => {
                     // Keep scene/patch ownership when already resolved.
-                    bind_matches(audio_by_path.get(asset.as_str()), *nid, true);
+                    bind_matches(audio_by_path.get(asset.as_str()), nid, true);
                 }
                 StoryNode::Generic(visual_novel_engine::EventRaw::SetCharacterPosition(pos)) => {
-                    bind_matches(characters_by_name.get(pos.name.as_str()), *nid, false);
+                    bind_matches(characters_by_name.get(pos.name.as_str()), nid, false);
                 }
                 _ => {}
             }
