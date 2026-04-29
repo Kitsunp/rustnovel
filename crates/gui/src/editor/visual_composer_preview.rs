@@ -1,8 +1,9 @@
 use eframe::egui;
 
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 pub enum PreviewQuality {
     Draft,
+    #[default]
     Balanced,
     High,
 }
@@ -52,9 +53,10 @@ impl PreviewQuality {
     }
 }
 
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 pub enum StageFit {
     Compact,
+    #[default]
     Normal,
     Fill,
 }
@@ -76,18 +78,6 @@ impl StageFit {
             Self::Normal => 0.88,
             Self::Fill => 1.0,
         }
-    }
-}
-
-impl Default for PreviewQuality {
-    fn default() -> Self {
-        Self::Balanced
-    }
-}
-
-impl Default for StageFit {
-    fn default() -> Self {
-        Self::Normal
     }
 }
 

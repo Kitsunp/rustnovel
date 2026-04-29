@@ -265,19 +265,17 @@ impl EditorWorkbench {
                         owner_hints.character_owners.remove(removed_name.as_ref());
                     }
                 }
-                visual_novel_engine::EventCompiled::AudioAction(action) => {
-                    if action.channel == 0 {
-                        audio_resolved = true;
-                        owner_hints.music_owner = owner;
-                        match action.action {
-                            0 => {
-                                if let Some(asset) = &action.asset {
-                                    current_audio = Some(asset.clone());
-                                }
+                visual_novel_engine::EventCompiled::AudioAction(action) if action.channel == 0 => {
+                    audio_resolved = true;
+                    owner_hints.music_owner = owner;
+                    match action.action {
+                        0 => {
+                            if let Some(asset) = &action.asset {
+                                current_audio = Some(asset.clone());
                             }
-                            1 | 2 => current_audio = None,
-                            _ => {}
                         }
+                        1 | 2 => current_audio = None,
+                        _ => {}
                     }
                 }
                 visual_novel_engine::EventCompiled::SetCharacterPosition(pos) => {
