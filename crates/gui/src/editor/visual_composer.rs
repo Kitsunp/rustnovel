@@ -44,28 +44,30 @@ pub struct VisualComposerPanel<'a> {
     selected_entity_id: &'a mut Option<u32>,
 }
 
+pub struct VisualComposerPanelParams<'a> {
+    pub scene: &'a mut SceneState,
+    pub engine: &'a Option<Engine>,
+    pub project_root: Option<&'a Path>,
+    pub stage_resolution: Option<(u32, u32)>,
+    pub preview_quality: &'a mut PreviewQuality,
+    pub stage_fit: &'a mut StageFit,
+    pub image_cache: &'a mut HashMap<String, egui::TextureHandle>,
+    pub image_failures: &'a mut HashMap<String, String>,
+    pub selected_entity_id: &'a mut Option<u32>,
+}
+
 impl<'a> VisualComposerPanel<'a> {
-    pub fn new(
-        scene: &'a mut SceneState,
-        engine: &'a Option<Engine>,
-        project_root: Option<&'a Path>,
-        stage_resolution: Option<(u32, u32)>,
-        preview_quality: &'a mut PreviewQuality,
-        stage_fit: &'a mut StageFit,
-        image_cache: &'a mut HashMap<String, egui::TextureHandle>,
-        image_failures: &'a mut HashMap<String, String>,
-        selected_entity_id: &'a mut Option<u32>,
-    ) -> Self {
+    pub fn new(params: VisualComposerPanelParams<'a>) -> Self {
         Self {
-            scene,
-            engine,
-            project_root,
-            stage_resolution,
-            preview_quality,
-            stage_fit,
-            image_cache,
-            image_failures,
-            selected_entity_id,
+            scene: params.scene,
+            engine: params.engine,
+            project_root: params.project_root,
+            stage_resolution: params.stage_resolution,
+            preview_quality: params.preview_quality,
+            stage_fit: params.stage_fit,
+            image_cache: params.image_cache,
+            image_failures: params.image_failures,
+            selected_entity_id: params.selected_entity_id,
         }
     }
 

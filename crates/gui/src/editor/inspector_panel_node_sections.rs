@@ -107,21 +107,25 @@ pub(super) fn render_scene_node(
     ui.separator();
     asset_fields::edit_optional_asset_text(
         ui,
-        "Background Image:",
         background,
-        AssetImportKind::Background,
-        AssetFieldTarget::SceneBackground,
-        node_id,
+        asset_fields::AssetFieldEdit {
+            label: "Background Image:",
+            kind: AssetImportKind::Background,
+            target: AssetFieldTarget::SceneBackground,
+            node_id,
+        },
         standard_changed,
         actions,
     );
     asset_fields::edit_optional_asset_text(
         ui,
-        "Background Music:",
         music,
-        AssetImportKind::Audio,
-        AssetFieldTarget::SceneMusic,
-        node_id,
+        asset_fields::AssetFieldEdit {
+            label: "Background Music:",
+            kind: AssetImportKind::Audio,
+            target: AssetFieldTarget::SceneMusic,
+            node_id,
+        },
         standard_changed,
         actions,
     );
@@ -281,21 +285,25 @@ pub(super) fn render_scene_patch_node(
 
     asset_fields::edit_optional_asset_inline(
         ui,
-        "Music:",
         &mut patch.music,
-        AssetImportKind::Audio,
-        AssetFieldTarget::ScenePatchMusic,
-        node_id,
+        asset_fields::AssetFieldEdit {
+            label: "Music:",
+            kind: AssetImportKind::Audio,
+            target: AssetFieldTarget::ScenePatchMusic,
+            node_id,
+        },
         standard_changed,
         actions,
     );
     asset_fields::edit_optional_asset_inline(
         ui,
-        "Background (Override):",
         &mut patch.background,
-        AssetImportKind::Background,
-        AssetFieldTarget::ScenePatchBackground,
-        node_id,
+        asset_fields::AssetFieldEdit {
+            label: "Background (Override):",
+            kind: AssetImportKind::Background,
+            target: AssetFieldTarget::ScenePatchBackground,
+            node_id,
+        },
         standard_changed,
         actions,
     );

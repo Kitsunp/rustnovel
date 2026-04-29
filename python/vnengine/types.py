@@ -463,7 +463,7 @@ Event = Union[
 ]
 
 
-from .script_types import (  # noqa: E402  (loaded after event classes exist)
+from .script_types import (  # noqa: E402,F401  (loaded after event classes exist)
     Script,
     cond_from_dict,
     event_from_dict,
@@ -471,3 +471,6 @@ from .script_types import (  # noqa: E402  (loaded after event classes exist)
     normalize_characters,
     normalize_choice_options,
 )
+from ._types_public import TYPES_PUBLIC_API  # noqa: E402
+
+__all__ = TYPES_PUBLIC_API

@@ -210,9 +210,7 @@ impl<'a> AssetBrowserPanel<'a> {
         if self.image_failures.contains_key(&cache_key) {
             return None;
         }
-        let Some(project_root) = self.project_root else {
-            return None;
-        };
+        let project_root = self.project_root?;
         let image = match self.asset_store(project_root)?.load_image(asset_path) {
             Ok(image) => image,
             Err(err) => {

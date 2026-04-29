@@ -34,21 +34,18 @@ pub fn from_script(script: &ScriptRaw) -> NodeGraph {
         .iter()
         .map(|(name, idx)| (name.as_str(), *idx))
         .collect::<BTreeMap<_, _>>();
+    let flow_targets = FlowTargetLookup {
+        end_id,
+        label_to_index: &label_to_index,
+        index_to_id: &index_to_id,
+        event_count: script.events.len(),
+    };
 
     for (idx, event) in script.events.iter().enumerate() {
         let Some(from_id) = index_to_id.get(&idx).copied() else {
             continue;
         };
-        connect_event_flow(
-            &mut graph,
-            event,
-            idx,
-            from_id,
-            end_id,
-            &label_to_index,
-            &index_to_id,
-            script.events.len(),
-        );
+        connect_event_flow(&mut graph, event, idx, from_id, &flow_targets);
     }
 
     let nodes_with_outgoing = graph
@@ -165,63 +162,39 @@ fn node_from_event(event: &EventRaw) -> StoryNode {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn connect_event_flow(
     graph: &mut NodeGraph,
     event: &EventRaw,
     idx: usize,
     from_id: u32,
-    end_id: u32,
-    label_to_index: &BTreeMap<&str, usize>,
-    index_to_id: &BTreeMap<usize, u32>,
-    event_count: usize,
+    targets: &FlowTargetLookup<'_>,
 ) {
     match event {
-        EventRaw::Jump { target } => connect_target(
-            graph,
-            from_id,
-            0,
-            target,
-            end_id,
-            label_to_index,
-            index_to_id,
-            event_count,
-        ),
+        EventRaw::Jump { target } => connect_target(graph, from_id, 0, target, targets),
         EventRaw::Choice(choice) => {
             for (port, option) in choice.options.iter().enumerate() {
-                connect_target(
-                    graph,
-                    from_id,
-                    port,
-                    &option.target,
-                    end_id,
-                    label_to_index,
-                    index_to_id,
-                    event_count,
-                );
+                connect_target(graph, from_id, port, &option.target, targets);
             }
         }
         EventRaw::JumpIf { target, .. } => {
-            connect_target(
-                graph,
-                from_id,
-                0,
-                target,
-                end_id,
-                label_to_index,
-                index_to_id,
-                event_count,
-            );
-            if let Some(next_id) = index_to_id.get(&(idx + 1)).copied() {
+            connect_target(graph, from_id, 0, target, targets);
+            if let Some(next_id) = targets.index_to_id.get(&(idx + 1)).copied() {
                 graph.connect_port(from_id, 1, next_id);
             }
         }
         _ => {
-            if let Some(next_id) = index_to_id.get(&(idx + 1)).copied() {
+            if let Some(next_id) = targets.index_to_id.get(&(idx + 1)).copied() {
                 graph.connect(from_id, next_id);
             }
         }
     }
+}
+
+struct FlowTargetLookup<'a> {
+    end_id: u32,
+    label_to_index: &'a BTreeMap<&'a str, usize>,
+    index_to_id: &'a BTreeMap<usize, u32>,
+    event_count: usize,
 }
 
 fn connect_target(
@@ -229,17 +202,14 @@ fn connect_target(
     from_id: u32,
     from_port: usize,
     target: &str,
-    end_id: u32,
-    label_to_index: &BTreeMap<&str, usize>,
-    index_to_id: &BTreeMap<usize, u32>,
-    event_count: usize,
+    targets: &FlowTargetLookup<'_>,
 ) {
-    let Some(target_idx) = label_to_index.get(target).copied() else {
+    let Some(target_idx) = targets.label_to_index.get(target).copied() else {
         return;
     };
-    if target_idx == event_count {
-        graph.connect_port(from_id, from_port, end_id);
-    } else if let Some(target_id) = index_to_id.get(&target_idx).copied() {
+    if target_idx == targets.event_count {
+        graph.connect_port(from_id, from_port, targets.end_id);
+    } else if let Some(target_id) = targets.index_to_id.get(&target_idx).copied() {
         graph.connect_port(from_id, from_port, target_id);
     }
 }

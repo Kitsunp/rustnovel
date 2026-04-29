@@ -1,4 +1,5 @@
-/target
+/target/
+**/target/
 /.benchmarks/
 /build/
 /dist/
@@ -20,6 +21,7 @@ coverage/
 htmlcov/
 *.profraw
 *.profdata
+sbom.cdx.json
 *.egg-info/
 *.txt
 test_output.txt

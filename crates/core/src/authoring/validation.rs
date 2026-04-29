@@ -138,12 +138,14 @@ fn validate_node<F>(
             fade_duration_ms,
             ..
         } => validate_audio(
-            id,
-            channel,
-            action,
-            asset,
-            volume,
-            fade_duration_ms,
+            AudioValidation {
+                id,
+                channel,
+                action,
+                asset,
+                volume,
+                fade_duration_ms,
+            },
             asset_exists,
             issues,
         ),
@@ -302,59 +304,63 @@ fn validate_choice(graph: &NodeGraph, id: u32, options: &[String], issues: &mut 
     }
 }
 
-fn validate_audio<F>(
+struct AudioValidation<'a> {
     id: u32,
-    channel: &str,
-    action: &str,
-    asset: &Option<String>,
-    volume: &Option<f32>,
-    fade_duration_ms: &Option<u64>,
-    asset_exists: &F,
-    issues: &mut Vec<LintIssue>,
-) where
+    channel: &'a str,
+    action: &'a str,
+    asset: &'a Option<String>,
+    volume: &'a Option<f32>,
+    fade_duration_ms: &'a Option<u64>,
+}
+
+fn validate_audio<F>(audio: AudioValidation<'_>, asset_exists: &F, issues: &mut Vec<LintIssue>)
+where
     F: Fn(&str) -> bool,
 {
-    if !matches!(channel, "bgm" | "sfx" | "voice") {
+    if !matches!(audio.channel, "bgm" | "sfx" | "voice") {
         issues.push(LintIssue::error(
-            Some(id),
+            Some(audio.id),
             ValidationPhase::Graph,
             LintCode::InvalidAudioChannel,
             "Invalid audio channel",
         ));
     }
-    if !matches!(action, "play" | "stop" | "fade_out") {
+    if !matches!(audio.action, "play" | "stop" | "fade_out") {
         issues.push(LintIssue::error(
-            Some(id),
+            Some(audio.id),
             ValidationPhase::Graph,
             LintCode::InvalidAudioAction,
             "Invalid audio action",
         ));
     }
-    if volume.is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value)) {
+    if audio
+        .volume
+        .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
+    {
         issues.push(LintIssue::error(
-            Some(id),
+            Some(audio.id),
             ValidationPhase::Graph,
             LintCode::InvalidAudioVolume,
             "Invalid audio volume",
         ));
     }
-    if matches!(action, "stop" | "fade_out") && fade_duration_ms.unwrap_or(0) == 0 {
+    if matches!(audio.action, "stop" | "fade_out") && audio.fade_duration_ms.unwrap_or(0) == 0 {
         issues.push(LintIssue::warning(
-            Some(id),
+            Some(audio.id),
             ValidationPhase::Graph,
             LintCode::InvalidAudioFade,
             "Missing audio fade duration",
         ));
     }
-    if action == "play" && asset.is_none() {
+    if audio.action == "play" && audio.asset.is_none() {
         issues.push(LintIssue::warning(
-            Some(id),
+            Some(audio.id),
             ValidationPhase::Graph,
             LintCode::AudioAssetMissing,
             "Audio asset path is missing",
         ));
     }
-    validate_asset(id, asset, "audio", asset_exists, issues);
+    validate_asset(audio.id, audio.asset, "audio", asset_exists, issues);
 }
 
 fn validate_transition(id: u32, kind: &str, duration_ms: u32, issues: &mut Vec<LintIssue>) {

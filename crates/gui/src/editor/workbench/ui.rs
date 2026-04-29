@@ -327,15 +327,17 @@ impl EditorWorkbench {
                 .as_ref()
                 .map(|manifest| manifest.settings.resolution);
             let mut composer = crate::editor::visual_composer::VisualComposerPanel::new(
-                &mut self.scene,
-                &self.engine,
-                self.project_root.as_deref(),
-                stage_resolution,
-                &mut self.composer_preview_quality,
-                &mut self.composer_stage_fit,
-                &mut self.composer_image_cache,
-                &mut self.composer_image_failures,
-                &mut self.selected_entity,
+                crate::editor::visual_composer::VisualComposerPanelParams {
+                    scene: &mut self.scene,
+                    engine: &self.engine,
+                    project_root: self.project_root.as_deref(),
+                    stage_resolution,
+                    preview_quality: &mut self.composer_preview_quality,
+                    stage_fit: &mut self.composer_stage_fit,
+                    image_cache: &mut self.composer_image_cache,
+                    image_failures: &mut self.composer_image_failures,
+                    selected_entity_id: &mut self.selected_entity,
+                },
             );
             if let Some(act) = composer.ui(ui, &entity_owners) {
                 composer_actions.push(act);

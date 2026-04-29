@@ -323,7 +323,9 @@ class GuiBindingTests(unittest.TestCase):
         self.native.Engine(json.dumps(payload))
 
         restored = vn.NodeGraph.from_script_json(json.dumps(payload))
-        self.assertEqual(json.loads(restored.to_script_json())["events"][0]["type"], "jump_if")
+        self.assertEqual(
+            json.loads(restored.to_script_json())["events"][0]["type"], "jump_if"
+        )
 
     def test_node_graph_validate_rejects_windows_drive_asset_path(self):
         import visual_novel_engine as vn

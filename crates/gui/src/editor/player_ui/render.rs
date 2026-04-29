@@ -25,6 +25,11 @@ pub(crate) struct PlayerVisualContext<'a> {
     pub image_failures: &'a mut HashMap<String, String>,
 }
 
+struct PlayerLocalizationContext<'a> {
+    locale: &'a mut String,
+    catalog: &'a LocalizationCatalog,
+}
+
 pub fn render_player_ui(
     engine: &mut Option<Engine>,
     toast: &mut Option<ToastState>,
@@ -37,14 +42,17 @@ pub fn render_player_ui(
     let mut audio_commands = Vec::new();
     egui::CentralPanel::default().show(ctx, |ui| {
         if let Some(ref mut eng) = engine {
+            let mut localization = PlayerLocalizationContext {
+                locale: player_locale,
+                catalog: localization_catalog,
+            };
             audio_commands.extend(render_event_ui(
                 ui,
                 ctx,
                 eng,
                 toast,
                 player,
-                player_locale,
-                localization_catalog,
+                &mut localization,
                 visual,
             ));
         } else {
@@ -71,8 +79,7 @@ fn render_event_ui(
     engine: &mut Engine,
     toast: &mut Option<ToastState>,
     player: &mut PlayerSessionState,
-    player_locale: &mut String,
-    localization_catalog: &LocalizationCatalog,
+    localization: &mut PlayerLocalizationContext<'_>,
     visual: &mut PlayerVisualContext<'_>,
 ) -> Vec<AudioCommand> {
     let mut audio_commands = Vec::new();
@@ -85,7 +92,7 @@ fn render_event_ui(
 
     controls::render_header_bar(ui, engine, toast, player, now_sec, &mut audio_commands);
     ui.separator();
-    controls::render_player_controls(ui, player, player_locale, localization_catalog);
+    controls::render_player_controls(ui, player, localization.locale, localization.catalog);
     controls::render_backlog_window(ctx, engine, player);
     controls::render_choice_history_window(ctx, engine, player);
     ui.separator();
@@ -109,11 +116,14 @@ fn render_event_ui(
                 EventCompiled::Dialogue(d) => {
                     let localized_speaker = localize_inline_value(
                         d.speaker.as_ref(),
-                        player_locale,
-                        localization_catalog,
+                        localization.locale,
+                        localization.catalog,
                     );
-                    let localized_text =
-                        localize_inline_value(d.text.as_ref(), player_locale, localization_catalog);
+                    let localized_text = localize_inline_value(
+                        d.text.as_ref(),
+                        localization.locale,
+                        localization.catalog,
+                    );
                     if content::render_dialogue(
                         ui,
                         ctx,
@@ -130,8 +140,8 @@ fn render_event_ui(
                 EventCompiled::Choice(c) => {
                     let localized_prompt = localize_inline_value(
                         c.prompt.as_ref(),
-                        player_locale,
-                        localization_catalog,
+                        localization.locale,
+                        localization.catalog,
                     );
                     let localized_options = c
                         .options
@@ -139,8 +149,8 @@ fn render_event_ui(
                         .map(|option| {
                             localize_inline_value(
                                 option.text.as_ref(),
-                                player_locale,
-                                localization_catalog,
+                                localization.locale,
+                                localization.catalog,
                             )
                         })
                         .collect::<Vec<_>>();

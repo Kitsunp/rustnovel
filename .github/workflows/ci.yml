@@ -35,7 +35,9 @@ jobs:
         run: cargo install cargo-audit --locked
       # RUSTSEC-2024-0436 is transitive through the graphics stack (`pixels` -> `wgpu` -> `metal`).
       # Keep it isolated here until we can refresh that stack without widening the scope of this CI pass.
-      - run: cargo audit -D warnings --ignore RUSTSEC-2024-0436
+      # RUSTSEC-2026-0097 is transitive through `rfd` -> `ashpd`/`zbus` -> `rand`.
+      # The GUI does not install a custom logger that calls `rand::rng()`, but CI must stay pinned.
+      - run: cargo audit -D warnings --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0097
 
   test:
     runs-on: ubuntu-latest

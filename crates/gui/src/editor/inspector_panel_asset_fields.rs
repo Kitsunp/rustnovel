@@ -3,35 +3,36 @@ use eframe::egui;
 use super::NodeEditActions;
 use crate::editor::{inspector_panel::InspectorAction, AssetFieldTarget, AssetImportKind};
 
+pub(super) struct AssetFieldEdit {
+    pub label: &'static str,
+    pub kind: AssetImportKind,
+    pub target: AssetFieldTarget,
+    pub node_id: u32,
+}
+
 pub(super) fn edit_optional_asset_text(
     ui: &mut egui::Ui,
-    label: &str,
     value: &mut Option<String>,
-    kind: AssetImportKind,
-    target: AssetFieldTarget,
-    node_id: u32,
+    edit: AssetFieldEdit,
     standard_changed: &mut bool,
     actions: &mut NodeEditActions,
 ) {
-    ui.label(label);
+    ui.label(edit.label);
     ui.horizontal(|ui| {
-        render_asset_text_field(ui, value, kind, target, node_id, standard_changed, actions);
+        render_asset_text_field(ui, value, edit, standard_changed, actions);
     });
 }
 
 pub(super) fn edit_optional_asset_inline(
     ui: &mut egui::Ui,
-    label: &str,
     value: &mut Option<String>,
-    kind: AssetImportKind,
-    target: AssetFieldTarget,
-    node_id: u32,
+    edit: AssetFieldEdit,
     standard_changed: &mut bool,
     actions: &mut NodeEditActions,
 ) {
     ui.horizontal(|ui| {
-        ui.label(label);
-        render_asset_text_field(ui, value, kind, target, node_id, standard_changed, actions);
+        ui.label(edit.label);
+        render_asset_text_field(ui, value, edit, standard_changed, actions);
     });
 }
 
@@ -93,11 +94,13 @@ pub(super) fn render_optional_character_fields(
     if let Some(target) = expression_target {
         edit_optional_asset_inline(
             ui,
-            "Expr:",
             expression,
-            AssetImportKind::Character,
-            target,
-            node_id,
+            AssetFieldEdit {
+                label: "Expr:",
+                kind: AssetImportKind::Character,
+                target,
+                node_id,
+            },
             standard_changed,
             actions,
         );
@@ -166,9 +169,7 @@ pub(super) fn render_optional_transform_fields(
 fn render_asset_text_field(
     ui: &mut egui::Ui,
     value: &mut Option<String>,
-    kind: AssetImportKind,
-    target: AssetFieldTarget,
-    node_id: u32,
+    edit: AssetFieldEdit,
     standard_changed: &mut bool,
     actions: &mut NodeEditActions,
 ) {
@@ -185,14 +186,14 @@ fn render_asset_text_field(
     if ui
         .add_sized(
             [button_width, 20.0],
-            egui::Button::new(kind.field_button_label()),
+            egui::Button::new(edit.kind.field_button_label()),
         )
         .clicked()
     {
         actions.inspector_action = Some(InspectorAction::ImportAssetForNode {
-            node_id,
-            kind,
-            target,
+            node_id: edit.node_id,
+            kind: edit.kind,
+            target: edit.target,
         });
     }
 }

@@ -42,7 +42,7 @@ pub struct SceneProfile {
     pub poses: Vec<CharacterPoseBinding>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NodeGraph {
     nodes: Vec<(u32, StoryNode, AuthoringPosition)>,
     connections: Vec<GraphConnection>,
@@ -52,19 +52,6 @@ pub struct NodeGraph {
     next_id: u32,
     #[serde(skip)]
     pub(super) modified: bool,
-}
-
-impl Default for NodeGraph {
-    fn default() -> Self {
-        Self {
-            nodes: Vec::new(),
-            connections: Vec::new(),
-            scene_profiles: BTreeMap::new(),
-            bookmarks: BTreeMap::new(),
-            next_id: 0,
-            modified: false,
-        }
-    }
 }
 
 impl NodeGraph {
