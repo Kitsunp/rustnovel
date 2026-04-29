@@ -25,7 +25,8 @@ pyo3 = { version = "0.24.1", optional = true }
 arbitrary = { version = "1.4.2", features = ["derive"], optional = true }
 
 [features]
-python = ["pyo3", "pyo3/extension-module"]
+python = ["pyo3"]
+python-extension = ["python", "pyo3/extension-module"]
 python-embed = ["pyo3", "pyo3/auto-initialize"]
 arbitrary = ["dep:arbitrary"]
 

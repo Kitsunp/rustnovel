@@ -21,7 +21,7 @@ classifiers = [
 [tool.maturin]
 module-name = "visual_novel_engine"
 manifest-path = "crates/py/Cargo.toml"
-python-source = "python"
+features = ["extension-module"]
 
 [tool.ruff]
 extend-exclude = [".pytest_cache", "pytest-cache-files-*", "target"]

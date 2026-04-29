@@ -298,10 +298,8 @@ fn copy_assets_tree(
         return Ok(manifest);
     }
 
-    for entry in WalkDir::new(assets_source_root)
-        .into_iter()
-        .filter_map(Result::ok)
-    {
+    for entry in WalkDir::new(assets_source_root).follow_links(true) {
+        let entry = entry.map_err(|e| invalid_bundle(format!("walk assets tree: {e}")))?;
         if !entry.file_type().is_file() {
             continue;
         }
@@ -356,20 +354,13 @@ fn copy_runtime_artifact(
     };
 
     let source = if raw_path.is_absolute() {
-        raw_path.to_path_buf()
+        raw_path
+            .canonicalize()
+            .map_err(|e| invalid_bundle(format!("canonicalize runtime artifact: {e}")))?
     } else {
         let safe_rel = sanitize_relative_path(raw_path, "runtime_artifact")?;
-        project_root.join(safe_rel)
+        canonicalize_within_root(project_root, &safe_rel, "runtime_artifact")?
     };
-    let source = source
-        .canonicalize()
-        .map_err(|e| invalid_bundle(format!("canonicalize runtime artifact: {e}")))?;
-    if raw_path.is_relative() && !source.starts_with(project_root) {
-        return Err(invalid_bundle(format!(
-            "runtime_artifact escapes project_root: '{}'",
-            raw_path.display()
-        )));
-    }
     if !source.is_file() {
         return Err(invalid_bundle(format!(
             "runtime artifact is not a file '{}'",

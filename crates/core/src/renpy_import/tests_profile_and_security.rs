@@ -486,15 +486,15 @@ call translated_route
             .is_none_or(|f| !f.ends_with("/screens.rpy"))),
         "ui files must be excluded even when selecting game/ as root"
     );
-    assert_eq!(
-        normalize_win_path(&report.scan_root),
-        normalize_win_path(&game_dir.to_string_lossy())
-    );
+    assert_same_path(&report.scan_root, &game_dir);
 }
 
-fn normalize_win_path(value: &str) -> String {
-    value
-        .replace('\\', "/")
-        .trim_start_matches("//?/")
-        .to_string()
+fn assert_same_path(left: &str, right: &std::path::Path) {
+    let left = std::path::Path::new(left)
+        .canonicalize()
+        .expect("left path should canonicalize");
+    let right = right
+        .canonicalize()
+        .expect("right path should canonicalize");
+    assert_eq!(left, right);
 }

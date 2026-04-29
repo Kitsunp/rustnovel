@@ -35,6 +35,13 @@ function Test-CommandAvailable {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Test-IsWindowsHost {
+    if (Get-Variable -Name IsWindows -Scope Global -ErrorAction SilentlyContinue) {
+        return $Global:IsWindows
+    }
+    return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+}
+
 function Invoke-LintJob {
     Invoke-CiStep "rustc version" { rustc --version }
     Invoke-CiStep "cargo version" { cargo --version }
@@ -65,8 +72,8 @@ function Invoke-TestJob {
     Invoke-CiStep "cargo test --workspace --all-targets --locked --verbose" {
         cargo test --workspace --all-targets --locked --verbose
     }
-    Invoke-CiStep "cargo build -p vnengine_py --profile python --locked --verbose" {
-        cargo build -p vnengine_py --profile python --locked --verbose
+    Invoke-CiStep "cargo build -p vnengine_py --profile python --features extension-module --locked --verbose" {
+        cargo build -p vnengine_py --profile python --features extension-module --locked --verbose
     }
     Invoke-CiStep "cargo bench core_benches smoke" {
         cargo bench -p visual_novel_engine --bench core_benches --locked -- --warm-up-time 0.1 --measurement-time 0.1 --sample-size 10
@@ -147,7 +154,10 @@ function Invoke-SbomPolicyJob {
         cargo cyclonedx --format json --all --override-filename sbom.cdx
     }
     Invoke-CiStep "validate SBOM content" {
-        $files = Get-ChildItem -Recurse -Filter "sbom.cdx.json" | Sort-Object FullName
+        $files = @(
+            Get-ChildItem -Path "crates", "tools" -Recurse -Filter "sbom.cdx.json" |
+                Sort-Object FullName
+        )
         if (-not $files) {
             throw "SBOM files not found"
         }
@@ -178,7 +188,7 @@ function Invoke-PythonTestsJob {
     Invoke-CiStep "python -m venv .venv" {
         & $Python -m venv $venv
     }
-    $pythonExe = if ($IsWindows) {
+    $pythonExe = if (Test-IsWindowsHost) {
         Join-Path $venv "Scripts/python.exe"
     } else {
         Join-Path $venv "bin/python"
@@ -188,7 +198,7 @@ function Invoke-PythonTestsJob {
         & $pythonExe -m pip install maturin
     }
     Invoke-CiStep "maturin develop" {
-        & $pythonExe -m maturin develop --manifest-path crates/py/Cargo.toml
+        & $pythonExe -m maturin develop --manifest-path crates/py/Cargo.toml --features extension-module
     }
     Invoke-CiStep "python unittest" {
         $env:PYTHONPATH = "python"

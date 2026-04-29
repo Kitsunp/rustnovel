@@ -50,7 +50,7 @@ jobs:
           sudo apt-get install -y libasound2-dev libudev-dev
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace --all-targets --locked --verbose
-      - run: cargo build -p vnengine_py --profile python --locked --verbose
+      - run: cargo build -p vnengine_py --profile python --features extension-module --locked --verbose
       - run: cargo bench -p visual_novel_engine --bench core_benches --locked -- --warm-up-time 0.1 --measurement-time 0.1 --sample-size 10
 
   matrix-smoke:
@@ -115,7 +115,8 @@ jobs:
           import json
           from pathlib import Path
 
-          files = sorted(Path(".").rglob("sbom.cdx.json"))
+          roots = [Path("crates"), Path("tools")]
+          files = sorted(file for root in roots for file in root.rglob("sbom.cdx.json"))
           if not files:
               raise SystemExit("SBOM files not found (expected at least one sbom.cdx.json)")
 
@@ -177,7 +178,7 @@ jobs:
       - name: Build and install Python module
         run: |
           source .venv/bin/activate
-          maturin develop --manifest-path crates/py/Cargo.toml
+          maturin develop --manifest-path crates/py/Cargo.toml --features extension-module
       - name: Run Python tests
         run: |
           source .venv/bin/activate
