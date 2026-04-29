@@ -225,29 +225,25 @@ impl SecurityPolicy {
                         }
                     }
                 }
-                EventCompiled::Jump { target_ip } => {
-                    if *target_ip as usize > script.events.len() {
-                        return Err(VnError::InvalidScript(format!(
-                            "jump target_ip {} outside events",
-                            target_ip
-                        )));
-                    }
+                EventCompiled::Jump { target_ip } if *target_ip as usize > script.events.len() => {
+                    return Err(VnError::InvalidScript(format!(
+                        "jump target_ip {} outside events",
+                        target_ip
+                    )));
                 }
-                EventCompiled::JumpIf { target_ip, .. } => {
-                    if *target_ip as usize > script.events.len() {
-                        return Err(VnError::InvalidScript(format!(
-                            "jump_if target_ip {} outside events",
-                            target_ip
-                        )));
-                    }
+                EventCompiled::JumpIf { target_ip, .. }
+                    if *target_ip as usize > script.events.len() =>
+                {
+                    return Err(VnError::InvalidScript(format!(
+                        "jump_if target_ip {} outside events",
+                        target_ip
+                    )));
                 }
-                EventCompiled::SetFlag { flag_id, .. } => {
-                    if *flag_id >= script.flag_count {
-                        return Err(VnError::InvalidScript(format!(
-                            "flag id {} outside compiled range",
-                            flag_id
-                        )));
-                    }
+                EventCompiled::SetFlag { flag_id, .. } if *flag_id >= script.flag_count => {
+                    return Err(VnError::InvalidScript(format!(
+                        "flag id {} outside compiled range",
+                        flag_id
+                    )));
                 }
                 _ => {}
             }

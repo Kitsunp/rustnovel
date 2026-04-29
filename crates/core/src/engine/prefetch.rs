@@ -136,11 +136,9 @@ fn collect_prefetch_paths_from_event(
                 }
             }
         }
-        EventCompiled::AudioAction(action) => {
-            if action.action == 0 {
-                if let Some(asset) = &action.asset {
-                    push_unique_prefetch_path(asset.as_ref(), seen, output);
-                }
+        EventCompiled::AudioAction(action) if action.action == 0 => {
+            if let Some(asset) = &action.asset {
+                push_unique_prefetch_path(asset.as_ref(), seen, output);
             }
         }
         _ => {}

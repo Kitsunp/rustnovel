@@ -160,10 +160,7 @@ impl ImportState {
         let mut branches: Vec<(Option<CondRaw>, usize, usize, ParsedLine)> = Vec::new();
 
         let mut cursor = *idx;
-        loop {
-            let Some(branch_line) = lines.get(cursor) else {
-                break;
-            };
+        while let Some(branch_line) = lines.get(cursor) {
             if branch_line.indent != base_indent {
                 break;
             }

@@ -8,15 +8,11 @@ pub(super) fn patch_missing_targets(state: &mut ImportState) {
     let mut missing = BTreeSet::new();
     for event in &state.events {
         match event {
-            EventRaw::Jump { target } => {
-                if !state.labels.contains_key(target) {
-                    missing.insert(target.clone());
-                }
+            EventRaw::Jump { target } if !state.labels.contains_key(target) => {
+                missing.insert(target.clone());
             }
-            EventRaw::JumpIf { target, .. } => {
-                if !state.labels.contains_key(target) {
-                    missing.insert(target.clone());
-                }
+            EventRaw::JumpIf { target, .. } if !state.labels.contains_key(target) => {
+                missing.insert(target.clone());
             }
             EventRaw::Choice(choice) => {
                 for option in &choice.options {

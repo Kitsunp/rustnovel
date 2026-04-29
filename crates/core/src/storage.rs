@@ -373,7 +373,7 @@ impl SaveSlotStore {
             }
         }
 
-        entries.sort_by(|a, b| b.metadata.updated_unix_ms.cmp(&a.metadata.updated_unix_ms));
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.metadata.updated_unix_ms));
         Ok(entries)
     }
 

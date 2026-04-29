@@ -355,9 +355,8 @@ fn json_error_span(input: &str, error: &serde_json::Error) -> (usize, usize) {
     if line == 0 || column == 0 {
         return (0, 1);
     }
-    let mut current_line = 1usize;
     let mut offset = 0usize;
-    for chunk in input.split_inclusive('\n') {
+    for (current_line, chunk) in (1usize..).zip(input.split_inclusive('\n')) {
         if current_line == line {
             let column_index = column.saturating_sub(1);
             let byte_index = chunk
@@ -369,7 +368,6 @@ fn json_error_span(input: &str, error: &serde_json::Error) -> (usize, usize) {
             return (offset, 1);
         }
         offset += chunk.len();
-        current_line += 1;
     }
     (input.len().saturating_sub(1), 1)
 }

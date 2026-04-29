@@ -155,14 +155,12 @@ pub fn enumerate_choice_routes_with_report(
                 };
                 next_ip = target_ip;
             }
-            EventRaw::JumpIf { cond, target } => {
-                if eval_cond_raw(cond, &next.state) {
-                    let Some(target_ip) = script.labels.get(target).copied() else {
-                        routes.push(next.choices);
-                        continue;
-                    };
-                    next_ip = target_ip;
-                }
+            EventRaw::JumpIf { cond, target } if eval_cond_raw(cond, &next.state) => {
+                let Some(target_ip) = script.labels.get(target).copied() else {
+                    routes.push(next.choices);
+                    continue;
+                };
+                next_ip = target_ip;
             }
             _ => {}
         }
@@ -241,13 +239,11 @@ pub fn simulate_raw_sequence(
                 };
                 next_ip = target_ip;
             }
-            EventRaw::JumpIf { cond, target } => {
-                if eval_cond_raw(cond, &state) {
-                    let Some(target_ip) = script.labels.get(target).copied() else {
-                        break;
-                    };
-                    next_ip = target_ip;
-                }
+            EventRaw::JumpIf { cond, target } if eval_cond_raw(cond, &state) => {
+                let Some(target_ip) = script.labels.get(target).copied() else {
+                    break;
+                };
+                next_ip = target_ip;
             }
             _ => {}
         }
