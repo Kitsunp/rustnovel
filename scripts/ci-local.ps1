@@ -73,7 +73,14 @@ function Invoke-LintJob {
             cargo install cargo-audit --locked
         }
     }
-    $auditDb = Join-Path (Get-Location) "target/audit-db"
+    $auditDb = Join-Path (Get-Location) "target/ci-local/audit-db"
+    $auditRemote = Join-Path $auditDb ".git/config"
+    if ((Test-Path $auditDb) -and (
+            -not (Test-Path $auditRemote) -or
+            -not (Select-String -Path $auditRemote -Pattern 'url = https://github.com/RustSec/advisory-db.git' -Quiet)
+        )) {
+        Remove-Item -LiteralPath $auditDb -Recurse -Force
+    }
     Invoke-CiStep "cargo audit -D warnings" {
         cargo audit --db $auditDb -D warnings --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0097
     }
@@ -230,7 +237,18 @@ function Invoke-PythonTestsJob {
         & $pythonExe -m maturin develop --manifest-path crates/py/Cargo.toml --features extension-module
     }
     Invoke-CiStep "python unittest" {
-        $env:PYTHONPATH = "python"
+        if (Test-IsWindowsHost) {
+            $builtDll = Join-Path "target/debug" "visual_novel_engine.dll"
+            $importablePyd = Join-Path "target/debug" "visual_novel_engine.pyd"
+            if (Test-Path $builtDll) {
+                Copy-Item -LiteralPath $builtDll -Destination $importablePyd -Force
+                $env:PYTHONPATH = "target/debug;python"
+            } else {
+                $env:PYTHONPATH = "python"
+            }
+        } else {
+            $env:PYTHONPATH = "python"
+        }
         & $pythonExe -m unittest discover -s tests/python -p "test_*.py" -v
     }
 }

@@ -17,10 +17,16 @@ fn diagnostic_id_is_stable_and_includes_phase_code_node_and_ip() {
         LintCode::UnreachableNode,
         "dead code",
     );
-    assert_eq!(issue.diagnostic_id(), "GRAPH:VAL_UNREACHABLE:7:na");
+    assert_eq!(
+        issue.diagnostic_id(),
+        "authoring-diagnostic-v2:GRAPH:VAL_UNREACHABLE:7:na:na:na:na"
+    );
 
     let issue = issue.with_event_ip(Some(3));
-    assert_eq!(issue.diagnostic_id(), "GRAPH:VAL_UNREACHABLE:7:3");
+    assert_eq!(
+        issue.diagnostic_id(),
+        "authoring-diagnostic-v2:GRAPH:VAL_UNREACHABLE:7:3:na:na:na"
+    );
 }
 
 #[test]

@@ -1,10 +1,25 @@
 import json
+import shutil
 import sys
 import types
 import unittest
+from contextlib import contextmanager
+from pathlib import Path
 
 from vnengine.native import call_native_method, load_native_engine
 from vnengine.types import SCRIPT_SCHEMA_VERSION, SUPPORTED_EVENT_TYPES
+
+
+@contextmanager
+def workspace_tempdir(name: str):
+    root = Path.cwd() / "target" / "python-test-tmp" / name
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir(parents=True)
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
 class NativeBindingsTests(unittest.TestCase):
@@ -283,9 +298,6 @@ class GuiBindingTests(unittest.TestCase):
         self.assertTrue(localized["root_cause"])
 
     def test_node_graph_set_flag_and_authoring_save_contract(self):
-        import tempfile
-        from pathlib import Path
-
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
@@ -302,8 +314,8 @@ class GuiBindingTests(unittest.TestCase):
         self.assertEqual(script_payload["events"][0]["type"], "set_flag")
         self.assertEqual(script_payload["events"][0]["key"], "met_ava")
 
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "game.vnauthoring"
+        with workspace_tempdir("authoring-save") as tmp:
+            path = tmp / "game.vnauthoring"
             graph.save(str(path))
             saved = path.read_text()
             self.assertIn("authoring_schema_version", saved)
@@ -341,7 +353,7 @@ class GuiBindingTests(unittest.TestCase):
         target_ip = payload["labels"][payload["events"][0]["target"]]
         self.assertEqual(payload["events"][target_ip]["text"], "True branch")
         self.assertEqual(payload["events"][1]["text"], "False branch")
-        self.native.Engine(json.dumps(payload))
+        vn.Engine(json.dumps(payload))
 
         restored = vn.NodeGraph.from_script_json(json.dumps(payload))
         self.assertEqual(
@@ -360,16 +372,12 @@ class GuiBindingTests(unittest.TestCase):
         self.assertIn("VAL_ASSET_UNSAFE_PATH", codes)
 
     def test_node_graph_validate_accepts_project_root(self):
-        import tempfile
-        from pathlib import Path
-
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
             self.skipTest("GUI graph bindings are not available in this native build")
 
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+        with workspace_tempdir("project-root-validation") as root:
             (root / "assets" / "bg").mkdir(parents=True)
             (root / "assets" / "bg" / "room.png").write_bytes(b"png")
             graph = vn.NodeGraph()

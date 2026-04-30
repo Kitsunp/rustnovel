@@ -191,7 +191,10 @@ fn workbench_diagnostic_report_json_contains_bilingual_fields() {
     let parsed: serde_json::Value = serde_json::from_str(&payload).expect("valid json");
     let issue = &parsed["issues"][0];
 
-    assert_eq!(issue["diagnostic_id"], "GRAPH:VAL_SPEAKER_EMPTY:7:3");
+    assert_eq!(
+        issue["diagnostic_id"],
+        "authoring-diagnostic-v2:GRAPH:VAL_SPEAKER_EMPTY:7:3:na:na:na"
+    );
     assert!(issue["message_es"].as_str().is_some());
     assert!(issue["message_en"].as_str().is_some());
     assert!(issue["why_failed_es"].as_str().is_some());
