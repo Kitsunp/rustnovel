@@ -1,10 +1,15 @@
 mod catalog;
+mod trace;
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 
 use super::LintIssue;
+pub use trace::{
+    DiagnosticTarget, EvidenceTrace, FieldPath, SemanticValue, SemanticValueKind, TraceAtom,
+    TraceAtomKind, TraceEdge, TraceRelation,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticLanguage {
@@ -51,6 +56,8 @@ pub struct DiagnosticLocation {
     pub edge_to: Option<u32>,
     pub asset_path: Option<String>,
     pub blocked_by: Option<String>,
+    pub field_path: Option<FieldPath>,
+    pub target: Option<DiagnosticTarget>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,6 +71,11 @@ pub struct DiagnosticEnvelopeV2 {
     pub phase: String,
     pub code: String,
     pub location: DiagnosticLocation,
+    pub target: Option<DiagnosticTarget>,
+    pub field_path: Option<FieldPath>,
+    pub semantic_values: Vec<SemanticValue>,
+    pub evidence_trace: Option<EvidenceTrace>,
+    pub trace_id: Option<String>,
     pub docs_ref: String,
     pub text_es: DiagnosticExplanation,
     pub text_en: DiagnosticExplanation,
@@ -124,7 +136,17 @@ impl LintIssue {
                 edge_to: self.edge_to,
                 asset_path: self.asset_path.clone(),
                 blocked_by: self.blocked_by.clone(),
+                field_path: self.field_path.clone(),
+                target: self.target.clone(),
             },
+            target: self.target.clone(),
+            field_path: self.field_path.clone(),
+            semantic_values: self.semantic_values.clone(),
+            evidence_trace: self.evidence_trace.clone(),
+            trace_id: self
+                .evidence_trace
+                .as_ref()
+                .map(|trace| trace.trace_id.clone()),
             docs_ref: text_en.docs_ref.clone(),
             text_es,
             text_en,
@@ -151,6 +173,28 @@ impl LintIssue {
         }
         if let Some(blocked_by) = &self.blocked_by {
             args.insert("blocked_by".to_string(), blocked_by.clone());
+        }
+        if let Some(field_path) = &self.field_path {
+            args.insert("field_path".to_string(), field_path.value.clone());
+        }
+        if let Some(target) = &self.target {
+            args.insert("target".to_string(), target.stable_key());
+        }
+        if let Some(trace) = &self.evidence_trace {
+            args.insert("trace_id".to_string(), trace.trace_id.clone());
+        }
+        for (idx, value) in self.semantic_values.iter().enumerate() {
+            let prefix = format!("semantic_value_{idx}");
+            args.insert(format!("{prefix}_kind"), value.kind.label().to_string());
+            args.insert(format!("{prefix}_raw"), value.raw_value.clone());
+            args.insert(
+                format!("{prefix}_normalized"),
+                value.normalized_value.clone(),
+            );
+            args.insert(
+                format!("{prefix}_owner_path"),
+                value.owner_path.value.clone(),
+            );
         }
         args
     }

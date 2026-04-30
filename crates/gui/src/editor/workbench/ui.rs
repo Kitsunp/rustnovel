@@ -337,6 +337,7 @@ impl EditorWorkbench {
                     image_cache: &mut self.composer_image_cache,
                     image_failures: &mut self.composer_image_failures,
                     selected_entity_id: &mut self.selected_entity,
+                    layer_overrides: &mut self.composer_layer_overrides,
                 },
             );
             if let Some(act) = composer.ui(ui, &entity_owners) {
@@ -356,6 +357,11 @@ impl EditorWorkbench {
                 }
                 crate::editor::visual_composer::VisualComposerAction::CreateNode { node, pos } => {
                     self.add_composer_created_node(node, pos);
+                    self.queue_editor_operation(
+                        "composer_create_node",
+                        "Created node from Visual Composer drag/drop",
+                        Some("graph.nodes[]".to_string()),
+                    );
                 }
                 crate::editor::visual_composer::VisualComposerAction::MutateNode {
                     node_id,
@@ -365,6 +371,11 @@ impl EditorWorkbench {
                         self.node_graph.selected = Some(node_id);
                         self.selected_node = Some(node_id);
                         self.node_graph.mark_modified();
+                        self.queue_editor_operation(
+                            "composer_drag_entity",
+                            format!("Moved Visual Composer entity for node {node_id}"),
+                            Some(format!("graph.nodes[{node_id}].visual.transform")),
+                        );
                     }
                 }
                 crate::editor::visual_composer::VisualComposerAction::TestFromSelection => {
@@ -434,6 +445,7 @@ impl EditorWorkbench {
         }
 
         if self.node_graph.is_modified() {
+            self.record_pending_editor_operation();
             self.undo_stack.push(self.node_graph.clone());
             self.node_graph.clear_modified();
             let _ = self.sync_graph_to_script();
@@ -477,6 +489,7 @@ impl EditorWorkbench {
             self.node_editor_window_open = embedded_open && !detached_closed;
 
             if self.node_graph.is_modified() {
+                self.record_pending_editor_operation();
                 let _ = self.sync_graph_to_script();
             }
         }

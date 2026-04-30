@@ -63,7 +63,15 @@ fn authoring_validate_command_writes_clean_report() {
     let report = fs::read_to_string(output_path).expect("report json");
     assert!(report.contains("\"issue_count\": 0"), "report={report}");
     assert!(
-        report.contains("\"fingerprint_schema_version\": \"vnengine.authoring.fingerprint.v1\""),
+        report.contains("\"schema\": \"vnengine.authoring_validation_report.v2\""),
+        "report={report}"
+    );
+    assert!(
+        report.contains("\"fingerprint_schema_version\": \"vnengine.authoring.fingerprint.v2\""),
+        "report={report}"
+    );
+    assert!(
+        report.contains("\"story_semantic_sha256\""),
         "report={report}"
     );
 }
@@ -104,6 +112,9 @@ fn authoring_validate_command_reports_graph_errors_before_failing() {
         report.contains("\"schema\": \"vnengine.diagnostic_envelope.v2\""),
         "report={report}"
     );
+    assert!(report.contains("\"target\""), "report={report}");
+    assert!(report.contains("\"field_path\""), "report={report}");
+    assert!(report.contains("\"evidence_trace\""), "report={report}");
     assert!(
         report.contains("docs/diagnostics/authoring.md#val-character-name-empty"),
         "report={report}"

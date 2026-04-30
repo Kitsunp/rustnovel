@@ -26,9 +26,13 @@ fn scene_preview_falls_back_to_selected_unreachable_scene() {
         egui::pos2(320.0, 100.0),
     );
     workbench.node_graph.connect(start, intro);
-    workbench
+    let sync_error = workbench
         .sync_graph_to_script()
-        .expect("reachable intro should compile");
+        .expect_err("strict export should keep detached draft scenes out of runtime preview");
+    assert!(
+        sync_error.contains("unreachable/draft"),
+        "unexpected sync error: {sync_error}"
+    );
 
     workbench.selected_node = Some(detached_scene);
     workbench.refresh_scene_from_engine_preview();

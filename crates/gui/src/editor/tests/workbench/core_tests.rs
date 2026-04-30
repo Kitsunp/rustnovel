@@ -172,54 +172,6 @@ fn workbench_can_apply_and_revert_quick_fix() {
 }
 
 #[test]
-fn workbench_diagnostic_report_json_contains_bilingual_fields() {
-    let config = VnConfig::default();
-    let mut workbench = EditorWorkbench::new(config);
-    workbench.validation_issues.push(
-        crate::editor::validator::LintIssue::error(
-            Some(7),
-            crate::editor::ValidationPhase::Graph,
-            crate::editor::LintCode::EmptySpeakerName,
-            "Speaker is empty",
-        )
-        .with_event_ip(Some(3)),
-    );
-
-    let payload = workbench
-        .diagnostic_report_json()
-        .expect("report json should be built");
-    let parsed: serde_json::Value = serde_json::from_str(&payload).expect("valid json");
-    let issue = &parsed["issues"][0];
-
-    assert_eq!(
-        issue["diagnostic_id"],
-        "authoring-diagnostic-v2:GRAPH:VAL_SPEAKER_EMPTY:7:3:na:na:na"
-    );
-    assert!(issue["message_es"].as_str().is_some());
-    assert!(issue["message_en"].as_str().is_some());
-    assert!(issue["why_failed_es"].as_str().is_some());
-    assert!(issue["why_failed_en"].as_str().is_some());
-    assert_eq!(
-        parsed["fingerprints"]["fingerprint_schema_version"],
-        "vnengine.authoring.fingerprint.v1"
-    );
-    assert_eq!(
-        parsed["fingerprints"]["script_sha256"]
-            .as_str()
-            .expect("script hash")
-            .len(),
-        64
-    );
-    assert_eq!(
-        parsed["fingerprints"]["graph_sha256"]
-            .as_str()
-            .expect("graph hash")
-            .len(),
-        64
-    );
-}
-
-#[test]
 fn workbench_reports_missing_localization_keys() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);

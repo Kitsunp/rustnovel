@@ -21,3 +21,6 @@ mod composer_tests;
 
 #[path = "workbench/report_stale_tests.rs"]
 mod report_stale_tests;
+
+#[path = "workbench/report_v2_tests.rs"]
+mod report_v2_tests;

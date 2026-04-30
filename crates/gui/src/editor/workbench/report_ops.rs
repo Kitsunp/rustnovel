@@ -11,37 +11,46 @@ impl EditorWorkbench {
                 let es = issue.explanation(DiagnosticLanguage::Es);
                 let en = issue.explanation(DiagnosticLanguage::En);
                 let envelope_v2 = issue.envelope_v2();
-                json!({
-                    "diagnostic_id": issue.diagnostic_id(),
-                    "envelope_v2": envelope_v2,
-                    "message_key": en.message_key,
-                    "phase": issue.phase.label(),
-                    "code": issue.code.label(),
-                    "severity": issue.severity.label(),
-                    "node_id": issue.node_id,
-                    "event_ip": issue.event_ip,
-                    "edge_from": issue.edge_from,
-                    "edge_to": issue.edge_to,
-                    "asset_path": issue.asset_path,
-                    "message_es": issue.localized_message(DiagnosticLanguage::Es),
-                    "message_en": issue.localized_message(DiagnosticLanguage::En),
-                    "what_happened_es": es.what_happened,
-                    "what_happened_en": en.what_happened,
-                    "root_cause_es": es.root_cause,
-                    "root_cause_en": en.root_cause,
-                    "why_failed_es": es.why_failed,
-                    "why_failed_en": en.why_failed,
-                    "consequence_es": es.consequence,
-                    "consequence_en": en.consequence,
-                    "how_to_fix_es": es.how_to_fix,
-                    "how_to_fix_en": en.how_to_fix,
-                    "action_steps_es": es.action_steps,
-                    "action_steps_en": en.action_steps,
-                    "expected_es": es.expected,
-                    "expected_en": en.expected,
-                    "actual": issue.message.clone(),
-                    "docs_ref": es.docs_ref,
-                })
+                let mut payload = serde_json::to_value(&envelope_v2)
+                    .unwrap_or_else(|_| json!({ "schema": "vnengine.diagnostic_envelope.v2" }));
+                if let Some(object) = payload.as_object_mut() {
+                    object.insert("diagnostic_id".to_string(), json!(issue.diagnostic_id()));
+                    object.insert("envelope_v2".to_string(), json!(envelope_v2));
+                    object.insert("message_key".to_string(), json!(en.message_key));
+                    object.insert("phase".to_string(), json!(issue.phase.label()));
+                    object.insert("code".to_string(), json!(issue.code.label()));
+                    object.insert("severity".to_string(), json!(issue.severity.label()));
+                    object.insert("node_id".to_string(), json!(issue.node_id));
+                    object.insert("event_ip".to_string(), json!(issue.event_ip));
+                    object.insert("edge_from".to_string(), json!(issue.edge_from));
+                    object.insert("edge_to".to_string(), json!(issue.edge_to));
+                    object.insert("asset_path".to_string(), json!(issue.asset_path));
+                    object.insert(
+                        "message_es".to_string(),
+                        json!(issue.localized_message(DiagnosticLanguage::Es)),
+                    );
+                    object.insert(
+                        "message_en".to_string(),
+                        json!(issue.localized_message(DiagnosticLanguage::En)),
+                    );
+                    object.insert("what_happened_es".to_string(), json!(es.what_happened));
+                    object.insert("what_happened_en".to_string(), json!(en.what_happened));
+                    object.insert("root_cause_es".to_string(), json!(es.root_cause));
+                    object.insert("root_cause_en".to_string(), json!(en.root_cause));
+                    object.insert("why_failed_es".to_string(), json!(es.why_failed));
+                    object.insert("why_failed_en".to_string(), json!(en.why_failed));
+                    object.insert("consequence_es".to_string(), json!(es.consequence));
+                    object.insert("consequence_en".to_string(), json!(en.consequence));
+                    object.insert("how_to_fix_es".to_string(), json!(es.how_to_fix));
+                    object.insert("how_to_fix_en".to_string(), json!(en.how_to_fix));
+                    object.insert("action_steps_es".to_string(), json!(es.action_steps));
+                    object.insert("action_steps_en".to_string(), json!(en.action_steps));
+                    object.insert("expected_es".to_string(), json!(es.expected));
+                    object.insert("expected_en".to_string(), json!(en.expected));
+                    object.insert("actual".to_string(), json!(issue.message.clone()));
+                    object.insert("docs_ref".to_string(), json!(es.docs_ref));
+                }
+                payload
             })
             .collect::<Vec<_>>();
 
@@ -104,7 +113,8 @@ impl EditorWorkbench {
         );
 
         let payload = json!({
-            "schema": "vneditor.diagnostic_report.v1",
+            "schema": "vnengine.authoring_validation_report.v2",
+            "legacy_schema": "vneditor.diagnostic_report.v1",
             "generated_unix_ms": now_unix_ms(),
             "fingerprints": fingerprints,
             "verification_run": verification_run,
@@ -196,7 +206,10 @@ impl EditorWorkbench {
             .get("schema")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "missing report schema".to_string())?;
-        if schema != "vneditor.diagnostic_report.v1" {
+        if schema != "vneditor.diagnostic_report.v1"
+            && schema != "vneditor.diagnostic_report.v2"
+            && schema != "vnengine.authoring_validation_report.v2"
+        {
             return Err(format!("unsupported report schema '{schema}'"));
         }
         let current_fingerprints = current_fingerprints_value(self)?;
@@ -232,40 +245,102 @@ impl EditorWorkbench {
 
         let mut imported = Vec::with_capacity(issues_json.len());
         for issue_json in issues_json {
+            let envelope = issue_json.get("envelope_v2").unwrap_or(issue_json);
             let phase = parse_validation_phase(
                 issue_json
                     .get("phase")
+                    .or_else(|| envelope.get("phase"))
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("GRAPH"),
             )?;
             let code = parse_lint_code(
                 issue_json
                     .get("code")
+                    .or_else(|| envelope.get("code"))
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("CMP_SCRIPT_ERROR"),
             )?;
             let severity = parse_severity(
                 issue_json
                     .get("severity")
+                    .or_else(|| envelope.get("severity"))
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("warning"),
             )?;
-            let node_id = as_u32_field(issue_json.get("node_id"));
-            let event_ip = as_u32_field(issue_json.get("event_ip"));
-            let edge_from = as_u32_field(issue_json.get("edge_from"));
-            let edge_to = as_u32_field(issue_json.get("edge_to"));
+            let location = envelope.get("location").unwrap_or(issue_json);
+            let node_id = as_u32_field(
+                issue_json
+                    .get("node_id")
+                    .or_else(|| location.get("node_id")),
+            );
+            let event_ip = as_u32_field(
+                issue_json
+                    .get("event_ip")
+                    .or_else(|| location.get("event_ip")),
+            );
+            let edge_from = as_u32_field(
+                issue_json
+                    .get("edge_from")
+                    .or_else(|| location.get("edge_from")),
+            );
+            let edge_to = as_u32_field(
+                issue_json
+                    .get("edge_to")
+                    .or_else(|| location.get("edge_to")),
+            );
             let asset_path = issue_json
                 .get("asset_path")
+                .or_else(|| location.get("asset_path"))
                 .and_then(serde_json::Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_string);
             let message = localized_issue_message(issue_json, self.diagnostic_language);
 
-            let issue = LintIssue::new(node_id, severity, phase, code, message)
+            let mut issue = LintIssue::new(node_id, severity, phase, code, message)
                 .with_event_ip(event_ip)
                 .with_edge(edge_from, edge_to)
                 .with_asset_path(asset_path);
+            if let Some(field_path) = envelope
+                .get("field_path")
+                .or_else(|| location.get("field_path"))
+                .and_then(|value| {
+                    value
+                        .get("value")
+                        .and_then(serde_json::Value::as_str)
+                        .or_else(|| value.as_str())
+                })
+            {
+                issue = issue.with_field_path(field_path.to_string());
+            }
+            if let Some(target) = envelope
+                .get("target")
+                .or_else(|| location.get("target"))
+                .and_then(|value| {
+                    serde_json::from_value::<visual_novel_engine::authoring::DiagnosticTarget>(
+                        value.clone(),
+                    )
+                    .ok()
+                })
+            {
+                issue = issue.with_target(target);
+            }
+            if let Some(values) = envelope
+                .get("semantic_values")
+                .and_then(serde_json::Value::as_array)
+            {
+                for value in values {
+                    if let Ok(semantic) = serde_json::from_value::<
+                        visual_novel_engine::authoring::SemanticValue,
+                    >(value.clone())
+                    {
+                        issue = issue.with_semantic_value(semantic);
+                    }
+                }
+            }
+            if envelope.get("evidence_trace").is_some() && issue.evidence_trace.is_none() {
+                issue = issue.with_evidence_trace();
+            }
             imported.push(issue);
         }
 

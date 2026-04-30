@@ -149,3 +149,121 @@ fn composer_owner_map_does_not_treat_dialogue_speaker_as_visual_character() {
     assert_eq!(owners.get(&character_entity), Some(&scene));
     assert_ne!(owners.get(&character_entity), Some(&dialogue));
 }
+
+#[test]
+fn composer_owner_map_keeps_duplicate_character_instances_separate() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+
+    let first = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: None,
+            music: None,
+            characters: vec![visual_novel_engine::CharacterPlacementRaw {
+                name: "Ava".to_string(),
+                expression: Some("ava/smile.png".to_string()),
+                position: None,
+                x: Some(10),
+                y: Some(10),
+                scale: Some(1.0),
+            }],
+        },
+        egui::pos2(0.0, 0.0),
+    );
+    let second = workbench.node_graph.add_node(
+        StoryNode::ScenePatch(visual_novel_engine::ScenePatchRaw {
+            add: vec![visual_novel_engine::CharacterPlacementRaw {
+                name: "Ava".to_string(),
+                expression: Some("ava/angry.png".to_string()),
+                position: None,
+                x: Some(200),
+                y: Some(10),
+                scale: Some(1.0),
+            }],
+            ..Default::default()
+        }),
+        egui::pos2(0.0, 120.0),
+    );
+    workbench.scene = visual_novel_engine::SceneState::new();
+    let _ = workbench.scene.spawn_with_transform(
+        visual_novel_engine::Transform::at(10, 10),
+        visual_novel_engine::EntityKind::Character(visual_novel_engine::CharacterData {
+            name: visual_novel_engine::SharedStr::from("Ava"),
+            expression: Some(visual_novel_engine::SharedStr::from("ava/smile.png")),
+        }),
+    );
+    let _ = workbench.scene.spawn_with_transform(
+        visual_novel_engine::Transform::at(200, 10),
+        visual_novel_engine::EntityKind::Character(visual_novel_engine::CharacterData {
+            name: visual_novel_engine::SharedStr::from("Ava"),
+            expression: Some(visual_novel_engine::SharedStr::from("ava/angry.png")),
+        }),
+    );
+
+    let owners = workbench.build_entity_node_map();
+    let mut pairs = workbench
+        .scene
+        .iter()
+        .filter_map(|entity| match &entity.kind {
+            visual_novel_engine::EntityKind::Character(character) => Some((
+                character.expression.as_deref().map(str::to_string),
+                entity.id.raw(),
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    pairs.sort_by_key(|(expression, _)| expression.clone());
+
+    for (expression, entity_id) in pairs {
+        match expression.as_deref() {
+            Some("ava/angry.png") => assert_eq!(owners.get(&entity_id), Some(&second)),
+            Some("ava/smile.png") => assert_eq!(owners.get(&entity_id), Some(&first)),
+            other => panic!("unexpected expression {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn layered_scene_objects_include_runtime_overlays_and_source_paths() {
+    let mut scene = visual_novel_engine::SceneState::new();
+    let mut bg_transform = visual_novel_engine::Transform::at(0, 0);
+    bg_transform.z_order = -100;
+    let bg_id = scene
+        .spawn_with_transform(
+            bg_transform,
+            visual_novel_engine::EntityKind::Image(visual_novel_engine::ImageData {
+                path: visual_novel_engine::SharedStr::from("bg/room.png"),
+                tint: None,
+            }),
+        )
+        .expect("bg entity");
+    let script = visual_novel_engine::ScriptRaw::new(
+        vec![visual_novel_engine::EventRaw::Dialogue(
+            visual_novel_engine::DialogueRaw {
+                speaker: "Ava".to_string(),
+                text: "Hola".to_string(),
+            },
+        )],
+        std::collections::BTreeMap::from([("start".to_string(), 0usize)]),
+    );
+    let engine = Some(
+        visual_novel_engine::Engine::new(
+            script,
+            visual_novel_engine::SecurityPolicy::default(),
+            visual_novel_engine::ResourceLimiter::default(),
+        )
+        .expect("engine"),
+    );
+    let owners = std::collections::HashMap::from([(bg_id.raw(), 42u32)]);
+
+    let objects = crate::editor::visual_composer::layered_scene_objects(&scene, &owners, &engine);
+
+    assert!(objects.iter().any(|object| {
+        object.kind == crate::editor::visual_composer::StageLayerKind::Background
+            && object.source_field_path.contains("graph.nodes[42]")
+    }));
+    assert!(objects.iter().any(|object| {
+        object.kind == crate::editor::visual_composer::StageLayerKind::DialogueUi && object.locked
+    }));
+}

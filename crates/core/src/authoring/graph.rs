@@ -9,6 +9,11 @@ use crate::{CharacterPlacementRaw, ScriptRaw, VnResult};
 use super::script_sync;
 use super::{AuthoringPosition, StoryNode};
 
+mod fragments;
+mod search;
+pub use fragments::{DecisionHub, FragmentPort, GraphFragment, GraphStack, PortalNode};
+use search::searchable_text;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphConnection {
     pub from: u32,
@@ -49,6 +54,10 @@ pub struct NodeGraph {
     pub(super) scene_profiles: BTreeMap<String, SceneProfile>,
     #[serde(default)]
     bookmarks: BTreeMap<String, u32>,
+    #[serde(default)]
+    fragments: BTreeMap<String, GraphFragment>,
+    #[serde(default)]
+    graph_stack: GraphStack,
     next_id: u32,
     #[serde(skip)]
     pub(super) modified: bool,
@@ -367,6 +376,108 @@ impl NodeGraph {
         self.bookmarks.iter()
     }
 
+    pub fn create_fragment(
+        &mut self,
+        fragment_id: impl Into<String>,
+        title: impl Into<String>,
+        mut node_ids: Vec<u32>,
+    ) -> bool {
+        let fragment_id = fragment_id.into().trim().to_string();
+        if fragment_id.is_empty() || self.fragments.contains_key(&fragment_id) {
+            return false;
+        }
+        node_ids.retain(|node_id| self.get_node(*node_id).is_some());
+        node_ids.sort_unstable();
+        node_ids.dedup();
+        let node_set = node_ids.iter().copied().collect::<HashSet<_>>();
+        let mut inputs = Vec::new();
+        let mut outputs = Vec::new();
+        for connection in &self.connections {
+            let from_inside = node_set.contains(&connection.from);
+            let to_inside = node_set.contains(&connection.to);
+            match (from_inside, to_inside) {
+                (false, true) => inputs.push(FragmentPort {
+                    port_id: format!("in_{}_{}", connection.to, connection.from_port),
+                    label: format!("from {}:{}", connection.from, connection.from_port),
+                    node_id: Some(connection.to),
+                }),
+                (true, false) => outputs.push(FragmentPort {
+                    port_id: format!("out_{}_{}", connection.from, connection.from_port),
+                    label: format!("to {}", connection.to),
+                    node_id: Some(connection.from),
+                }),
+                _ => {}
+            }
+        }
+        inputs.sort_by(|a, b| a.port_id.cmp(&b.port_id));
+        inputs.dedup_by(|a, b| a.port_id == b.port_id);
+        outputs.sort_by(|a, b| a.port_id.cmp(&b.port_id));
+        outputs.dedup_by(|a, b| a.port_id == b.port_id);
+        self.fragments.insert(
+            fragment_id.clone(),
+            GraphFragment {
+                fragment_id,
+                title: title.into(),
+                node_ids,
+                inputs,
+                outputs,
+            },
+        );
+        self.modified = true;
+        true
+    }
+
+    pub fn remove_fragment(&mut self, fragment_id: &str) -> Option<GraphFragment> {
+        let removed = self.fragments.remove(fragment_id);
+        if removed.is_some() {
+            if self.graph_stack.active_fragment.as_deref() == Some(fragment_id) {
+                self.graph_stack.active_fragment = None;
+            }
+            self.graph_stack
+                .breadcrumb
+                .retain(|candidate| candidate != fragment_id);
+            self.modified = true;
+        }
+        removed
+    }
+
+    pub fn fragment(&self, fragment_id: &str) -> Option<&GraphFragment> {
+        self.fragments.get(fragment_id)
+    }
+
+    pub fn fragments(&self) -> impl Iterator<Item = (&String, &GraphFragment)> {
+        self.fragments.iter()
+    }
+
+    pub fn graph_stack(&self) -> &GraphStack {
+        &self.graph_stack
+    }
+
+    pub fn enter_fragment(&mut self, fragment_id: &str) -> bool {
+        if !self.fragments.contains_key(fragment_id) {
+            return false;
+        }
+        if let Some(active) = self.graph_stack.active_fragment.take() {
+            self.graph_stack.breadcrumb.push(active);
+        }
+        self.graph_stack.active_fragment = Some(fragment_id.to_string());
+        self.modified = true;
+        true
+    }
+
+    pub fn leave_fragment(&mut self) -> bool {
+        let Some(previous) = self.graph_stack.breadcrumb.pop() else {
+            if self.graph_stack.active_fragment.take().is_some() {
+                self.modified = true;
+                return true;
+            }
+            return false;
+        };
+        self.graph_stack.active_fragment = Some(previous);
+        self.modified = true;
+        true
+    }
+
     fn ensure_choice_option(&mut self, node_id: u32, option_idx: usize) {
         let Some(StoryNode::Choice { options, .. }) = self.get_node_mut(node_id) else {
             return;
@@ -381,69 +492,6 @@ impl NodeGraph {
             self.modified = true;
         }
     }
-}
-
-fn searchable_text(node: &StoryNode) -> String {
-    let mut fields = vec![node.type_name().to_ascii_lowercase()];
-    match node {
-        StoryNode::Dialogue { speaker, text } => {
-            fields.push(speaker.to_ascii_lowercase());
-            fields.push(text.to_ascii_lowercase());
-        }
-        StoryNode::Choice { prompt, options } => {
-            fields.push(prompt.to_ascii_lowercase());
-            fields.extend(options.iter().map(|value| value.to_ascii_lowercase()));
-        }
-        StoryNode::Scene {
-            profile,
-            background,
-            music,
-            characters,
-        } => {
-            fields.extend(profile.iter().map(|value| value.to_ascii_lowercase()));
-            fields.extend(background.iter().map(|value| value.to_ascii_lowercase()));
-            fields.extend(music.iter().map(|value| value.to_ascii_lowercase()));
-            for character in characters {
-                fields.push(character.name.to_ascii_lowercase());
-                fields.extend(
-                    character
-                        .expression
-                        .iter()
-                        .map(|value| value.to_ascii_lowercase()),
-                );
-                fields.extend(
-                    character
-                        .position
-                        .iter()
-                        .map(|value| value.to_ascii_lowercase()),
-                );
-            }
-        }
-        StoryNode::Jump { target } | StoryNode::JumpIf { target, .. } => {
-            fields.push(target.to_ascii_lowercase());
-        }
-        StoryNode::SetVariable { key, .. } | StoryNode::SetFlag { key, .. } => {
-            fields.push(key.to_ascii_lowercase())
-        }
-        StoryNode::AudioAction {
-            channel,
-            action,
-            asset,
-            ..
-        } => {
-            fields.push(channel.to_ascii_lowercase());
-            fields.push(action.to_ascii_lowercase());
-            fields.extend(asset.iter().map(|value| value.to_ascii_lowercase()));
-        }
-        StoryNode::Transition { kind, color, .. } => {
-            fields.push(kind.to_ascii_lowercase());
-            fields.extend(color.iter().map(|value| value.to_ascii_lowercase()));
-        }
-        StoryNode::CharacterPlacement { name, .. } => fields.push(name.to_ascii_lowercase()),
-        StoryNode::Generic(event) => fields.push(event.to_json_string().to_ascii_lowercase()),
-        StoryNode::ScenePatch(_) | StoryNode::Start | StoryNode::End => {}
-    }
-    fields.join(" ")
 }
 
 fn script_order_port_key(node: Option<&StoryNode>, port: usize) -> usize {

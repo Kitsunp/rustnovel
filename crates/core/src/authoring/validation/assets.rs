@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use crate::authoring::{LintCode, LintIssue, ValidationPhase};
+use crate::authoring::{
+    DiagnosticTarget, FieldPath, LintCode, LintIssue, SemanticValue, SemanticValueKind,
+    ValidationPhase,
+};
 
 pub(super) fn validate_asset<F>(
     node_id: Option<u32>,
@@ -11,21 +14,49 @@ pub(super) fn validate_asset<F>(
 ) where
     F: Fn(&str) -> bool,
 {
+    let field_path = node_id
+        .map(|id| format!("graph.nodes[{id}].{label}"))
+        .unwrap_or_else(|| format!("graph.scene_profiles[].{label}"));
+    validate_asset_at(node_id, value, label, field_path, asset_exists, issues)
+}
+
+pub(super) fn validate_asset_at<F>(
+    node_id: Option<u32>,
+    value: &Option<String>,
+    label: &str,
+    field_path: impl Into<String>,
+    asset_exists: &F,
+    issues: &mut Vec<LintIssue>,
+) where
+    F: Fn(&str) -> bool,
+{
     let Some(path) = value else {
         return;
     };
+    let field_path = FieldPath::new(field_path);
+    let target = DiagnosticTarget::AssetRef {
+        node_id,
+        field_path: field_path.clone(),
+        asset_path: path.clone(),
+    };
+    let semantic_value = SemanticValue::new(
+        SemanticValueKind::AssetRef,
+        path.clone(),
+        field_path.value.clone(),
+    );
     if path.trim().is_empty() {
         let code = if label == "background" {
             LintCode::SceneBackgroundEmpty
         } else {
             LintCode::AudioAssetEmpty
         };
-        issues.push(LintIssue::warning(
-            node_id,
-            ValidationPhase::Graph,
-            code,
-            "Asset path is empty",
-        ));
+        issues.push(
+            LintIssue::warning(node_id, ValidationPhase::Graph, code, "Asset path is empty")
+                .with_target(target)
+                .with_field_path(field_path.value)
+                .with_semantic_value(semantic_value)
+                .with_evidence_trace(),
+        );
     } else if is_unsafe_asset_ref(path) {
         issues.push(
             LintIssue::error(
@@ -34,7 +65,11 @@ pub(super) fn validate_asset<F>(
                 LintCode::UnsafeAssetPath,
                 "Asset path is unsafe",
             )
-            .with_asset_path(Some(path.clone())),
+            .with_asset_path(Some(path.clone()))
+            .with_target(target)
+            .with_field_path(field_path.value)
+            .with_semantic_value(semantic_value)
+            .with_evidence_trace(),
         );
     } else if should_probe_asset_exists(path) && !asset_exists(path) {
         issues.push(
@@ -44,7 +79,11 @@ pub(super) fn validate_asset<F>(
                 LintCode::AssetReferenceMissing,
                 "Asset reference does not exist",
             )
-            .with_asset_path(Some(path.clone())),
+            .with_asset_path(Some(path.clone()))
+            .with_target(target)
+            .with_field_path(field_path.value)
+            .with_semantic_value(semantic_value)
+            .with_evidence_trace(),
         );
     }
 }

@@ -80,3 +80,15 @@ fn restart_resets_text_reveal_progress_without_touching_settings() {
     state.on_position_changed(20, 10.0);
     assert_eq!(state.visible_text(line, 10.1), "");
 }
+
+#[test]
+fn end_ui_uses_typed_end_of_script_error() {
+    assert!(super::render::is_end_of_script_error(
+        &visual_novel_engine::VnError::EndOfScript,
+    ));
+    assert!(!super::render::is_end_of_script_error(
+        &visual_novel_engine::VnError::InvalidScript(
+            "position moved past final event but this is not typed end".to_string(),
+        ),
+    ));
+}

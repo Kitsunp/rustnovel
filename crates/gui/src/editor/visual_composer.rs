@@ -6,6 +6,9 @@ use visual_novel_engine::{Engine, EntityId, SceneState};
 
 use crate::editor::{PreviewQuality, StageFit};
 
+mod layers;
+pub use layers::{layered_scene_objects, LayerOverride, LayeredSceneObject, StageLayerKind};
+
 pub enum ComposerNodeMutation {
     CharacterPosition {
         name: String,
@@ -42,6 +45,7 @@ pub struct VisualComposerPanel<'a> {
     image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     image_failures: &'a mut HashMap<String, String>,
     selected_entity_id: &'a mut Option<u32>,
+    layer_overrides: &'a mut HashMap<String, LayerOverride>,
 }
 
 pub struct VisualComposerPanelParams<'a> {
@@ -54,6 +58,7 @@ pub struct VisualComposerPanelParams<'a> {
     pub image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     pub image_failures: &'a mut HashMap<String, String>,
     pub selected_entity_id: &'a mut Option<u32>,
+    pub layer_overrides: &'a mut HashMap<String, LayerOverride>,
 }
 
 impl<'a> VisualComposerPanel<'a> {
@@ -68,6 +73,7 @@ impl<'a> VisualComposerPanel<'a> {
             image_cache: params.image_cache,
             image_failures: params.image_failures,
             selected_entity_id: params.selected_entity_id,
+            layer_overrides: params.layer_overrides,
         }
     }
 
@@ -111,6 +117,8 @@ impl<'a> VisualComposerPanel<'a> {
             self.render_runtime_controls(ui, &mut action);
         });
         ui.separator();
+        let objects = layered_scene_objects(self.scene, entity_owners, self.engine);
+        self.render_layer_panel(ui, &objects);
 
         let available_size = ui.available_size();
         let status_height = 28.0;
@@ -182,7 +190,8 @@ impl<'a> VisualComposerPanel<'a> {
             *self.preview_quality,
             self.image_cache,
             self.image_failures,
-        );
+        )
+        .with_layer_overrides(self.layer_overrides.clone());
         let stage_action = painter.paint_interactive(
             ui,
             self.scene,
@@ -204,6 +213,7 @@ impl<'a> VisualComposerPanel<'a> {
                 },
             });
         }
+        self.render_runtime_overlay(ui, geometry, &mut action);
 
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
@@ -227,6 +237,157 @@ impl<'a> VisualComposerPanel<'a> {
         });
 
         action
+    }
+
+    fn render_layer_panel(&mut self, ui: &mut egui::Ui, objects: &[LayeredSceneObject]) {
+        egui::CollapsingHeader::new("Layers")
+            .default_open(false)
+            .show(ui, |ui| {
+                if objects.is_empty() {
+                    ui.label("No layers");
+                    return;
+                }
+                egui::ScrollArea::vertical()
+                    .max_height(120.0)
+                    .show(ui, |ui| {
+                        for object in objects.iter().rev() {
+                            let entry = self
+                                .layer_overrides
+                                .entry(object.object_id.clone())
+                                .or_insert(LayerOverride {
+                                    visible: object.visible,
+                                    locked: object.locked,
+                                });
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut entry.visible, "");
+                                ui.checkbox(&mut entry.locked, "Lock");
+                                ui.label(format!(
+                                    "{} | z={} | {}",
+                                    object.kind.label(),
+                                    object.z_index,
+                                    object.source_field_path
+                                ));
+                            });
+                        }
+                    });
+            });
+    }
+
+    fn render_runtime_overlay(
+        &self,
+        ui: &mut egui::Ui,
+        geometry: crate::editor::scene_stage::StageGeometry,
+        action: &mut Option<VisualComposerAction>,
+    ) {
+        let Some(engine) = self.engine else {
+            return;
+        };
+        let Ok(event) = engine.current_event() else {
+            return;
+        };
+        match event {
+            visual_novel_engine::EventCompiled::Dialogue(dialogue) => {
+                let box_height = (geometry.stage_rect.height() * 0.26).clamp(90.0, 180.0);
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(
+                        geometry.stage_rect.left() + 24.0,
+                        geometry.stage_rect.bottom() - box_height - 24.0,
+                    ),
+                    egui::vec2(geometry.stage_rect.width() - 48.0, box_height),
+                );
+                ui.painter().rect_filled(
+                    rect,
+                    6.0,
+                    egui::Color32::from_rgba_premultiplied(8, 8, 14, 220),
+                );
+                ui.painter().rect_stroke(
+                    rect,
+                    6.0,
+                    egui::Stroke::new(1.0, egui::Color32::from_gray(130)),
+                );
+                ui.painter().text(
+                    rect.left_top() + egui::vec2(16.0, 12.0),
+                    egui::Align2::LEFT_TOP,
+                    dialogue.speaker.as_ref(),
+                    egui::FontId::proportional(15.0),
+                    egui::Color32::from_rgb(180, 210, 255),
+                );
+                ui.painter().text(
+                    rect.left_top() + egui::vec2(16.0, 40.0),
+                    egui::Align2::LEFT_TOP,
+                    dialogue.text.as_ref(),
+                    egui::FontId::proportional(17.0),
+                    egui::Color32::WHITE,
+                );
+                if ui
+                    .interact(
+                        rect,
+                        egui::Id::new("composer_dialogue_overlay"),
+                        egui::Sense::click(),
+                    )
+                    .clicked()
+                {
+                    *action = Some(VisualComposerAction::TestAdvance);
+                }
+            }
+            visual_novel_engine::EventCompiled::Choice(choice) => {
+                let panel = egui::Rect::from_center_size(
+                    geometry.stage_rect.center(),
+                    egui::vec2(
+                        (geometry.stage_rect.width() * 0.58).clamp(280.0, 640.0),
+                        (choice.options.len() as f32 * 42.0 + 76.0).clamp(120.0, 360.0),
+                    ),
+                );
+                ui.painter().rect_filled(
+                    panel,
+                    6.0,
+                    egui::Color32::from_rgba_premultiplied(10, 12, 18, 230),
+                );
+                ui.painter().text(
+                    panel.left_top() + egui::vec2(18.0, 14.0),
+                    egui::Align2::LEFT_TOP,
+                    choice.prompt.as_ref(),
+                    egui::FontId::proportional(17.0),
+                    egui::Color32::WHITE,
+                );
+                for (idx, option) in choice.options.iter().enumerate() {
+                    let rect = egui::Rect::from_min_size(
+                        panel.left_top() + egui::vec2(18.0, 48.0 + idx as f32 * 42.0),
+                        egui::vec2(panel.width() - 36.0, 32.0),
+                    );
+                    let response = ui.interact(
+                        rect,
+                        egui::Id::new(("composer_choice_overlay", idx)),
+                        egui::Sense::click(),
+                    );
+                    let fill = if response.hovered() {
+                        egui::Color32::from_rgb(52, 88, 116)
+                    } else {
+                        egui::Color32::from_rgb(36, 54, 72)
+                    };
+                    ui.painter().rect_filled(rect, 4.0, fill);
+                    ui.painter().text(
+                        rect.left_center() + egui::vec2(12.0, 0.0),
+                        egui::Align2::LEFT_CENTER,
+                        option.text.as_ref(),
+                        egui::FontId::proportional(15.0),
+                        egui::Color32::WHITE,
+                    );
+                    if response.clicked() {
+                        *action = Some(VisualComposerAction::TestChoose(idx));
+                    }
+                }
+            }
+            visual_novel_engine::EventCompiled::Transition(transition) => {
+                let alpha = if transition.kind == 1 { 96 } else { 150 };
+                ui.painter().rect_filled(
+                    geometry.stage_rect,
+                    0.0,
+                    egui::Color32::from_rgba_premultiplied(0, 0, 0, alpha),
+                );
+            }
+            _ => {}
+        }
     }
 
     fn render_runtime_controls(

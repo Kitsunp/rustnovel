@@ -1,3 +1,5 @@
+use super::{DiagnosticTarget, EvidenceTrace, FieldPath, SemanticValue};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LintSeverity {
     Error,
@@ -192,6 +194,10 @@ pub struct LintIssue {
     pub edge_to: Option<u32>,
     pub blocked_by: Option<String>,
     pub asset_path: Option<String>,
+    pub target: Option<DiagnosticTarget>,
+    pub field_path: Option<FieldPath>,
+    pub semantic_values: Vec<SemanticValue>,
+    pub evidence_trace: Option<EvidenceTrace>,
     pub severity: LintSeverity,
     pub phase: ValidationPhase,
     pub code: LintCode,
@@ -225,15 +231,37 @@ impl LintIssue {
             .as_deref()
             .map(normalize_diagnostic_part)
             .unwrap_or_else(|| "na".to_string());
+        let target = self
+            .target
+            .as_ref()
+            .map(|target| normalize_diagnostic_part(&target.stable_key()))
+            .unwrap_or_else(|| "na".to_string());
+        let field_path = self
+            .field_path
+            .as_ref()
+            .map(|path| normalize_diagnostic_part(&path.value))
+            .unwrap_or_else(|| "na".to_string());
+        let semantic = if self.semantic_values.is_empty() {
+            "na".to_string()
+        } else {
+            self.semantic_values
+                .iter()
+                .map(|value| normalize_diagnostic_part(&value.stable_key()))
+                .collect::<Vec<_>>()
+                .join("_")
+        };
         format!(
-            "{RULE_VERSION}:{}:{}:{}:{}:{}:{}:{}",
+            "{RULE_VERSION}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             self.phase.label(),
             self.code.label(),
             node,
             event_ip,
             edge,
             asset,
-            blocked_by
+            blocked_by,
+            target,
+            field_path,
+            semantic
         )
     }
 
@@ -251,6 +279,10 @@ impl LintIssue {
             edge_to: None,
             blocked_by: None,
             asset_path: None,
+            target: node_id.map(|node_id| DiagnosticTarget::Node { node_id }),
+            field_path: None,
+            semantic_values: Vec::new(),
+            evidence_trace: None,
             severity,
             phase,
             code,
@@ -305,12 +337,43 @@ impl LintIssue {
         self.asset_path = asset_path;
         self
     }
+
+    pub fn with_target(mut self, target: DiagnosticTarget) -> Self {
+        self.target = Some(target);
+        self
+    }
+
+    pub fn with_field_path(mut self, field_path: impl Into<String>) -> Self {
+        self.field_path = Some(FieldPath::new(field_path));
+        self
+    }
+
+    pub fn with_semantic_value(mut self, semantic_value: SemanticValue) -> Self {
+        self.semantic_values.push(semantic_value);
+        self
+    }
+
+    pub fn with_evidence_trace(mut self) -> Self {
+        self.evidence_trace = Some(EvidenceTrace::for_issue(
+            self.code,
+            self.target.clone(),
+            self.field_path.clone(),
+            &self.semantic_values,
+            self.message.clone(),
+        ));
+        self
+    }
 }
 
 fn normalize_diagnostic_part(value: &str) -> String {
-    value
+    let out = value
         .trim()
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-        .collect::<String>()
+        .collect::<String>();
+    let mut compact = out;
+    while compact.contains("__") {
+        compact = compact.replace("__", "_");
+    }
+    compact.trim_matches('_').to_string()
 }

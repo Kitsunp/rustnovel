@@ -201,8 +201,7 @@ fn render_event_ui(
             }
         }
         Err(e) => {
-            let error_str = format!("{e}");
-            if error_str.contains("End") || error_str.contains("position") {
+            if is_end_of_script_error(&e) {
                 content::render_end(ui, engine, toast, player, now_sec, &mut audio_commands);
             } else {
                 ui.colored_label(
@@ -217,6 +216,10 @@ fn render_event_ui(
         }
     }
     audio_commands
+}
+
+pub(crate) fn is_end_of_script_error(error: &visual_novel_engine::VnError) -> bool {
+    matches!(error, visual_novel_engine::VnError::EndOfScript)
 }
 
 fn render_visual_state_for_event(

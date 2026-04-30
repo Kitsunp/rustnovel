@@ -17,6 +17,7 @@ pub struct AuthoringReportBuildInfo {
 pub struct AuthoringSemanticFingerprint {
     pub script_sha256: String,
     pub graph_sha256: String,
+    pub story_graph_sha256: String,
     pub asset_refs_sha256: String,
     pub asset_refs_count: usize,
 }
@@ -25,6 +26,10 @@ pub struct AuthoringSemanticFingerprint {
 pub struct AuthoringReportFingerprint {
     pub fingerprint_schema_version: String,
     pub authoring_schema_version: String,
+    pub story_semantic_sha256: String,
+    pub layout_sha256: String,
+    pub assets_sha256: String,
+    pub full_document_sha256: String,
     pub semantic_sha256: String,
     pub semantic: AuthoringSemanticFingerprint,
     // Kept top-level for v1 report readers and human inspection.
@@ -42,22 +47,30 @@ pub fn build_authoring_report_fingerprint(
     let mut asset_refs = collect_asset_refs(graph);
     asset_refs.sort();
     asset_refs.dedup();
+    let story_graph_sha256 = authoring_story_graph_sha256(graph);
     let semantic = AuthoringSemanticFingerprint {
         script_sha256: sha256_json(script),
-        graph_sha256: authoring_graph_sha256(graph),
+        graph_sha256: story_graph_sha256.clone(),
+        story_graph_sha256,
         asset_refs_sha256: sha256_json(&asset_refs),
         asset_refs_count: asset_refs.len(),
     };
-    let semantic_sha256 = sha256_json(&semantic);
+    let story_semantic_sha256 = sha256_json(&semantic);
+    let layout_sha256 = authoring_layout_sha256(graph);
+    let full_document_sha256 = authoring_graph_sha256(graph);
 
     AuthoringReportFingerprint {
-        fingerprint_schema_version: "vnengine.authoring.fingerprint.v1".to_string(),
+        fingerprint_schema_version: "vnengine.authoring.fingerprint.v2".to_string(),
         authoring_schema_version: AUTHORING_DOCUMENT_SCHEMA_VERSION.to_string(),
         script_sha256: semantic.script_sha256.clone(),
-        graph_sha256: semantic.graph_sha256.clone(),
+        graph_sha256: full_document_sha256.clone(),
         asset_refs_sha256: semantic.asset_refs_sha256.clone(),
         asset_refs_count: semantic.asset_refs_count,
-        semantic_sha256,
+        story_semantic_sha256: story_semantic_sha256.clone(),
+        layout_sha256,
+        assets_sha256: semantic.asset_refs_sha256.clone(),
+        full_document_sha256,
+        semantic_sha256: story_semantic_sha256,
         semantic,
         build: AuthoringReportBuildInfo {
             engine_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -70,6 +83,52 @@ pub fn build_authoring_report_fingerprint(
 
 pub fn authoring_graph_sha256(graph: &NodeGraph) -> String {
     sha256_json(&super::AuthoringDocument::new(graph.clone()))
+}
+
+pub fn authoring_story_graph_sha256(graph: &NodeGraph) -> String {
+    let mut nodes = graph
+        .nodes()
+        .map(|(id, node, _)| serde_json::json!({ "id": id, "node": node }))
+        .collect::<Vec<_>>();
+    nodes.sort_by_key(|value| value.get("id").and_then(serde_json::Value::as_u64));
+    let mut connections = graph.connections().cloned().collect::<Vec<_>>();
+    connections.sort_by_key(|conn| (conn.from, conn.from_port, conn.to));
+    let scene_profiles = graph
+        .scene_profiles()
+        .map(|(id, profile)| serde_json::json!({ "id": id, "profile": profile }))
+        .collect::<Vec<_>>();
+    let fragments = graph
+        .fragments()
+        .map(|(id, fragment)| serde_json::json!({ "id": id, "fragment": fragment }))
+        .collect::<Vec<_>>();
+    sha256_json(&serde_json::json!({
+        "nodes": nodes,
+        "connections": connections,
+        "scene_profiles": scene_profiles,
+        "fragments": fragments,
+    }))
+}
+
+pub fn authoring_layout_sha256(graph: &NodeGraph) -> String {
+    let mut positions = graph
+        .nodes()
+        .map(|(id, _, position)| {
+            serde_json::json!({
+                "id": id,
+                "x": position.x,
+                "y": position.y,
+            })
+        })
+        .collect::<Vec<_>>();
+    positions.sort_by_key(|value| value.get("id").and_then(serde_json::Value::as_u64));
+    let bookmarks = graph
+        .bookmarks()
+        .map(|(name, target)| serde_json::json!({ "name": name, "target": target }))
+        .collect::<Vec<_>>();
+    sha256_json(&serde_json::json!({
+        "positions": positions,
+        "bookmarks": bookmarks,
+    }))
 }
 
 pub fn authoring_fingerprints_semantically_match(
@@ -87,7 +146,8 @@ pub fn authoring_fingerprints_semantically_match(
 
 fn semantic_value(value: &serde_json::Value) -> Option<serde_json::Value> {
     if let Some(hash) = value
-        .get("semantic_sha256")
+        .get("story_semantic_sha256")
+        .or_else(|| value.get("semantic_sha256"))
         .and_then(serde_json::Value::as_str)
     {
         return Some(serde_json::Value::String(hash.to_string()));
@@ -96,7 +156,10 @@ fn semantic_value(value: &serde_json::Value) -> Option<serde_json::Value> {
         return Some(semantic.clone());
     }
     let script_sha256 = value.get("script_sha256")?.clone();
-    let graph_sha256 = value.get("graph_sha256")?.clone();
+    let graph_sha256 = value
+        .get("story_graph_sha256")
+        .or_else(|| value.get("graph_sha256"))?
+        .clone();
     let asset_refs_sha256 = value.get("asset_refs_sha256")?.clone();
     let asset_refs_count = value.get("asset_refs_count")?.clone();
     Some(serde_json::json!({

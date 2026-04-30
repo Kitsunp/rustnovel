@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use super::{AuthoringReportFingerprint, LintIssue};
+use super::{AuthoringReportFingerprint, DiagnosticTarget, FieldPath, LintIssue};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OperationLogEntry {
@@ -13,6 +13,18 @@ pub struct OperationLogEntry {
     pub operation_kind: String,
     pub diagnostic_id: Option<String>,
     pub semantic_fingerprint_sha256: Option<String>,
+    #[serde(default)]
+    pub before_fingerprint_sha256: Option<String>,
+    #[serde(default)]
+    pub after_fingerprint_sha256: Option<String>,
+    #[serde(default)]
+    pub field_paths: Vec<FieldPath>,
+    #[serde(default)]
+    pub diagnostic_target: Option<DiagnosticTarget>,
+    #[serde(default)]
+    pub before_value: Option<String>,
+    #[serde(default)]
+    pub after_value: Option<String>,
     pub status: String,
     pub details: String,
 }
@@ -53,7 +65,7 @@ impl VerificationRun {
             operation_id: operation_id.into(),
             created_unix_ms: now_unix_ms(),
             validation_profile: validation_profile.into(),
-            semantic_fingerprint_sha256: fingerprint.semantic_sha256.clone(),
+            semantic_fingerprint_sha256: fingerprint.story_semantic_sha256.clone(),
             diagnostic_ids: after_ids.into_iter().collect(),
             resolved_diagnostic_ids,
             introduced_diagnostic_ids,
@@ -75,6 +87,12 @@ impl OperationLogEntry {
             operation_kind: operation_kind.into(),
             diagnostic_id: None,
             semantic_fingerprint_sha256: None,
+            before_fingerprint_sha256: None,
+            after_fingerprint_sha256: None,
+            field_paths: Vec::new(),
+            diagnostic_target: None,
+            before_value: None,
+            after_value: None,
             status: status.into(),
             details: details.into(),
         }
@@ -82,11 +100,38 @@ impl OperationLogEntry {
 
     pub fn with_diagnostic(mut self, issue: &LintIssue) -> Self {
         self.diagnostic_id = Some(issue.diagnostic_id());
+        self.diagnostic_target = issue.target.clone();
+        if let Some(field_path) = &issue.field_path {
+            self.field_paths.push(field_path.clone());
+        }
         self
     }
 
     pub fn with_fingerprint(mut self, fingerprint: &AuthoringReportFingerprint) -> Self {
-        self.semantic_fingerprint_sha256 = Some(fingerprint.semantic_sha256.clone());
+        self.semantic_fingerprint_sha256 = Some(fingerprint.story_semantic_sha256.clone());
+        self.after_fingerprint_sha256 = Some(fingerprint.full_document_sha256.clone());
+        self
+    }
+
+    pub fn with_before_after_fingerprints(
+        mut self,
+        before: &AuthoringReportFingerprint,
+        after: &AuthoringReportFingerprint,
+    ) -> Self {
+        self.semantic_fingerprint_sha256 = Some(after.story_semantic_sha256.clone());
+        self.before_fingerprint_sha256 = Some(before.full_document_sha256.clone());
+        self.after_fingerprint_sha256 = Some(after.full_document_sha256.clone());
+        self
+    }
+
+    pub fn with_field_path(mut self, field_path: impl Into<String>) -> Self {
+        self.field_paths.push(FieldPath::new(field_path));
+        self
+    }
+
+    pub fn with_values(mut self, before: impl Into<String>, after: impl Into<String>) -> Self {
+        self.before_value = Some(before.into());
+        self.after_value = Some(after.into());
         self
     }
 }

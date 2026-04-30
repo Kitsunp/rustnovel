@@ -7,6 +7,9 @@ use crate::{
 
 use super::{AuthoringPosition, NodeGraph, StoryNode, NODE_VERTICAL_SPACING};
 
+mod labels;
+use labels::append_fragment_labels;
+
 pub fn from_script(script: &ScriptRaw) -> NodeGraph {
     let mut graph = NodeGraph::new();
     if script.events.is_empty() {
@@ -79,6 +82,7 @@ pub fn from_script(script: &ScriptRaw) -> NodeGraph {
 pub fn to_script(graph: &NodeGraph) -> ScriptRaw {
     let mut events = Vec::new();
     let mut labels = BTreeMap::new();
+    let mut node_event_indices = BTreeMap::new();
     let node_lookup = graph
         .nodes()
         .map(|(id, node, _)| (*id, node))
@@ -97,11 +101,13 @@ pub fn to_script(graph: &NodeGraph) -> ScriptRaw {
         }
         let event_idx = events.len();
         labels.insert(format!("node_{id}"), event_idx);
+        node_event_indices.insert(id, event_idx);
         if let Some(event) = event_from_node(id, node, &node_lookup, &choice_targets) {
             events.push(event);
         }
     }
 
+    append_fragment_labels(graph, &node_event_indices, &mut labels);
     if events.iter().any(targets_end_label) {
         labels.insert("__end".to_string(), events.len());
     }
@@ -376,12 +382,32 @@ fn validate_strict_graph_export(graph: &NodeGraph) -> VnResult<()> {
         .nodes()
         .map(|(id, node, _)| (*id, node))
         .collect::<BTreeMap<_, _>>();
+    let start_nodes = graph
+        .nodes()
+        .filter_map(|(id, node, _)| matches!(node, StoryNode::Start).then_some(*id))
+        .collect::<Vec<_>>();
+    let flow = graph.flow_analysis(&start_nodes);
+    let script_labels = to_script_lossy_for_diagnostics(graph)
+        .labels
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let connected_ports = graph
         .connections()
         .map(|conn| (conn.from, conn.from_port))
         .collect::<BTreeSet<_>>();
 
     for (node_id, node, _) in graph.nodes() {
+        if !node.is_marker() && !flow.reachable.contains(node_id) {
+            return Err(VnError::invalid_script(format!(
+                "node {node_id} is unreachable/draft and cannot be exported in strict mode"
+            )));
+        }
+        if !node.is_marker() && !node.export_supported() {
+            return Err(VnError::invalid_script(format!(
+                "node {node_id} is not export-supported"
+            )));
+        }
         match node {
             StoryNode::Choice { options, .. } => {
                 if options.is_empty() {
@@ -407,11 +433,26 @@ fn validate_strict_graph_export(graph: &NodeGraph) -> VnResult<()> {
                     "jump node {node_id} has empty target"
                 )));
             }
+            StoryNode::Jump { target } if !script_labels.contains(target.trim()) => {
+                return Err(VnError::invalid_script(format!(
+                    "jump node {node_id} points to missing target '{}'",
+                    target.trim()
+                )));
+            }
             StoryNode::JumpIf { target, .. } => {
                 let has_target_connection = connected_ports.contains(&(*node_id, 0));
                 if target.trim().is_empty() && !has_target_connection {
                     return Err(VnError::invalid_script(format!(
                         "jump_if node {node_id} has empty target"
+                    )));
+                }
+                if !has_target_connection
+                    && !target.trim().is_empty()
+                    && !script_labels.contains(target.trim())
+                {
+                    return Err(VnError::invalid_script(format!(
+                        "jump_if node {node_id} points to missing target '{}'",
+                        target.trim()
                     )));
                 }
             }

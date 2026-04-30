@@ -144,9 +144,25 @@ impl EditorWorkbench {
         let Some(previous_graph) = self.last_fix_snapshot.take() else {
             return false;
         };
+        let before = self.current_authoring_fingerprint();
         self.node_graph = previous_graph;
         self.node_graph.mark_modified();
         let _ = self.sync_graph_to_script();
+        if let Some(after) = self.current_authoring_fingerprint() {
+            let mut entry = visual_novel_engine::authoring::OperationLogEntry::new(
+                format!("editor:revert_last_fix:{}", self.operation_log.len() + 1),
+                "revert_last_fix",
+                "applied",
+                "Reverted last quick-fix snapshot",
+            );
+            if let Some(before) = before.as_ref() {
+                entry = entry.with_before_after_fingerprints(before, &after);
+            } else {
+                entry = entry.with_fingerprint(&after);
+            }
+            self.last_operation_fingerprint = Some(after);
+            self.operation_log.push(entry);
+        }
         true
     }
 
@@ -189,6 +205,11 @@ impl EditorWorkbench {
         let before_graph = self.node_graph.clone();
         let before_sha256 =
             visual_novel_engine::authoring::authoring_graph_sha256(before_graph.authoring_graph());
+        let before_script = before_graph.to_script();
+        let before_fingerprint = visual_novel_engine::authoring::build_authoring_report_fingerprint(
+            before_graph.authoring_graph(),
+            &before_script,
+        );
 
         let changed = apply_fix(&mut self.node_graph, issue, fix_id)?;
         if !changed {
@@ -222,8 +243,9 @@ impl EditorWorkbench {
                 format!("Applied quick-fix '{fix_id}'"),
             )
             .with_diagnostic(issue)
-            .with_fingerprint(&after_fingerprint),
+            .with_before_after_fingerprints(&before_fingerprint, &after_fingerprint),
         );
+        self.last_operation_fingerprint = Some(after_fingerprint);
 
         let previous_diag_id = issue.diagnostic_id();
         let _ = self.sync_graph_to_script();

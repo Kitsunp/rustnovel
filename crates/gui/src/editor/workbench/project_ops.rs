@@ -103,6 +103,7 @@ impl EditorWorkbench {
         self.composer_entity_owners.clear();
         self.composer_image_cache.clear();
         self.composer_image_failures.clear();
+        self.composer_layer_overrides.clear();
         self.player_audio_backend = None;
         self.player_audio_root = None;
 
@@ -123,6 +124,7 @@ impl EditorWorkbench {
                 )));
             }
         }
+        self.refresh_operation_fingerprint();
     }
 
     fn load_localization_catalog(

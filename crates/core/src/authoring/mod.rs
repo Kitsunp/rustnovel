@@ -19,6 +19,8 @@ mod validation_report;
 
 pub use diagnostics::{
     DiagnosticEnvelopeV2, DiagnosticExplanation, DiagnosticLanguage, DiagnosticLocation,
+    DiagnosticTarget, EvidenceTrace, FieldPath, SemanticValue, SemanticValueKind, TraceAtom,
+    TraceAtomKind, TraceEdge, TraceRelation,
 };
 pub use document::{
     source_looks_like_authoring_document, AuthoringDocument, AuthoringDocumentError,
@@ -29,14 +31,17 @@ pub use entry::{
     load_runtime_script_from_entry, parse_authoring_document_or_script,
     parse_runtime_script_from_entry,
 };
-pub use graph::{CharacterPoseBinding, GraphConnection, NodeGraph, SceneLayer, SceneProfile};
+pub use graph::{
+    CharacterPoseBinding, DecisionHub, FragmentPort, GraphConnection, GraphFragment, GraphStack,
+    NodeGraph, PortalNode, SceneLayer, SceneProfile,
+};
 pub use lint::{LintCode, LintIssue, LintSeverity, ValidationPhase};
 pub use operation_log::{OperationLogEntry, VerificationRun};
 pub use quick_fix::{QuickFixCandidate, QuickFixRisk};
 pub use report_fingerprint::{
-    authoring_fingerprints_semantically_match, authoring_graph_sha256,
-    build_authoring_report_fingerprint, AuthoringReportBuildInfo, AuthoringReportFingerprint,
-    AuthoringSemanticFingerprint,
+    authoring_fingerprints_semantically_match, authoring_graph_sha256, authoring_layout_sha256,
+    authoring_story_graph_sha256, build_authoring_report_fingerprint, AuthoringReportBuildInfo,
+    AuthoringReportFingerprint, AuthoringSemanticFingerprint,
 };
 pub use types::{AuthoringPosition, StoryNode, NODE_VERTICAL_SPACING};
 pub use validation::{

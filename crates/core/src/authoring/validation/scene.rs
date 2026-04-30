@@ -1,6 +1,6 @@
 use crate::{CharacterPlacementRaw, ScenePatchRaw};
 
-use super::assets::validate_asset;
+use super::assets::validate_asset_at;
 use super::{LintCode, LintIssue, NodeGraph, ValidationPhase};
 
 pub(super) fn validate_scene_profiles<F>(
@@ -11,24 +11,52 @@ pub(super) fn validate_scene_profiles<F>(
     F: Fn(&str) -> bool,
 {
     for (profile_id, profile) in graph.scene_profiles() {
-        validate_asset(
+        validate_asset_at(
             None,
             &profile.background,
             "background",
+            format!("graph.scene_profiles[{profile_id}].background"),
             asset_exists,
             issues,
         );
-        validate_asset(None, &profile.music, "music", asset_exists, issues);
-        validate_scene_profile_characters(profile_id, &profile.characters, asset_exists, issues);
-        for layer in &profile.layers {
-            validate_asset(None, &layer.background, "background", asset_exists, issues);
-            validate_scene_profile_characters(profile_id, &layer.characters, asset_exists, issues);
+        validate_asset_at(
+            None,
+            &profile.music,
+            "music",
+            format!("graph.scene_profiles[{profile_id}].music"),
+            asset_exists,
+            issues,
+        );
+        validate_scene_profile_characters(
+            profile_id,
+            "characters",
+            &profile.characters,
+            asset_exists,
+            issues,
+        );
+        for (layer_idx, layer) in profile.layers.iter().enumerate() {
+            validate_asset_at(
+                None,
+                &layer.background,
+                "background",
+                format!("graph.scene_profiles[{profile_id}].layers[{layer_idx}].background"),
+                asset_exists,
+                issues,
+            );
+            validate_scene_profile_characters(
+                profile_id,
+                &format!("layers[{layer_idx}].characters"),
+                &layer.characters,
+                asset_exists,
+                issues,
+            );
         }
-        for pose in &profile.poses {
-            validate_asset(
+        for (pose_idx, pose) in profile.poses.iter().enumerate() {
+            validate_asset_at(
                 None,
                 &Some(pose.image.clone()),
                 "character_expression",
+                format!("graph.scene_profiles[{profile_id}].poses[{pose_idx}].image"),
                 asset_exists,
                 issues,
             );
@@ -40,7 +68,10 @@ pub(super) fn validate_scene_profiles<F>(
                         LintCode::EmptyCharacterName,
                         format!("Scene profile '{profile_id}' has an incomplete pose binding"),
                     )
-                    .with_asset_path(Some(pose.image.clone())),
+                    .with_asset_path(Some(pose.image.clone()))
+                    .with_field_path(format!(
+                        "graph.scene_profiles[{profile_id}].poses[{pose_idx}]"
+                    )),
                 );
             }
         }
@@ -49,25 +80,32 @@ pub(super) fn validate_scene_profiles<F>(
 
 fn validate_scene_profile_characters<F>(
     profile_id: &str,
+    owner_path: &str,
     characters: &[CharacterPlacementRaw],
     asset_exists: &F,
     issues: &mut Vec<LintIssue>,
 ) where
     F: Fn(&str) -> bool,
 {
-    for character in characters {
+    for (character_idx, character) in characters.iter().enumerate() {
         if character.name.trim().is_empty() {
-            issues.push(LintIssue::error(
-                None,
-                ValidationPhase::Graph,
-                LintCode::EmptyCharacterName,
-                format!("Scene profile '{profile_id}' has an empty character name"),
-            ));
+            issues.push(
+                LintIssue::error(
+                    None,
+                    ValidationPhase::Graph,
+                    LintCode::EmptyCharacterName,
+                    format!("Scene profile '{profile_id}' has an empty character name"),
+                )
+                .with_field_path(format!(
+                    "graph.scene_profiles[{profile_id}].{owner_path}[{character_idx}].name"
+                )),
+            );
         }
-        validate_asset(
+        validate_asset_at(
             None,
             &character.expression,
             "character_expression",
+            format!("graph.scene_profiles[{profile_id}].{owner_path}[{character_idx}].expression"),
             asset_exists,
             issues,
         );
@@ -85,8 +123,22 @@ pub(super) fn validate_scene<F>(
 ) where
     F: Fn(&str) -> bool,
 {
-    validate_asset(Some(id), background, "background", asset_exists, issues);
-    validate_asset(Some(id), music, "music", asset_exists, issues);
+    validate_asset_at(
+        Some(id),
+        background,
+        "background",
+        format!("graph.nodes[{id}].background"),
+        asset_exists,
+        issues,
+    );
+    validate_asset_at(
+        Some(id),
+        music,
+        "music",
+        format!("graph.nodes[{id}].music"),
+        asset_exists,
+        issues,
+    );
     if characters
         .iter()
         .any(|character| character.name.trim().is_empty())
@@ -98,11 +150,12 @@ pub(super) fn validate_scene<F>(
             "Scene has an empty character name",
         ));
     }
-    for character in characters {
-        validate_asset(
+    for (character_idx, character) in characters.iter().enumerate() {
+        validate_asset_at(
             Some(id),
             &character.expression,
             "character_expression",
+            format!("graph.nodes[{id}].characters[{character_idx}].expression"),
             asset_exists,
             issues,
         );
@@ -118,14 +171,22 @@ pub(super) fn validate_scene_patch<F>(
 ) where
     F: Fn(&str) -> bool,
 {
-    validate_asset(
+    validate_asset_at(
         Some(id),
         &patch.background,
         "background",
+        format!("graph.nodes[{id}].patch.background"),
         asset_exists,
         issues,
     );
-    validate_asset(Some(id), &patch.music, "music", asset_exists, issues);
+    validate_asset_at(
+        Some(id),
+        &patch.music,
+        "music",
+        format!("graph.nodes[{id}].patch.music"),
+        asset_exists,
+        issues,
+    );
     if patch
         .add
         .iter()
@@ -150,21 +211,23 @@ pub(super) fn validate_scene_patch<F>(
             "Scene patch has an empty character name in remove-list",
         ));
     }
-    for character in &patch.add {
-        validate_asset(
+    for (character_idx, character) in patch.add.iter().enumerate() {
+        validate_asset_at(
             Some(id),
             &character.expression,
             "character_expression",
+            format!("graph.nodes[{id}].patch.add[{character_idx}].expression"),
             asset_exists,
             issues,
         );
         validate_character_scale(Some(id), &character.scale, issues);
     }
-    for character in &patch.update {
-        validate_asset(
+    for (character_idx, character) in patch.update.iter().enumerate() {
+        validate_asset_at(
             Some(id),
             &character.expression,
             "character_expression",
+            format!("graph.nodes[{id}].patch.update[{character_idx}].expression"),
             asset_exists,
             issues,
         );

@@ -6,6 +6,7 @@ use visual_novel_engine::{
     EntityId, EntityKind, EventCompiled, SceneState, Transform, VisualState,
 };
 
+use crate::editor::visual_composer::LayerOverride;
 use crate::editor::{PreviewQuality, StageFit};
 
 #[path = "scene_stage/fallbacks.rs"]
@@ -25,6 +26,7 @@ pub(crate) struct SceneStagePainter<'a> {
     image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     image_failures: &'a mut HashMap<String, String>,
     asset_store: Option<vnengine_assets::AssetStore>,
+    layer_overrides: HashMap<String, LayerOverride>,
 }
 
 pub(crate) struct SceneStageInteraction {
@@ -53,7 +55,13 @@ impl<'a> SceneStagePainter<'a> {
             image_cache,
             image_failures,
             asset_store: None,
+            layer_overrides: HashMap::new(),
         }
+    }
+
+    pub fn with_layer_overrides(mut self, layer_overrides: HashMap<String, LayerOverride>) -> Self {
+        self.layer_overrides = layer_overrides;
+        self
     }
 
     pub fn paint_read_only(
@@ -89,24 +97,33 @@ impl<'a> SceneStagePainter<'a> {
             let Some(entity) = scene.get(EntityId::new(raw_id)).cloned() else {
                 continue;
             };
+            if self
+                .entity_layer_override(raw_id)
+                .is_some_and(|entry| !entry.visible)
+            {
+                continue;
+            }
             let is_background = is_background_image(&entity.kind, entity.transform.z_order);
             if is_background && *selected_entity_id == Some(raw_id) {
                 *selected_entity_id = None;
             }
 
             let rect = entity_rect(&entity.kind, &entity.transform, &geometry);
-            let sense = if is_background {
+            let locked = self
+                .entity_layer_override(raw_id)
+                .is_some_and(|entry| entry.locked);
+            let sense = if is_background || locked {
                 egui::Sense::hover()
             } else {
                 egui::Sense::click_and_drag()
             };
             let interact = ui.interact(rect, egui::Id::new(("scene_entity", raw_id)), sense);
 
-            if !is_background && (interact.clicked() || interact.double_clicked()) {
+            if !is_background && !locked && (interact.clicked() || interact.double_clicked()) {
                 *selected_entity_id = Some(raw_id);
                 selected_node = entity_owners.get(&raw_id).copied();
             }
-            if !is_background && interact.dragged() {
+            if !is_background && !locked && interact.dragged() {
                 *selected_entity_id = Some(raw_id);
                 moved_entity = Some((
                     raw_id,
@@ -181,6 +198,10 @@ impl<'a> SceneStagePainter<'a> {
                 egui::Color32::from_gray(150),
             );
         }
+    }
+
+    fn entity_layer_override(&self, raw_id: u32) -> Option<&LayerOverride> {
+        self.layer_overrides.get(&format!("entity:{raw_id}"))
     }
 
     fn paint_entity(

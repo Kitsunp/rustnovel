@@ -44,19 +44,22 @@ impl EditorWorkbench {
     pub(super) fn build_entity_node_map(&self) -> std::collections::HashMap<u32, u32> {
         let mut map = std::collections::HashMap::new();
         use crate::editor::node_types::StoryNode;
-        use std::collections::HashMap;
+        use std::collections::{HashMap, VecDeque};
 
-        let mut characters_by_name: HashMap<String, Vec<u32>> = HashMap::new();
+        let mut characters_by_key: HashMap<String, VecDeque<u32>> = HashMap::new();
         let mut images_by_path: HashMap<String, Vec<u32>> = HashMap::new();
         let mut audio_by_path: HashMap<String, Vec<u32>> = HashMap::new();
 
         for entity in self.scene.iter() {
             match &entity.kind {
                 visual_novel_engine::EntityKind::Character(character) => {
-                    characters_by_name
-                        .entry(character.name.to_string())
+                    characters_by_key
+                        .entry(character_match_key(
+                            character.name.as_ref(),
+                            character.expression.as_deref(),
+                        ))
                         .or_default()
-                        .push(entity.id.raw());
+                        .push_back(entity.id.raw());
                 }
                 visual_novel_engine::EntityKind::Image(image) => {
                     images_by_path
@@ -74,21 +77,6 @@ impl EditorWorkbench {
             }
         }
 
-        let mut bind_owner = |entity_id: u32, node_id: u32, prefer_existing: bool| {
-            if prefer_existing {
-                map.entry(entity_id).or_insert(node_id);
-            } else {
-                map.insert(entity_id, node_id);
-            }
-        };
-        let mut bind_matches = |matches: Option<&Vec<u32>>, node_id: u32, prefer_existing: bool| {
-            if let Some(entity_ids) = matches {
-                for &entity_id in entity_ids {
-                    bind_owner(entity_id, node_id, prefer_existing);
-                }
-            }
-        };
-
         // Fallback ownership map when preview trace ownership is unavailable.
         for (nid, node, _) in self.node_graph.nodes() {
             match node {
@@ -99,43 +87,82 @@ impl EditorWorkbench {
                     ..
                 } => {
                     if let Some(background) = background {
-                        bind_matches(images_by_path.get(background.as_str()), nid, false);
+                        bind_matches(
+                            &mut map,
+                            images_by_path.get(background.as_str()),
+                            nid,
+                            false,
+                        );
                     }
                     if let Some(music) = music {
-                        bind_matches(audio_by_path.get(music.as_str()), nid, false);
+                        bind_matches(&mut map, audio_by_path.get(music.as_str()), nid, false);
                     }
                     for character in characters {
-                        bind_matches(characters_by_name.get(character.name.as_str()), nid, false);
+                        bind_one_character(
+                            &mut map,
+                            &mut characters_by_key,
+                            character.name.as_str(),
+                            character.expression.as_deref(),
+                            nid,
+                        );
                         if let Some(expression) = &character.expression {
-                            bind_matches(images_by_path.get(expression.as_str()), nid, false);
+                            bind_matches(
+                                &mut map,
+                                images_by_path.get(expression.as_str()),
+                                nid,
+                                false,
+                            );
                         }
                     }
                 }
                 StoryNode::ScenePatch(patch) => {
                     if let Some(background) = &patch.background {
-                        bind_matches(images_by_path.get(background.as_str()), nid, false);
+                        bind_matches(
+                            &mut map,
+                            images_by_path.get(background.as_str()),
+                            nid,
+                            false,
+                        );
                     }
                     if let Some(music) = &patch.music {
-                        bind_matches(audio_by_path.get(music.as_str()), nid, false);
+                        bind_matches(&mut map, audio_by_path.get(music.as_str()), nid, false);
                     }
                     for character in &patch.add {
-                        bind_matches(characters_by_name.get(character.name.as_str()), nid, false);
+                        bind_one_character(
+                            &mut map,
+                            &mut characters_by_key,
+                            character.name.as_str(),
+                            character.expression.as_deref(),
+                            nid,
+                        );
                     }
                     for character in &patch.update {
-                        bind_matches(characters_by_name.get(character.name.as_str()), nid, false);
+                        bind_one_character(
+                            &mut map,
+                            &mut characters_by_key,
+                            character.name.as_str(),
+                            character.expression.as_deref(),
+                            nid,
+                        );
                     }
                 }
                 StoryNode::CharacterPlacement { name, .. } => {
-                    bind_matches(characters_by_name.get(name.as_str()), nid, false);
+                    bind_one_character(&mut map, &mut characters_by_key, name.as_str(), None, nid);
                 }
                 StoryNode::AudioAction {
                     asset: Some(asset), ..
                 } => {
                     // Keep scene/patch ownership when already resolved.
-                    bind_matches(audio_by_path.get(asset.as_str()), nid, true);
+                    bind_matches(&mut map, audio_by_path.get(asset.as_str()), nid, true);
                 }
                 StoryNode::Generic(visual_novel_engine::EventRaw::SetCharacterPosition(pos)) => {
-                    bind_matches(characters_by_name.get(pos.name.as_str()), nid, false);
+                    bind_one_character(
+                        &mut map,
+                        &mut characters_by_key,
+                        pos.name.as_str(),
+                        None,
+                        nid,
+                    );
                 }
                 _ => {}
             }
@@ -348,5 +375,57 @@ impl EditorWorkbench {
         }
         self.ensure_player_audio_backend();
         self.apply_player_audio_commands(audio_commands);
+    }
+}
+
+fn character_match_key(name: &str, expression: Option<&str>) -> String {
+    format!("{}|{}", name.trim(), expression.unwrap_or("").trim())
+}
+
+fn bind_owner(
+    map: &mut std::collections::HashMap<u32, u32>,
+    entity_id: u32,
+    node_id: u32,
+    prefer_existing: bool,
+) {
+    if prefer_existing {
+        map.entry(entity_id).or_insert(node_id);
+    } else {
+        map.insert(entity_id, node_id);
+    }
+}
+
+fn bind_matches(
+    map: &mut std::collections::HashMap<u32, u32>,
+    matches: Option<&Vec<u32>>,
+    node_id: u32,
+    prefer_existing: bool,
+) {
+    if let Some(entity_ids) = matches {
+        for &entity_id in entity_ids {
+            bind_owner(map, entity_id, node_id, prefer_existing);
+        }
+    }
+}
+
+fn bind_one_character(
+    map: &mut std::collections::HashMap<u32, u32>,
+    characters_by_key: &mut std::collections::HashMap<String, std::collections::VecDeque<u32>>,
+    name: &str,
+    expression: Option<&str>,
+    node_id: u32,
+) {
+    let key = character_match_key(name, expression);
+    if let Some(entity_ids) = characters_by_key.get_mut(&key) {
+        if let Some(entity_id) = entity_ids.pop_front() {
+            bind_owner(map, entity_id, node_id, false);
+            return;
+        }
+    }
+    let fallback_key = character_match_key(name, None);
+    if let Some(entity_ids) = characters_by_key.get_mut(&fallback_key) {
+        if let Some(entity_id) = entity_ids.pop_front() {
+            bind_owner(map, entity_id, node_id, false);
+        }
     }
 }

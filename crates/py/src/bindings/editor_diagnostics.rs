@@ -159,6 +159,14 @@ pub struct PyLintIssue {
     pub(crate) expected_en: String,
     #[pyo3(get)]
     pub(crate) docs_ref: String,
+    #[pyo3(get)]
+    pub(crate) target: Option<String>,
+    #[pyo3(get)]
+    pub(crate) field_path: Option<String>,
+    #[pyo3(get)]
+    pub(crate) trace_id: Option<String>,
+    #[pyo3(get)]
+    pub(crate) semantic_values: Vec<String>,
 }
 
 #[pymethods]
@@ -241,6 +249,10 @@ impl PyLintIssue {
                 },
             )?;
             dict.set_item("docs_ref", &self.docs_ref)?;
+            dict.set_item("target", &self.target)?;
+            dict.set_item("field_path", &self.field_path)?;
+            dict.set_item("trace_id", &self.trace_id)?;
+            dict.set_item("semantic_values", &self.semantic_values)?;
             Ok(dict.into())
         })
     }
@@ -281,6 +293,20 @@ impl From<LintIssue> for PyLintIssue {
             expected_es: es.expected,
             expected_en: en.expected,
             docs_ref: en.docs_ref,
+            target: issue
+                .target
+                .as_ref()
+                .and_then(|target| serde_json::to_string(target).ok()),
+            field_path: issue.field_path.as_ref().map(|path| path.value.clone()),
+            trace_id: issue
+                .evidence_trace
+                .as_ref()
+                .map(|trace| trace.trace_id.clone()),
+            semantic_values: issue
+                .semantic_values
+                .iter()
+                .filter_map(|value| serde_json::to_string(value).ok())
+                .collect(),
         }
     }
 }

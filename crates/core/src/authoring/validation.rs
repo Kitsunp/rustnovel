@@ -2,24 +2,26 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 mod assets;
+mod event_details;
 mod flow;
 mod scene;
 mod trace;
 
-use assets::validate_asset;
 pub use assets::{
     asset_exists_from_project_root, default_asset_exists, is_unsafe_asset_ref,
     should_probe_asset_exists,
 };
+use event_details::{validate_audio, validate_character, validate_transition, AudioValidation};
 use flow::unreachable_blocker_context;
-use scene::{
-    validate_character_scale, validate_scene, validate_scene_patch, validate_scene_profiles,
-};
+use scene::{validate_scene, validate_scene_patch, validate_scene_profiles};
 use trace::parse_import_trace_context;
 
 use crate::{CondRaw, EventRaw};
 
-use super::{GraphConnection, LintCode, LintIssue, NodeGraph, StoryNode, ValidationPhase};
+use super::{
+    DiagnosticTarget, GraphConnection, LintCode, LintIssue, NodeGraph, SemanticValue,
+    SemanticValueKind, StoryNode, ValidationPhase,
+};
 
 pub fn validate(graph: &NodeGraph) -> Vec<LintIssue> {
     validate_no_io(graph)
@@ -46,19 +48,27 @@ where
         .filter_map(|(id, node, _)| matches!(node, StoryNode::Start).then_some(*id))
         .collect::<Vec<_>>();
     match start_nodes.len() {
-        0 => issues.push(LintIssue::error(
-            None,
-            ValidationPhase::Graph,
-            LintCode::MissingStart,
-            "Missing Start node",
-        )),
+        0 => issues.push(
+            LintIssue::error(
+                None,
+                ValidationPhase::Graph,
+                LintCode::MissingStart,
+                "Missing Start node",
+            )
+            .with_target(DiagnosticTarget::Graph)
+            .with_evidence_trace(),
+        ),
         1 => {}
-        count => issues.push(LintIssue::error(
-            None,
-            ValidationPhase::Graph,
-            LintCode::MultipleStart,
-            format!("Multiple Start nodes found ({count})"),
-        )),
+        count => issues.push(
+            LintIssue::error(
+                None,
+                ValidationPhase::Graph,
+                LintCode::MultipleStart,
+                format!("Multiple Start nodes found ({count})"),
+            )
+            .with_target(DiagnosticTarget::Graph)
+            .with_evidence_trace(),
+        ),
     }
     let flow = graph.flow_analysis(&start_nodes);
     let script = graph.to_script_lossy_for_diagnostics();
@@ -77,18 +87,22 @@ where
             if let Some(from_id) = edge_from {
                 issue = issue.with_edge(Some(from_id), Some(*id));
             }
-            issues.push(issue);
+            issues.push(issue.with_target(DiagnosticTarget::Node { node_id: *id }));
         }
         validate_node(graph, *id, node, &script_labels, &asset_exists, &mut issues);
     }
     validate_scene_profiles(graph, &asset_exists, &mut issues);
     for node_id in flow.reachable_cycle_nodes {
-        issues.push(LintIssue::warning(
-            Some(node_id),
-            ValidationPhase::Graph,
-            LintCode::PotentialLoop,
-            "Potential execution loop detected on reachable route",
-        ));
+        issues.push(
+            LintIssue::warning(
+                Some(node_id),
+                ValidationPhase::Graph,
+                LintCode::PotentialLoop,
+                "Potential execution loop detected on reachable route",
+            )
+            .with_target(DiagnosticTarget::Node { node_id })
+            .with_evidence_trace(),
+        );
     }
     issues
 }
@@ -110,21 +124,40 @@ fn validate_node<F>(
     F: Fn(&str) -> bool,
 {
     if !node.is_marker() && !node.export_supported() {
-        issues.push(LintIssue::error(
-            Some(id),
-            ValidationPhase::Graph,
-            LintCode::ContractUnsupportedExport,
-            "Node is not export-compatible",
-        ));
+        issues.push(
+            LintIssue::error(
+                Some(id),
+                ValidationPhase::Graph,
+                LintCode::ContractUnsupportedExport,
+                "Node is not export-compatible",
+            )
+            .with_target(DiagnosticTarget::Node { node_id: id })
+            .with_field_path(format!("graph.nodes[{id}]"))
+            .with_evidence_trace(),
+        );
     }
     match node {
         StoryNode::Dialogue { speaker, .. } if speaker.trim().is_empty() => {
-            issues.push(LintIssue::warning(
-                Some(id),
-                ValidationPhase::Graph,
-                LintCode::EmptySpeakerName,
-                "Dialogue speaker is empty",
-            ));
+            issues.push(
+                LintIssue::warning(
+                    Some(id),
+                    ValidationPhase::Graph,
+                    LintCode::EmptySpeakerName,
+                    "Dialogue speaker is empty",
+                )
+                .with_target(DiagnosticTarget::Character {
+                    node_id: Some(id),
+                    name: speaker.clone(),
+                    field_path: Some(super::FieldPath::new(format!("graph.nodes[{id}].speaker"))),
+                })
+                .with_field_path(format!("graph.nodes[{id}].speaker"))
+                .with_semantic_value(SemanticValue::new(
+                    SemanticValueKind::CharacterRef,
+                    speaker.clone(),
+                    format!("graph.nodes[{id}].speaker"),
+                ))
+                .with_evidence_trace(),
+            );
         }
         StoryNode::Choice { options, .. } => validate_choice(graph, id, options, issues),
         StoryNode::Scene {
@@ -142,7 +175,17 @@ fn validate_node<F>(
                             LintCode::AssetReferenceMissing,
                             "Scene profile does not exist",
                         )
-                        .with_asset_path(Some(profile.clone())),
+                        .with_asset_path(Some(profile.clone()))
+                        .with_target(DiagnosticTarget::SceneProfile {
+                            profile_id: profile.clone(),
+                        })
+                        .with_field_path(format!("graph.nodes[{id}].profile"))
+                        .with_semantic_value(SemanticValue::new(
+                            SemanticValueKind::AssetRef,
+                            profile.clone(),
+                            format!("graph.nodes[{id}].profile"),
+                        ))
+                        .with_evidence_trace(),
                     );
                 }
             }
@@ -156,12 +199,20 @@ fn validate_node<F>(
         }
         StoryNode::JumpIf { target, cond } => {
             if cond_key_empty(cond) {
-                issues.push(LintIssue::error(
-                    Some(id),
-                    ValidationPhase::Graph,
-                    LintCode::EmptyStateKey,
-                    "JumpIf condition key is empty",
-                ));
+                issues.push(
+                    LintIssue::error(
+                        Some(id),
+                        ValidationPhase::Graph,
+                        LintCode::EmptyStateKey,
+                        "JumpIf condition key is empty",
+                    )
+                    .with_target(DiagnosticTarget::JumpTarget {
+                        node_id: id,
+                        target: target.clone(),
+                    })
+                    .with_field_path(format!("graph.nodes[{id}].cond.key"))
+                    .with_evidence_trace(),
+                );
             }
             let has_connected_target = graph
                 .connections()
@@ -173,12 +224,21 @@ fn validate_node<F>(
         StoryNode::SetVariable { key, .. } | StoryNode::SetFlag { key, .. }
             if key.trim().is_empty() =>
         {
-            issues.push(LintIssue::error(
-                Some(id),
-                ValidationPhase::Graph,
-                LintCode::EmptyStateKey,
-                "State key is empty",
-            ));
+            issues.push(
+                LintIssue::error(
+                    Some(id),
+                    ValidationPhase::Graph,
+                    LintCode::EmptyStateKey,
+                    "State key is empty",
+                )
+                .with_field_path(format!("graph.nodes[{id}].key"))
+                .with_semantic_value(SemanticValue::new(
+                    SemanticValueKind::VariableRef,
+                    key.clone(),
+                    format!("graph.nodes[{id}].key"),
+                ))
+                .with_evidence_trace(),
+            );
         }
         StoryNode::AudioAction {
             channel,
@@ -235,7 +295,20 @@ fn validate_node<F>(
                         ip_segment,
                         snippet_segment
                     );
-                    issue = issue.with_blocked_by(trace.blocked_by);
+                    issue = issue
+                        .with_blocked_by(trace.blocked_by)
+                        .with_target(DiagnosticTarget::Generic {
+                            field_path: Some(super::FieldPath::new(format!(
+                                "graph.nodes[{id}].generic"
+                            ))),
+                        })
+                        .with_field_path(format!("graph.nodes[{id}].generic"))
+                        .with_semantic_value(SemanticValue::new(
+                            SemanticValueKind::PluginRef,
+                            command.clone(),
+                            format!("graph.nodes[{id}].generic.command"),
+                        ))
+                        .with_evidence_trace();
                 }
             }
             issues.push(issue);
@@ -243,12 +316,16 @@ fn validate_node<F>(
         _ => {}
     }
     if !matches!(node, StoryNode::End) && !graph.connections().any(|conn| conn.from == id) {
-        issues.push(LintIssue::warning(
-            Some(id),
-            ValidationPhase::Graph,
-            LintCode::DeadEnd,
-            "Node has no outgoing transition",
-        ));
+        issues.push(
+            LintIssue::warning(
+                Some(id),
+                ValidationPhase::Graph,
+                LintCode::DeadEnd,
+                "Node has no outgoing transition",
+            )
+            .with_target(DiagnosticTarget::Node { node_id: id })
+            .with_evidence_trace(),
+        );
     }
 }
 
@@ -259,12 +336,17 @@ fn validate_layout_position(id: u32, x: f32, y: f32, issues: &mut Vec<LintIssue>
         || x.abs() > MAX_AUTHORING_COORD
         || y.abs() > MAX_AUTHORING_COORD
     {
-        issues.push(LintIssue::error(
-            Some(id),
-            ValidationPhase::Graph,
-            LintCode::InvalidLayoutPosition,
-            "Node layout position is invalid",
-        ));
+        issues.push(
+            LintIssue::error(
+                Some(id),
+                ValidationPhase::Graph,
+                LintCode::InvalidLayoutPosition,
+                "Node layout position is invalid",
+            )
+            .with_target(DiagnosticTarget::Node { node_id: id })
+            .with_field_path(format!("graph.nodes[{id}].position"))
+            .with_evidence_trace(),
+        );
     }
 }
 
@@ -276,19 +358,45 @@ fn validate_jump_target(
 ) {
     let target = target.trim();
     if target.is_empty() {
-        issues.push(LintIssue::warning(
-            Some(id),
-            ValidationPhase::Graph,
-            LintCode::EmptyJumpTarget,
-            "Jump target is empty",
-        ));
+        issues.push(
+            LintIssue::warning(
+                Some(id),
+                ValidationPhase::Graph,
+                LintCode::EmptyJumpTarget,
+                "Jump target is empty",
+            )
+            .with_target(DiagnosticTarget::JumpTarget {
+                node_id: id,
+                target: target.to_string(),
+            })
+            .with_field_path(format!("graph.nodes[{id}].target"))
+            .with_semantic_value(SemanticValue::new(
+                SemanticValueKind::LabelRef,
+                target,
+                format!("graph.nodes[{id}].target"),
+            ))
+            .with_evidence_trace(),
+        );
     } else if !script_labels.contains(target) {
-        issues.push(LintIssue::error(
-            Some(id),
-            ValidationPhase::Graph,
-            LintCode::MissingJumpTarget,
-            format!("Jump target '{target}' does not exist"),
-        ));
+        issues.push(
+            LintIssue::error(
+                Some(id),
+                ValidationPhase::Graph,
+                LintCode::MissingJumpTarget,
+                format!("Jump target '{target}' does not exist"),
+            )
+            .with_target(DiagnosticTarget::JumpTarget {
+                node_id: id,
+                target: target.to_string(),
+            })
+            .with_field_path(format!("graph.nodes[{id}].target"))
+            .with_semantic_value(SemanticValue::new(
+                SemanticValueKind::LabelRef,
+                target,
+                format!("graph.nodes[{id}].target"),
+            ))
+            .with_evidence_trace(),
+        );
     }
 }
 
@@ -300,21 +408,39 @@ fn cond_key_empty(cond: &CondRaw) -> bool {
 
 fn validate_choice(graph: &NodeGraph, id: u32, options: &[String], issues: &mut Vec<LintIssue>) {
     if options.is_empty() {
-        issues.push(LintIssue::error(
-            Some(id),
-            ValidationPhase::Graph,
-            LintCode::ChoiceNoOptions,
-            "Choice has no options",
-        ));
+        issues.push(
+            LintIssue::error(
+                Some(id),
+                ValidationPhase::Graph,
+                LintCode::ChoiceNoOptions,
+                "Choice has no options",
+            )
+            .with_target(DiagnosticTarget::Node { node_id: id })
+            .with_field_path(format!("graph.nodes[{id}].options"))
+            .with_evidence_trace(),
+        );
     }
     for (idx, option) in options.iter().enumerate() {
         if is_placeholder_option(option, idx) {
-            issues.push(LintIssue::warning(
-                Some(id),
-                ValidationPhase::Graph,
-                LintCode::PlaceholderChoiceOption,
-                format!("Choice option {idx} still uses placeholder text"),
-            ));
+            issues.push(
+                LintIssue::warning(
+                    Some(id),
+                    ValidationPhase::Graph,
+                    LintCode::PlaceholderChoiceOption,
+                    format!("Choice option {idx} still uses placeholder text"),
+                )
+                .with_target(DiagnosticTarget::ChoiceOption {
+                    node_id: id,
+                    option_index: idx,
+                })
+                .with_field_path(format!("graph.nodes[{id}].options[{idx}].text"))
+                .with_semantic_value(SemanticValue::new(
+                    SemanticValueKind::Text,
+                    option.clone(),
+                    format!("graph.nodes[{id}].options[{idx}].text"),
+                ))
+                .with_evidence_trace(),
+            );
         }
     }
     let outgoing = graph
@@ -330,7 +456,13 @@ fn validate_choice(graph: &NodeGraph, id: u32, options: &[String], issues: &mut 
                     LintCode::ChoiceOptionUnlinked,
                     format!("Choice option {idx} is unlinked"),
                 )
-                .with_edge(Some(id), None),
+                .with_edge(Some(id), None)
+                .with_target(DiagnosticTarget::ChoiceOption {
+                    node_id: id,
+                    option_index: idx,
+                })
+                .with_field_path(format!("graph.nodes[{id}].options[{idx}].target"))
+                .with_evidence_trace(),
             );
         }
     }
@@ -343,7 +475,13 @@ fn validate_choice(graph: &NodeGraph, id: u32, options: &[String], issues: &mut 
                     LintCode::ChoicePortOutOfRange,
                     "Choice connection port is out of range",
                 )
-                .with_edge(Some(conn.from), Some(conn.to)),
+                .with_edge(Some(conn.from), Some(conn.to))
+                .with_target(DiagnosticTarget::Edge {
+                    from: conn.from,
+                    from_port: conn.from_port,
+                    to: Some(conn.to),
+                })
+                .with_evidence_trace(),
             );
         }
     }
@@ -351,94 +489,4 @@ fn validate_choice(graph: &NodeGraph, id: u32, options: &[String], issues: &mut 
 
 fn is_placeholder_option(option: &str, index: usize) -> bool {
     option.trim() == format!("Option {}", index + 1)
-}
-
-struct AudioValidation<'a> {
-    id: u32,
-    channel: &'a str,
-    action: &'a str,
-    asset: &'a Option<String>,
-    volume: &'a Option<f32>,
-    fade_duration_ms: &'a Option<u64>,
-}
-
-fn validate_audio<F>(audio: AudioValidation<'_>, asset_exists: &F, issues: &mut Vec<LintIssue>)
-where
-    F: Fn(&str) -> bool,
-{
-    if !matches!(audio.channel, "bgm" | "sfx" | "voice") {
-        issues.push(LintIssue::error(
-            Some(audio.id),
-            ValidationPhase::Graph,
-            LintCode::InvalidAudioChannel,
-            "Invalid audio channel",
-        ));
-    }
-    if !matches!(audio.action, "play" | "stop" | "fade_out") {
-        issues.push(LintIssue::error(
-            Some(audio.id),
-            ValidationPhase::Graph,
-            LintCode::InvalidAudioAction,
-            "Invalid audio action",
-        ));
-    }
-    if audio
-        .volume
-        .is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
-    {
-        issues.push(LintIssue::error(
-            Some(audio.id),
-            ValidationPhase::Graph,
-            LintCode::InvalidAudioVolume,
-            "Invalid audio volume",
-        ));
-    }
-    if matches!(audio.action, "stop" | "fade_out") && audio.fade_duration_ms.unwrap_or(0) == 0 {
-        issues.push(LintIssue::warning(
-            Some(audio.id),
-            ValidationPhase::Graph,
-            LintCode::InvalidAudioFade,
-            "Missing audio fade duration",
-        ));
-    }
-    if audio.action == "play" && audio.asset.is_none() {
-        issues.push(LintIssue::warning(
-            Some(audio.id),
-            ValidationPhase::Graph,
-            LintCode::AudioAssetMissing,
-            "Audio asset path is missing",
-        ));
-    }
-    validate_asset(Some(audio.id), audio.asset, "audio", asset_exists, issues);
-}
-
-fn validate_transition(id: u32, kind: &str, duration_ms: u32, issues: &mut Vec<LintIssue>) {
-    if duration_ms == 0 {
-        issues.push(LintIssue::warning(
-            Some(id),
-            ValidationPhase::Graph,
-            LintCode::InvalidTransitionDuration,
-            "Transition duration should be > 0 ms",
-        ));
-    }
-    if !matches!(kind, "fade" | "fade_black" | "dissolve" | "cut") {
-        issues.push(LintIssue::warning(
-            Some(id),
-            ValidationPhase::Graph,
-            LintCode::InvalidTransitionKind,
-            "Unknown transition kind",
-        ));
-    }
-}
-
-fn validate_character(id: u32, name: &str, scale: &Option<f32>, issues: &mut Vec<LintIssue>) {
-    if name.trim().is_empty() {
-        issues.push(LintIssue::error(
-            Some(id),
-            ValidationPhase::Graph,
-            LintCode::EmptyCharacterName,
-            "Character name is empty",
-        ));
-    }
-    validate_character_scale(Some(id), scale, issues);
 }
