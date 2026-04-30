@@ -1,13 +1,23 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+mod assets;
 mod flow;
+mod scene;
 mod trace;
 
+use assets::validate_asset;
+pub use assets::{
+    asset_exists_from_project_root, default_asset_exists, is_unsafe_asset_ref,
+    should_probe_asset_exists,
+};
 use flow::unreachable_blocker_context;
+use scene::{
+    validate_character_scale, validate_scene, validate_scene_patch, validate_scene_profiles,
+};
 use trace::parse_import_trace_context;
 
-use crate::{CharacterPlacementRaw, CondRaw, EventRaw};
+use crate::{CondRaw, EventRaw};
 
 use super::{GraphConnection, LintCode, LintIssue, NodeGraph, StoryNode, ValidationPhase};
 
@@ -160,15 +170,15 @@ fn validate_node<F>(
                 validate_jump_target(id, target, script_labels, issues);
             }
         }
-        StoryNode::SetVariable { key, .. } | StoryNode::SetFlag { key, .. } => {
-            if key.trim().is_empty() {
-                issues.push(LintIssue::error(
-                    Some(id),
-                    ValidationPhase::Graph,
-                    LintCode::EmptyStateKey,
-                    "State key is empty",
-                ));
-            }
+        StoryNode::SetVariable { key, .. } | StoryNode::SetFlag { key, .. }
+            if key.trim().is_empty() =>
+        {
+            issues.push(LintIssue::error(
+                Some(id),
+                ValidationPhase::Graph,
+                LintCode::EmptyStateKey,
+                "State key is empty",
+            ));
         }
         StoryNode::AudioAction {
             channel,
@@ -288,159 +298,6 @@ fn cond_key_empty(cond: &CondRaw) -> bool {
     }
 }
 
-fn validate_scene_profiles<F>(graph: &NodeGraph, asset_exists: &F, issues: &mut Vec<LintIssue>)
-where
-    F: Fn(&str) -> bool,
-{
-    for (profile_id, profile) in graph.scene_profiles() {
-        validate_asset(0, &profile.background, "background", asset_exists, issues);
-        validate_asset(0, &profile.music, "music", asset_exists, issues);
-        validate_scene_profile_characters(profile_id, &profile.characters, asset_exists, issues);
-        for layer in &profile.layers {
-            validate_asset(0, &layer.background, "background", asset_exists, issues);
-            validate_scene_profile_characters(profile_id, &layer.characters, asset_exists, issues);
-        }
-        for pose in &profile.poses {
-            validate_asset(
-                0,
-                &Some(pose.image.clone()),
-                "character_expression",
-                asset_exists,
-                issues,
-            );
-            if pose.character.trim().is_empty() || pose.pose.trim().is_empty() {
-                issues.push(
-                    LintIssue::warning(
-                        None,
-                        ValidationPhase::Graph,
-                        LintCode::EmptyCharacterName,
-                        format!("Scene profile '{profile_id}' has an incomplete pose binding"),
-                    )
-                    .with_asset_path(Some(pose.image.clone())),
-                );
-            }
-        }
-    }
-}
-
-fn validate_scene_profile_characters<F>(
-    profile_id: &str,
-    characters: &[CharacterPlacementRaw],
-    asset_exists: &F,
-    issues: &mut Vec<LintIssue>,
-) where
-    F: Fn(&str) -> bool,
-{
-    for character in characters {
-        if character.name.trim().is_empty() {
-            issues.push(LintIssue::error(
-                None,
-                ValidationPhase::Graph,
-                LintCode::EmptyCharacterName,
-                format!("Scene profile '{profile_id}' has an empty character name"),
-            ));
-        }
-        validate_asset(
-            0,
-            &character.expression,
-            "character_expression",
-            asset_exists,
-            issues,
-        );
-        validate_character_scale(0, &character.scale, issues);
-    }
-}
-
-fn validate_scene<F>(
-    id: u32,
-    background: &Option<String>,
-    music: &Option<String>,
-    characters: &[CharacterPlacementRaw],
-    asset_exists: &F,
-    issues: &mut Vec<LintIssue>,
-) where
-    F: Fn(&str) -> bool,
-{
-    validate_asset(id, background, "background", asset_exists, issues);
-    validate_asset(id, music, "music", asset_exists, issues);
-    if characters
-        .iter()
-        .any(|character| character.name.trim().is_empty())
-    {
-        issues.push(LintIssue::error(
-            Some(id),
-            ValidationPhase::Graph,
-            LintCode::EmptyCharacterName,
-            "Scene has an empty character name",
-        ));
-    }
-    for character in characters {
-        validate_asset(
-            id,
-            &character.expression,
-            "character_expression",
-            asset_exists,
-            issues,
-        );
-        validate_character_scale(id, &character.scale, issues);
-    }
-}
-
-fn validate_scene_patch<F>(
-    id: u32,
-    patch: &crate::ScenePatchRaw,
-    asset_exists: &F,
-    issues: &mut Vec<LintIssue>,
-) where
-    F: Fn(&str) -> bool,
-{
-    validate_asset(id, &patch.background, "background", asset_exists, issues);
-    validate_asset(id, &patch.music, "music", asset_exists, issues);
-    if patch
-        .add
-        .iter()
-        .any(|character| character.name.trim().is_empty())
-        || patch
-            .update
-            .iter()
-            .any(|character| character.name.trim().is_empty())
-    {
-        issues.push(LintIssue::error(
-            Some(id),
-            ValidationPhase::Graph,
-            LintCode::EmptyCharacterName,
-            "Scene patch has an empty character name",
-        ));
-    }
-    if patch.remove.iter().any(|name| name.trim().is_empty()) {
-        issues.push(LintIssue::warning(
-            Some(id),
-            ValidationPhase::Graph,
-            LintCode::EmptyCharacterName,
-            "Scene patch has an empty character name in remove-list",
-        ));
-    }
-    for character in &patch.add {
-        validate_asset(
-            id,
-            &character.expression,
-            "character_expression",
-            asset_exists,
-            issues,
-        );
-        validate_character_scale(id, &character.scale, issues);
-    }
-    for character in &patch.update {
-        validate_asset(
-            id,
-            &character.expression,
-            "character_expression",
-            asset_exists,
-            issues,
-        );
-    }
-}
-
 fn validate_choice(graph: &NodeGraph, id: u32, options: &[String], issues: &mut Vec<LintIssue>) {
     if options.is_empty() {
         issues.push(LintIssue::error(
@@ -552,7 +409,7 @@ where
             "Audio asset path is missing",
         ));
     }
-    validate_asset(audio.id, audio.asset, "audio", asset_exists, issues);
+    validate_asset(Some(audio.id), audio.asset, "audio", asset_exists, issues);
 }
 
 fn validate_transition(id: u32, kind: &str, duration_ms: u32, issues: &mut Vec<LintIssue>) {
@@ -583,111 +440,5 @@ fn validate_character(id: u32, name: &str, scale: &Option<f32>, issues: &mut Vec
             "Character name is empty",
         ));
     }
-    validate_character_scale(id, scale, issues);
-}
-
-fn validate_character_scale(id: u32, scale: &Option<f32>, issues: &mut Vec<LintIssue>) {
-    if scale.is_some_and(|value| !value.is_finite() || value <= 0.0) {
-        issues.push(LintIssue::error(
-            Some(id),
-            ValidationPhase::Graph,
-            LintCode::InvalidCharacterScale,
-            "Character scale is invalid",
-        ));
-    }
-}
-
-fn validate_asset<F>(
-    id: u32,
-    value: &Option<String>,
-    label: &str,
-    asset_exists: &F,
-    issues: &mut Vec<LintIssue>,
-) where
-    F: Fn(&str) -> bool,
-{
-    let Some(path) = value else {
-        return;
-    };
-    if path.trim().is_empty() {
-        let code = if label == "background" {
-            LintCode::SceneBackgroundEmpty
-        } else {
-            LintCode::AudioAssetEmpty
-        };
-        issues.push(LintIssue::warning(
-            Some(id),
-            ValidationPhase::Graph,
-            code,
-            "Asset path is empty",
-        ));
-    } else if is_unsafe_asset_ref(path) {
-        issues.push(
-            LintIssue::error(
-                Some(id),
-                ValidationPhase::Graph,
-                LintCode::UnsafeAssetPath,
-                "Asset path is unsafe",
-            )
-            .with_asset_path(Some(path.clone())),
-        );
-    } else if should_probe_asset_exists(path) && !asset_exists(path) {
-        issues.push(
-            LintIssue::error(
-                Some(id),
-                ValidationPhase::Graph,
-                LintCode::AssetReferenceMissing,
-                "Asset reference does not exist",
-            )
-            .with_asset_path(Some(path.clone())),
-        );
-    }
-}
-
-pub fn default_asset_exists(path: &str) -> bool {
-    let candidate = Path::new(path.trim());
-    if candidate.is_absolute() {
-        return candidate.is_file();
-    }
-
-    match std::env::current_dir() {
-        Ok(cwd) => cwd.join(candidate).is_file(),
-        Err(_) => candidate.is_file(),
-    }
-}
-
-pub fn asset_exists_from_project_root(project_root: &Path, path: &str) -> bool {
-    let candidate = Path::new(path.trim());
-    if candidate.is_absolute() {
-        return candidate.is_file();
-    }
-    project_root.join(candidate).is_file()
-}
-
-pub fn should_probe_asset_exists(path: &str) -> bool {
-    let p = path.trim();
-    if p.is_empty() {
-        return false;
-    }
-
-    p.contains('/')
-        || p.contains('\\')
-        || Path::new(p).extension().is_some()
-        || p.starts_with("assets/")
-        || p.starts_with("assets\\")
-}
-
-pub fn is_unsafe_asset_ref(path: &str) -> bool {
-    let path = path.trim();
-    if path.is_empty() {
-        return false;
-    }
-    let lower = path.to_ascii_lowercase();
-    path.starts_with('/')
-        || path.starts_with('\\')
-        || lower.contains("://")
-        || path.chars().nth(1).is_some_and(|second| {
-            second == ':' && path.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-        })
-        || path.split(['/', '\\']).any(|part| part == "..")
+    validate_character_scale(Some(id), scale, issues);
 }

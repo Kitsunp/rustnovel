@@ -23,6 +23,22 @@ pub struct ReproCase {
     #[serde(default)]
     pub choice_route: Vec<usize>,
     #[serde(default)]
+    pub diagnostic_id: Option<String>,
+    #[serde(default)]
+    pub semantic_fingerprint_sha256: Option<String>,
+    #[serde(default)]
+    pub operation_id: Option<String>,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub plugins: Vec<String>,
+    #[serde(default)]
+    pub asset_manifest_sha256: Option<String>,
+    #[serde(default)]
+    pub seed: Option<u64>,
+    #[serde(default)]
+    pub validation_profile: Option<String>,
+    #[serde(default)]
     pub environment: BTreeMap<String, String>,
     #[serde(default)]
     pub oracle: ReproOracle,
@@ -39,10 +55,33 @@ impl ReproCase {
             script,
             max_steps: DEFAULT_REPRO_MAX_STEPS,
             choice_route: Vec::new(),
+            diagnostic_id: None,
+            semantic_fingerprint_sha256: None,
+            operation_id: None,
+            capabilities: vec![
+                "headless_repro_v1".to_string(),
+                "extcall_simulated".to_string(),
+            ],
+            plugins: Vec::new(),
+            asset_manifest_sha256: None,
+            seed: Some(0),
+            validation_profile: Some("default".to_string()),
             environment: default_environment_snapshot(),
             oracle: ReproOracle::default(),
             notes: None,
         }
+    }
+
+    pub fn with_diagnostic_context(
+        mut self,
+        diagnostic_id: impl Into<String>,
+        semantic_fingerprint_sha256: impl Into<String>,
+        operation_id: impl Into<String>,
+    ) -> Self {
+        self.diagnostic_id = Some(diagnostic_id.into());
+        self.semantic_fingerprint_sha256 = Some(semantic_fingerprint_sha256.into());
+        self.operation_id = Some(operation_id.into());
+        self
     }
 
     pub fn from_json(payload: &str) -> VnResult<Self> {

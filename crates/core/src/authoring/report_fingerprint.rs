@@ -14,9 +14,20 @@ pub struct AuthoringReportBuildInfo {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthoringSemanticFingerprint {
+    pub script_sha256: String,
+    pub graph_sha256: String,
+    pub asset_refs_sha256: String,
+    pub asset_refs_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthoringReportFingerprint {
     pub fingerprint_schema_version: String,
     pub authoring_schema_version: String,
+    pub semantic_sha256: String,
+    pub semantic: AuthoringSemanticFingerprint,
+    // Kept top-level for v1 report readers and human inspection.
     pub script_sha256: String,
     pub graph_sha256: String,
     pub asset_refs_sha256: String,
@@ -31,14 +42,23 @@ pub fn build_authoring_report_fingerprint(
     let mut asset_refs = collect_asset_refs(graph);
     asset_refs.sort();
     asset_refs.dedup();
+    let semantic = AuthoringSemanticFingerprint {
+        script_sha256: sha256_json(script),
+        graph_sha256: authoring_graph_sha256(graph),
+        asset_refs_sha256: sha256_json(&asset_refs),
+        asset_refs_count: asset_refs.len(),
+    };
+    let semantic_sha256 = sha256_json(&semantic);
 
     AuthoringReportFingerprint {
         fingerprint_schema_version: "vnengine.authoring.fingerprint.v1".to_string(),
         authoring_schema_version: AUTHORING_DOCUMENT_SCHEMA_VERSION.to_string(),
-        script_sha256: sha256_json(script),
-        graph_sha256: sha256_json(graph),
-        asset_refs_sha256: sha256_json(&asset_refs),
-        asset_refs_count: asset_refs.len(),
+        script_sha256: semantic.script_sha256.clone(),
+        graph_sha256: semantic.graph_sha256.clone(),
+        asset_refs_sha256: semantic.asset_refs_sha256.clone(),
+        asset_refs_count: semantic.asset_refs_count,
+        semantic_sha256,
+        semantic,
         build: AuthoringReportBuildInfo {
             engine_version: env!("CARGO_PKG_VERSION").to_string(),
             build_profile: build_profile().to_string(),
@@ -46,6 +66,45 @@ pub fn build_authoring_report_fingerprint(
             target_arch: std::env::consts::ARCH.to_string(),
         },
     }
+}
+
+pub fn authoring_graph_sha256(graph: &NodeGraph) -> String {
+    sha256_json(&super::AuthoringDocument::new(graph.clone()))
+}
+
+pub fn authoring_fingerprints_semantically_match(
+    imported: &serde_json::Value,
+    current: &serde_json::Value,
+) -> bool {
+    let Some(imported_semantic) = semantic_value(imported) else {
+        return false;
+    };
+    let Some(current_semantic) = semantic_value(current) else {
+        return false;
+    };
+    imported_semantic == current_semantic
+}
+
+fn semantic_value(value: &serde_json::Value) -> Option<serde_json::Value> {
+    if let Some(hash) = value
+        .get("semantic_sha256")
+        .and_then(serde_json::Value::as_str)
+    {
+        return Some(serde_json::Value::String(hash.to_string()));
+    }
+    if let Some(semantic) = value.get("semantic") {
+        return Some(semantic.clone());
+    }
+    let script_sha256 = value.get("script_sha256")?.clone();
+    let graph_sha256 = value.get("graph_sha256")?.clone();
+    let asset_refs_sha256 = value.get("asset_refs_sha256")?.clone();
+    let asset_refs_count = value.get("asset_refs_count")?.clone();
+    Some(serde_json::json!({
+        "script_sha256": script_sha256,
+        "graph_sha256": graph_sha256,
+        "asset_refs_sha256": asset_refs_sha256,
+        "asset_refs_count": asset_refs_count,
+    }))
 }
 
 fn collect_asset_refs(graph: &NodeGraph) -> Vec<String> {

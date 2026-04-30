@@ -182,4 +182,4 @@ jobs:
       - name: Run Python tests
         run: |
           source .venv/bin/activate
-          PYTHONPATH=python python -m unittest tests.python.test_examples tests.python.test_vnengine -v
+          PYTHONPATH=python python -m unittest discover -s tests/python -p "test_*.py" -v

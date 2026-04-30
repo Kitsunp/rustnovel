@@ -7,6 +7,16 @@ use visual_novel_engine::{
 
 use super::support::parse_cmp_op;
 
+type PyCharacterPlacementInput = (String, Option<String>, Option<String>);
+type PyCharacterPlacementFullInput = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<i32>,
+    Option<i32>,
+    Option<f32>,
+);
+
 /// A node in the story graph.
 #[pyclass(name = "StoryNode")]
 #[derive(Clone)]
@@ -41,7 +51,7 @@ impl PyStoryNode {
     fn scene(
         background: Option<String>,
         music: Option<String>,
-        characters: Vec<(String, Option<String>, Option<String>)>,
+        characters: Vec<PyCharacterPlacementInput>,
     ) -> Self {
         let characters = characters
             .into_iter()
@@ -71,14 +81,7 @@ impl PyStoryNode {
         profile: Option<String>,
         background: Option<String>,
         music: Option<String>,
-        characters: Vec<(
-            String,
-            Option<String>,
-            Option<String>,
-            Option<i32>,
-            Option<i32>,
-            Option<f32>,
-        )>,
+        characters: Vec<PyCharacterPlacementFullInput>,
     ) -> Self {
         let characters = characters
             .into_iter()
@@ -154,8 +157,8 @@ impl PyStoryNode {
     fn scene_patch(
         background: Option<String>,
         music: Option<String>,
-        add: Vec<(String, Option<String>, Option<String>)>,
-        update: Vec<(String, Option<String>, Option<String>)>,
+        add: Vec<PyCharacterPlacementInput>,
+        update: Vec<PyCharacterPlacementInput>,
         remove: Vec<String>,
     ) -> Self {
         let add = add
@@ -194,15 +197,8 @@ impl PyStoryNode {
     fn scene_patch_full(
         background: Option<String>,
         music: Option<String>,
-        add: Vec<(
-            String,
-            Option<String>,
-            Option<String>,
-            Option<i32>,
-            Option<i32>,
-            Option<f32>,
-        )>,
-        update: Vec<(String, Option<String>, Option<String>)>,
+        add: Vec<PyCharacterPlacementFullInput>,
+        update: Vec<PyCharacterPlacementInput>,
         remove: Vec<String>,
     ) -> Self {
         let add = add

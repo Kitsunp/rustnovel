@@ -39,7 +39,8 @@ pub trait Audio {
     }
     fn play_music(&mut self, id: &str);
     fn play_music_with_options(&mut self, id: &str, loop_playback: bool, volume: Option<f32>) {
-        self.play_music_with_transition(id, loop_playback, volume, None);
+        let _ = (loop_playback, volume);
+        self.play_music(id);
     }
     fn play_music_with_transition(
         &mut self,
@@ -49,8 +50,7 @@ pub trait Audio {
         fade_in: Option<Duration>,
     ) {
         let _ = fade_in;
-        let _ = (loop_playback, volume);
-        self.play_music(id);
+        self.play_music_with_options(id, loop_playback, volume);
     }
     fn stop_music(&mut self);
     fn stop_music_with_fade(&mut self, fade_out: Option<Duration>) {

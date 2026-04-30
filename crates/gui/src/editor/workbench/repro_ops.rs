@@ -10,6 +10,23 @@ impl EditorWorkbench {
             .or_else(|| Some(result.script.clone()))?;
 
         let mut case = visual_novel_engine::ReproCase::new("dry_run_repro_case", repro_script);
+        let fingerprints = visual_novel_engine::authoring::build_authoring_report_fingerprint(
+            self.node_graph.authoring_graph(),
+            &result.script,
+        );
+        case.semantic_fingerprint_sha256 = Some(fingerprints.semantic_sha256);
+        case.operation_id = Some("gui.build_repro_case_from_current_graph".to_string());
+        case.validation_profile = Some("gui.dry_run".to_string());
+        case.diagnostic_id = self
+            .selected_issue
+            .and_then(|idx| self.validation_issues.get(idx))
+            .or_else(|| {
+                result
+                    .issues
+                    .iter()
+                    .find(|issue| issue.severity == LintSeverity::Error)
+            })
+            .map(LintIssue::diagnostic_id);
         if let Some(report) = result.dry_run_report.as_ref() {
             case.max_steps = report.max_steps;
             case.oracle.expected_stop_reason = Some(map_dry_run_stop_reason(report.stop_reason));

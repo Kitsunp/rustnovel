@@ -389,8 +389,8 @@ fn validate_strict_graph_export(graph: &NodeGraph) -> VnResult<()> {
                         "choice node {node_id} has no options"
                     )));
                 }
-                for port in 0..options.len() {
-                    if options[port].trim() == format!("Option {}", port + 1) {
+                for (port, option) in options.iter().enumerate() {
+                    if option.trim() == format!("Option {}", port + 1) {
                         return Err(VnError::invalid_script(format!(
                             "choice node {node_id} option {port} still uses placeholder text"
                         )));
@@ -402,12 +402,10 @@ fn validate_strict_graph_export(graph: &NodeGraph) -> VnResult<()> {
                     }
                 }
             }
-            StoryNode::Jump { target } => {
-                if target.trim().is_empty() {
-                    return Err(VnError::invalid_script(format!(
-                        "jump node {node_id} has empty target"
-                    )));
-                }
+            StoryNode::Jump { target } if target.trim().is_empty() => {
+                return Err(VnError::invalid_script(format!(
+                    "jump node {node_id} has empty target"
+                )));
             }
             StoryNode::JumpIf { target, .. } => {
                 let has_target_connection = connected_ports.contains(&(*node_id, 0));

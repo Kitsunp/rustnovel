@@ -37,7 +37,7 @@ pub fn run_dry_run(mut engine: Engine, policy: &ChoicePolicy, max_steps: usize) 
         let ip = engine.state().position;
         let event = match engine.current_event() {
             Ok(event) => event,
-            Err(_) => {
+            Err(VnError::EndOfScript) => {
                 let msg = format!("Dry Run finished in {steps} step(s)");
                 issues.push(LintIssue::info(
                     None,
@@ -47,7 +47,32 @@ pub fn run_dry_run(mut engine: Engine, policy: &ChoicePolicy, max_steps: usize) 
                 ));
                 break (DryRunStopReason::Finished, msg);
             }
+            Err(err) => {
+                let stop_message = format!("Dry Run runtime error before step {steps}: {err}");
+                failing_event_ip = Some(ip);
+                issues.push(
+                    LintIssue::error(
+                        Some(ip),
+                        ValidationPhase::DryRun,
+                        LintCode::DryRunRuntimeError,
+                        stop_message.clone(),
+                    )
+                    .with_event_ip(Some(ip)),
+                );
+                break (DryRunStopReason::RuntimeError, stop_message);
+            }
         };
+        if matches!(event, EventCompiled::ExtCall { .. }) {
+            issues.push(
+                LintIssue::warning(
+                    Some(ip),
+                    ValidationPhase::DryRun,
+                    LintCode::DryRunExtCallSimulated,
+                    format!("Dry Run simulated external call at ip {ip}"),
+                )
+                .with_event_ip(Some(ip)),
+            );
+        }
 
         traces.push(DryRunStepTrace {
             step: steps,

@@ -6,7 +6,7 @@ example to validate the same script contract from Python, then open the Rust GUI
 binary for interactive authoring and preview.
 
 Run with:
-    python examples/python/gui_demo.py
+    python examples/python/headless_demo.py
 """
 
 from vnengine import run_script_headless

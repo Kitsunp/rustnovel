@@ -89,6 +89,7 @@ pub enum LintCode {
     DryRunStepLimit,
     DryRunRuntimeError,
     DryRunParityMismatch,
+    DryRunExtCallSimulated,
     DryRunFinished,
 }
 
@@ -129,6 +130,7 @@ impl LintCode {
         Self::DryRunStepLimit,
         Self::DryRunRuntimeError,
         Self::DryRunParityMismatch,
+        Self::DryRunExtCallSimulated,
         Self::DryRunFinished,
     ];
 
@@ -169,6 +171,7 @@ impl LintCode {
             LintCode::DryRunStepLimit => "DRY_STEP_LIMIT",
             LintCode::DryRunRuntimeError => "DRY_RUNTIME_ERROR",
             LintCode::DryRunParityMismatch => "DRY_PARITY_MISMATCH",
+            LintCode::DryRunExtCallSimulated => "DRY_EXTCALL_SIMULATED",
             LintCode::DryRunFinished => "DRY_FINISHED",
         }
     }
@@ -197,6 +200,7 @@ pub struct LintIssue {
 
 impl LintIssue {
     pub fn diagnostic_id(&self) -> String {
+        const RULE_VERSION: &str = "authoring-diagnostic-v2";
         let node = self
             .node_id
             .map(|id| id.to_string())
@@ -205,12 +209,31 @@ impl LintIssue {
             .event_ip
             .map(|ip| ip.to_string())
             .unwrap_or_else(|| "na".to_string());
+        let edge = match (self.edge_from, self.edge_to) {
+            (Some(from), Some(to)) => format!("{from}>{to}"),
+            (Some(from), None) => format!("{from}>na"),
+            (None, Some(to)) => format!("na>{to}"),
+            (None, None) => "na".to_string(),
+        };
+        let asset = self
+            .asset_path
+            .as_deref()
+            .map(normalize_diagnostic_part)
+            .unwrap_or_else(|| "na".to_string());
+        let blocked_by = self
+            .blocked_by
+            .as_deref()
+            .map(normalize_diagnostic_part)
+            .unwrap_or_else(|| "na".to_string());
         format!(
-            "{}:{}:{}:{}",
+            "{RULE_VERSION}:{}:{}:{}:{}:{}:{}:{}",
             self.phase.label(),
             self.code.label(),
             node,
-            event_ip
+            event_ip,
+            edge,
+            asset,
+            blocked_by
         )
     }
 
@@ -282,4 +305,12 @@ impl LintIssue {
         self.asset_path = asset_path;
         self
     }
+}
+
+fn normalize_diagnostic_part(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>()
 }

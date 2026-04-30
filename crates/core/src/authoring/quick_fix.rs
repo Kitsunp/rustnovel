@@ -1,9 +1,11 @@
 use super::{AuthoringPosition, LintCode, LintIssue, NodeGraph, StoryNode};
 
 mod assets;
+mod audio;
 mod character;
 mod display;
 mod preconditions;
+mod transition;
 
 use std::collections::HashSet;
 
@@ -91,16 +93,14 @@ pub fn suggest_fixes(issue: &LintIssue, graph: &NodeGraph) -> Vec<QuickFixCandid
             QuickFixRisk::Safe,
             false,
         )),
-        LintCode::EmptyJumpTarget => {
-            if existing_jump_target(graph).is_some() {
-                candidates.push(candidate(
-                    "jump_set_existing_target",
-                    "Usar destino existente",
-                    "Use existing target",
-                    QuickFixRisk::Review,
-                    false,
-                ));
-            }
+        LintCode::EmptyJumpTarget if existing_jump_target(graph).is_some() => {
+            candidates.push(candidate(
+                "jump_set_existing_target",
+                "Usar destino existente",
+                "Use existing target",
+                QuickFixRisk::Review,
+                false,
+            ));
         }
         LintCode::InvalidTransitionKind => candidates.push(candidate(
             "transition_set_fade",
@@ -227,12 +227,12 @@ pub fn apply_fix(graph: &mut NodeGraph, issue: &LintIssue, fix_id: &str) -> Resu
         }
         "dialogue_fill_speaker" => fill_speaker(graph, require_node(issue)?),
         "jump_set_existing_target" => set_jump_target_existing(graph, require_node(issue)?),
-        "transition_set_fade" => set_transition_kind(graph, require_node(issue)?),
-        "transition_set_default_duration" => set_transition_duration(graph, require_node(issue)?),
-        "audio_normalize_channel" => normalize_audio_channel(graph, require_node(issue)?),
-        "audio_normalize_action" => normalize_audio_action(graph, require_node(issue)?),
-        "audio_clamp_volume" => clamp_audio_volume(graph, require_node(issue)?),
-        "audio_set_default_fade" => set_audio_fade(graph, require_node(issue)?),
+        "transition_set_fade" => transition::set_kind(graph, require_node(issue)?),
+        "transition_set_default_duration" => transition::set_duration(graph, require_node(issue)?),
+        "audio_normalize_channel" => audio::normalize_channel(graph, require_node(issue)?),
+        "audio_normalize_action" => audio::normalize_action(graph, require_node(issue)?),
+        "audio_clamp_volume" => audio::clamp_volume(graph, require_node(issue)?),
+        "audio_set_default_fade" => audio::set_default_fade(graph, require_node(issue)?),
         "scene_clear_empty_background" => assets::clear_empty_scene_background(graph, issue),
         "scene_clear_empty_music" => assets::clear_empty_scene_music(graph, issue),
         "audio_clear_empty_asset" => assets::clear_empty_audio_asset(graph, issue),
@@ -430,104 +430,4 @@ fn existing_jump_target(graph: &NodeGraph) -> Option<String> {
         .nodes()
         .find(|(_, node, _)| !node.is_marker())
         .map(|(id, _, _)| format!("node_{id}"))
-}
-
-fn set_transition_kind(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
-    let Some(StoryNode::Transition { kind, .. }) = graph.get_node_mut(node_id) else {
-        return Err(format!("node_id {node_id} is not Transition"));
-    };
-    if matches!(kind.as_str(), "fade" | "fade_black" | "dissolve" | "cut") {
-        return Ok(false);
-    }
-    *kind = "fade".to_string();
-    graph.mark_modified();
-    Ok(true)
-}
-
-fn set_transition_duration(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
-    let Some(StoryNode::Transition { duration_ms, .. }) = graph.get_node_mut(node_id) else {
-        return Err(format!("node_id {node_id} is not Transition"));
-    };
-    if *duration_ms > 0 {
-        return Ok(false);
-    }
-    *duration_ms = 300;
-    graph.mark_modified();
-    Ok(true)
-}
-
-fn normalize_audio_channel(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
-    let Some(StoryNode::AudioAction { channel, .. }) = graph.get_node_mut(node_id) else {
-        return Err(format!("node_id {node_id} is not AudioAction"));
-    };
-    let normalized = match channel.to_ascii_lowercase().as_str() {
-        "sfx" | "fx" => "sfx",
-        "voice" | "vo" => "voice",
-        _ => "bgm",
-    };
-    if channel == normalized {
-        return Ok(false);
-    }
-    *channel = normalized.to_string();
-    graph.mark_modified();
-    Ok(true)
-}
-
-fn normalize_audio_action(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
-    let Some(StoryNode::AudioAction { action, asset, .. }) = graph.get_node_mut(node_id) else {
-        return Err(format!("node_id {node_id} is not AudioAction"));
-    };
-    let normalized = match action.to_ascii_lowercase().as_str() {
-        "play" | "start" => "play",
-        "fade" | "fadeout" | "fade_out" => "fade_out",
-        "stop" => "stop",
-        _ if asset
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty()) =>
-        {
-            "play"
-        }
-        _ => "stop",
-    };
-    if action == normalized {
-        return Ok(false);
-    }
-    *action = normalized.to_string();
-    graph.mark_modified();
-    Ok(true)
-}
-
-fn clamp_audio_volume(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
-    let Some(StoryNode::AudioAction { volume, .. }) = graph.get_node_mut(node_id) else {
-        return Err(format!("node_id {node_id} is not AudioAction"));
-    };
-    let Some(current) = *volume else {
-        return Ok(false);
-    };
-    let normalized = if current.is_finite() {
-        current.clamp(0.0, 1.0)
-    } else {
-        1.0
-    };
-    if (normalized - current).abs() <= f32::EPSILON {
-        return Ok(false);
-    }
-    *volume = Some(normalized);
-    graph.mark_modified();
-    Ok(true)
-}
-
-fn set_audio_fade(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
-    let Some(StoryNode::AudioAction {
-        fade_duration_ms, ..
-    }) = graph.get_node_mut(node_id)
-    else {
-        return Err(format!("node_id {node_id} is not AudioAction"));
-    };
-    if fade_duration_ms.unwrap_or(0) > 0 {
-        return Ok(false);
-    }
-    *fade_duration_ms = Some(250);
-    graph.mark_modified();
-    Ok(true)
 }

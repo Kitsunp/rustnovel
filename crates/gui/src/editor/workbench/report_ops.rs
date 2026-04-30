@@ -10,8 +10,11 @@ impl EditorWorkbench {
             .map(|issue| {
                 let es = issue.explanation(DiagnosticLanguage::Es);
                 let en = issue.explanation(DiagnosticLanguage::En);
+                let envelope_v2 = issue.envelope_v2();
                 json!({
                     "diagnostic_id": issue.diagnostic_id(),
+                    "envelope_v2": envelope_v2,
+                    "message_key": en.message_key,
                     "phase": issue.phase.label(),
                     "code": issue.code.label(),
                     "severity": issue.severity.label(),
@@ -22,12 +25,21 @@ impl EditorWorkbench {
                     "asset_path": issue.asset_path,
                     "message_es": issue.localized_message(DiagnosticLanguage::Es),
                     "message_en": issue.localized_message(DiagnosticLanguage::En),
+                    "what_happened_es": es.what_happened,
+                    "what_happened_en": en.what_happened,
                     "root_cause_es": es.root_cause,
                     "root_cause_en": en.root_cause,
                     "why_failed_es": es.why_failed,
                     "why_failed_en": en.why_failed,
+                    "consequence_es": es.consequence,
+                    "consequence_en": en.consequence,
                     "how_to_fix_es": es.how_to_fix,
                     "how_to_fix_en": en.how_to_fix,
+                    "action_steps_es": es.action_steps,
+                    "action_steps_en": en.action_steps,
+                    "expected_es": es.expected,
+                    "expected_en": en.expected,
+                    "actual": issue.message.clone(),
                     "docs_ref": es.docs_ref,
                 })
             })
@@ -38,12 +50,13 @@ impl EditorWorkbench {
             .iter()
             .map(|entry| {
                 json!({
+                    "operation_id": entry.operation_id,
                     "diagnostic_id": entry.diagnostic_id,
                     "fix_id": entry.fix_id,
                     "node_id": entry.node_id,
                     "event_ip": entry.event_ip,
-                    "before_crc32": entry.before_crc32,
-                    "after_crc32": entry.after_crc32,
+                    "before_sha256": entry.before_sha256,
+                    "after_sha256": entry.after_sha256,
                 })
             })
             .collect::<Vec<_>>();
@@ -82,11 +95,19 @@ impl EditorWorkbench {
             self.node_graph.authoring_graph(),
             &report_script,
         );
+        let verification_run = visual_novel_engine::authoring::VerificationRun::from_diagnostics(
+            format!("diagnostic_report:{}", now_unix_ms()),
+            "gui.current_report",
+            &fingerprints,
+            &[],
+            &self.validation_issues,
+        );
 
         let payload = json!({
             "schema": "vneditor.diagnostic_report.v1",
             "generated_unix_ms": now_unix_ms(),
             "fingerprints": fingerprints,
+            "verification_run": verification_run,
             "language": language_code(self.diagnostic_language),
             "player_locale": self.player_locale,
             "localization": {
@@ -97,6 +118,7 @@ impl EditorWorkbench {
             "selected_issue": self.selected_issue,
             "issues": issues,
             "quick_fix_audit": quick_fix_audit,
+            "operation_log": &self.operation_log,
             "dry_run": dry_run,
         });
         serde_json::to_string_pretty(&payload)
@@ -141,7 +163,11 @@ impl EditorWorkbench {
         match std::fs::read_to_string(path) {
             Ok(payload) => match self.apply_diagnostic_report_json(&payload) {
                 Ok(()) => {
-                    self.toast = if self.imported_report_stale {
+                    self.toast = if self.imported_report_untrusted {
+                        Some(ToastState::warning(
+                            "Diagnostic report imported without trusted fingerprint; fixes blocked",
+                        ))
+                    } else if self.imported_report_stale {
                         Some(ToastState::warning(
                             "Diagnostic report imported as stale; automatic fixes blocked",
                         ))
@@ -175,8 +201,13 @@ impl EditorWorkbench {
         }
         let current_fingerprints = current_fingerprints_value(self)?;
         let imported_fingerprints = parsed.get("fingerprints");
-        self.imported_report_stale =
-            imported_fingerprints.is_some_and(|fingerprints| fingerprints != &current_fingerprints);
+        self.imported_report_untrusted = imported_fingerprints.is_none();
+        self.imported_report_stale = imported_fingerprints.is_none_or(|fingerprints| {
+            !visual_novel_engine::authoring::authoring_fingerprints_semantically_match(
+                fingerprints,
+                &current_fingerprints,
+            )
+        });
 
         if let Some(language) = parsed
             .get("language")
@@ -327,6 +358,18 @@ fn localized_issue_message(issue_json: &serde_json::Value, language: DiagnosticL
         .or_else(|| {
             issue_json
                 .get("message")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            let text_key = match language {
+                DiagnosticLanguage::Es => "text_es",
+                DiagnosticLanguage::En => "text_en",
+            };
+            issue_json
+                .get("envelope_v2")
+                .and_then(|envelope| envelope.get(text_key))
+                .and_then(|text| text.get("actual"))
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string)
         })

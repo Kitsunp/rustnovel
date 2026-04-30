@@ -261,6 +261,27 @@ class GuiBindingTests(unittest.TestCase):
             "speaker-empty issue should be auto-fixed",
         )
 
+    def test_node_graph_diagnostic_envelope_is_localized(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+
+        graph = vn.NodeGraph()
+        graph.add_node(vn.StoryNode.dialogue("", "Hola"), 0.0, 0.0)
+        issue = next(
+            issue for issue in graph.validate() if issue.code == "VAL_SPEAKER_EMPTY"
+        )
+
+        self.assertEqual(issue.message_key, "diagnostic.val.speaker.empty")
+        self.assertTrue(issue.docs_ref.startswith("docs/diagnostics/authoring.md#"))
+        self.assertTrue(issue.action_steps_es)
+        localized = issue.localized("es")
+        self.assertEqual(localized["schema"], "vnengine.diagnostic_envelope.v2")
+        self.assertEqual(localized["message_key"], issue.message_key)
+        self.assertIn("Speaker", localized["message"])
+        self.assertTrue(localized["root_cause"])
+
     def test_node_graph_set_flag_and_authoring_save_contract(self):
         import tempfile
         from pathlib import Path

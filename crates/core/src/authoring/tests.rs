@@ -436,6 +436,8 @@ fn authoring_report_fingerprint_tracks_script_graph_and_asset_refs() {
     assert_eq!(first.script_sha256.len(), 64);
     assert_eq!(first.graph_sha256.len(), 64);
     assert_eq!(first.asset_refs_sha256.len(), 64);
+    assert_eq!(first.semantic_sha256.len(), 64);
+    assert_eq!(first.semantic.graph_sha256, first.graph_sha256);
     assert_eq!(first.asset_refs_count, 3);
 
     let Some(StoryNode::Scene { background, .. }) = graph.get_node_mut(scene) else {
@@ -447,4 +449,5 @@ fn authoring_report_fingerprint_tracks_script_graph_and_asset_refs() {
     assert_ne!(first.script_sha256, changed.script_sha256);
     assert_ne!(first.graph_sha256, changed.graph_sha256);
     assert_ne!(first.asset_refs_sha256, changed.asset_refs_sha256);
+    assert_ne!(first.semantic_sha256, changed.semantic_sha256);
 }

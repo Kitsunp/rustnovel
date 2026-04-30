@@ -100,6 +100,14 @@ fn authoring_validate_command_reports_graph_errors_before_failing() {
         report.contains("VAL_CHARACTER_NAME_EMPTY"),
         "report={report}"
     );
+    assert!(
+        report.contains("\"schema\": \"vnengine.diagnostic_envelope.v2\""),
+        "report={report}"
+    );
+    assert!(
+        report.contains("docs/diagnostics/authoring.md#val-character-name-empty"),
+        "report={report}"
+    );
 }
 
 #[test]

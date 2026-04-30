@@ -42,6 +42,16 @@ function Test-IsWindowsHost {
     return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
 }
 
+function Test-PythonModuleAvailable {
+    param(
+        [string] $PythonExe,
+        [string] $Module
+    )
+
+    & $PythonExe -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('$Module') else 1)" *> $null
+    return $LASTEXITCODE -eq 0
+}
+
 function Invoke-LintJob {
     Invoke-CiStep "rustc version" { rustc --version }
     Invoke-CiStep "cargo version" { cargo --version }
@@ -63,8 +73,9 @@ function Invoke-LintJob {
             cargo install cargo-audit --locked
         }
     }
+    $auditDb = Join-Path (Get-Location) "target/audit-db"
     Invoke-CiStep "cargo audit -D warnings" {
-        cargo audit -D warnings --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0097
+        cargo audit --db $auditDb -D warnings --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0097
     }
 }
 
@@ -185,24 +196,42 @@ function Invoke-FuzzSmokeJob {
 
 function Invoke-PythonTestsJob {
     $venv = Join-Path (Get-Location) ".venv"
-    Invoke-CiStep "python -m venv .venv" {
-        & $Python -m venv $venv
+    Write-Host ""
+    Write-Host "==> python -m venv .venv" -ForegroundColor Cyan
+    & $Python -m venv $venv
+    $useSystemPython = $false
+    if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) {
+        if ($env:CI -eq "true") {
+            throw "python -m venv .venv failed with exit code $LASTEXITCODE"
+        }
+        Write-Warning "python -m venv .venv failed locally; falling back to the configured Python interpreter."
+        $useSystemPython = $true
     }
-    $pythonExe = if (Test-IsWindowsHost) {
-        Join-Path $venv "Scripts/python.exe"
+    $pythonExe = if ($useSystemPython) {
+        $Python
     } else {
-        Join-Path $venv "bin/python"
+        if (Test-IsWindowsHost) {
+            Join-Path $venv "Scripts/python.exe"
+        } else {
+            Join-Path $venv "bin/python"
+        }
     }
     Invoke-CiStep "install maturin" {
-        & $pythonExe -m pip install --upgrade pip
-        & $pythonExe -m pip install maturin
+        if ($useSystemPython) {
+            if (-not (Test-PythonModuleAvailable $pythonExe "maturin")) {
+                & $pythonExe -m pip install --user maturin
+            }
+        } else {
+            & $pythonExe -m pip install --upgrade pip
+            & $pythonExe -m pip install maturin
+        }
     }
     Invoke-CiStep "maturin develop" {
         & $pythonExe -m maturin develop --manifest-path crates/py/Cargo.toml --features extension-module
     }
     Invoke-CiStep "python unittest" {
         $env:PYTHONPATH = "python"
-        & $pythonExe -m unittest tests.python.test_examples tests.python.test_vnengine -v
+        & $pythonExe -m unittest discover -s tests/python -p "test_*.py" -v
     }
 }
 

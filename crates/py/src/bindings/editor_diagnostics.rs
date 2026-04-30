@@ -128,6 +128,12 @@ pub struct PyLintIssue {
     #[pyo3(get)]
     pub(crate) message_en: String,
     #[pyo3(get)]
+    pub(crate) message_key: String,
+    #[pyo3(get)]
+    pub(crate) what_happened_es: String,
+    #[pyo3(get)]
+    pub(crate) what_happened_en: String,
+    #[pyo3(get)]
     pub(crate) root_cause_es: String,
     #[pyo3(get)]
     pub(crate) root_cause_en: String,
@@ -139,6 +145,18 @@ pub struct PyLintIssue {
     pub(crate) how_to_fix_es: String,
     #[pyo3(get)]
     pub(crate) how_to_fix_en: String,
+    #[pyo3(get)]
+    pub(crate) consequence_es: String,
+    #[pyo3(get)]
+    pub(crate) consequence_en: String,
+    #[pyo3(get)]
+    pub(crate) action_steps_es: Vec<String>,
+    #[pyo3(get)]
+    pub(crate) action_steps_en: Vec<String>,
+    #[pyo3(get)]
+    pub(crate) expected_es: String,
+    #[pyo3(get)]
+    pub(crate) expected_en: String,
     #[pyo3(get)]
     pub(crate) docs_ref: String,
 }
@@ -155,10 +173,83 @@ impl PyLintIssue {
             self.diagnostic_id
         )
     }
+
+    fn localized(&self, locale: Option<&str>) -> PyResult<PyObject> {
+        Python::with_gil(|py| {
+            let use_es = locale.unwrap_or("en").trim().eq_ignore_ascii_case("es");
+            let dict = pyo3::types::PyDict::new(py);
+            dict.set_item("schema", "vnengine.diagnostic_envelope.v2")?;
+            dict.set_item("diagnostic_id", &self.diagnostic_id)?;
+            dict.set_item("message_key", &self.message_key)?;
+            dict.set_item("code", &self.code)?;
+            dict.set_item("phase", &self.phase)?;
+            dict.set_item("severity", self.severity.__repr__())?;
+            dict.set_item(
+                "message",
+                if use_es {
+                    &self.message_es
+                } else {
+                    &self.message_en
+                },
+            )?;
+            dict.set_item(
+                "what_happened",
+                if use_es {
+                    &self.what_happened_es
+                } else {
+                    &self.what_happened_en
+                },
+            )?;
+            dict.set_item(
+                "root_cause",
+                if use_es {
+                    &self.root_cause_es
+                } else {
+                    &self.root_cause_en
+                },
+            )?;
+            dict.set_item(
+                "why_failed",
+                if use_es {
+                    &self.why_failed_es
+                } else {
+                    &self.why_failed_en
+                },
+            )?;
+            dict.set_item(
+                "how_to_fix",
+                if use_es {
+                    &self.how_to_fix_es
+                } else {
+                    &self.how_to_fix_en
+                },
+            )?;
+            dict.set_item(
+                "consequence",
+                if use_es {
+                    &self.consequence_es
+                } else {
+                    &self.consequence_en
+                },
+            )?;
+            dict.set_item(
+                "action_steps",
+                if use_es {
+                    &self.action_steps_es
+                } else {
+                    &self.action_steps_en
+                },
+            )?;
+            dict.set_item("docs_ref", &self.docs_ref)?;
+            Ok(dict.into())
+        })
+    }
 }
 
 impl From<LintIssue> for PyLintIssue {
     fn from(issue: LintIssue) -> Self {
+        let es = issue.explanation(DiagnosticLanguage::Es);
+        let en = issue.explanation(DiagnosticLanguage::En);
         Self {
             severity: PyLintSeverity {
                 inner: issue.severity,
@@ -174,13 +265,22 @@ impl From<LintIssue> for PyLintIssue {
             diagnostic_id: issue.diagnostic_id(),
             message_es: issue.localized_message(DiagnosticLanguage::Es),
             message_en: issue.localized_message(DiagnosticLanguage::En),
-            root_cause_es: issue.explanation(DiagnosticLanguage::Es).root_cause,
-            root_cause_en: issue.explanation(DiagnosticLanguage::En).root_cause,
-            why_failed_es: issue.explanation(DiagnosticLanguage::Es).why_failed,
-            why_failed_en: issue.explanation(DiagnosticLanguage::En).why_failed,
-            how_to_fix_es: issue.explanation(DiagnosticLanguage::Es).how_to_fix,
-            how_to_fix_en: issue.explanation(DiagnosticLanguage::En).how_to_fix,
-            docs_ref: issue.explanation(DiagnosticLanguage::En).docs_ref,
+            message_key: en.message_key,
+            what_happened_es: es.what_happened,
+            what_happened_en: en.what_happened,
+            root_cause_es: es.root_cause,
+            root_cause_en: en.root_cause,
+            why_failed_es: es.why_failed,
+            why_failed_en: en.why_failed,
+            how_to_fix_es: es.how_to_fix,
+            how_to_fix_en: en.how_to_fix,
+            consequence_es: es.consequence,
+            consequence_en: en.consequence,
+            action_steps_es: es.action_steps,
+            action_steps_en: en.action_steps,
+            expected_es: es.expected,
+            expected_en: en.expected,
+            docs_ref: en.docs_ref,
         }
     }
 }

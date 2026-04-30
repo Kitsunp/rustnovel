@@ -1,12 +1,13 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::time::Duration;
 
 use visual_novel_engine::{
     AudioActionRaw, ChoiceOptionRaw, ChoiceRaw, DialogueRaw, Engine, EventRaw, ResourceLimiter,
     SceneUpdateRaw, ScriptRaw, SecurityPolicy,
 };
-use vnengine_runtime::{AssetStore, Audio, Input, InputAction, RuntimeApp};
+use vnengine_runtime::{AssetStore, Audio, Input, InputAction, RuntimeApp, SilentAudio};
 
 #[derive(Default)]
 struct NullInput;
@@ -64,6 +65,36 @@ impl Audio for AudioProbe {
     fn stop_voice(&mut self) {
         self.state.borrow_mut().voice_stop_calls += 1;
     }
+}
+
+#[test]
+fn audio_transition_default_preserves_loop_and_volume_options() {
+    let probe_state = Rc::new(RefCell::new(AudioProbeState::default()));
+    let mut probe = AudioProbe {
+        state: probe_state.clone(),
+    };
+
+    probe.play_music_with_transition(
+        "music/theme.ogg",
+        false,
+        Some(0.25),
+        Some(Duration::from_millis(100)),
+    );
+
+    assert_eq!(
+        probe_state.borrow().bgm_calls,
+        vec![("music/theme.ogg".to_string(), false, Some(0.25))]
+    );
+}
+
+#[test]
+fn silent_audio_declares_noop_capabilities() {
+    let caps = SilentAudio.capabilities();
+
+    assert!(caps.no_op);
+    assert!(!caps.bgm_fade);
+    assert!(!caps.stop_sfx);
+    assert!(!caps.stop_voice);
 }
 
 fn build_engine(events: Vec<EventRaw>) -> Engine {

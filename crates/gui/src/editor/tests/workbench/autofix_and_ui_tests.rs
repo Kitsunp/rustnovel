@@ -112,7 +112,9 @@ fn no_silent_mutations_trace() {
         .quick_fix_audit
         .last()
         .expect("quick-fix must be audited");
-    assert_ne!(last.before_crc32, last.after_crc32);
+    assert_ne!(last.before_sha256, last.after_sha256);
+    assert_eq!(last.before_sha256.len(), 64);
+    assert_eq!(last.after_sha256.len(), 64);
     assert!(!last.diagnostic_id.is_empty());
     assert!(!last.fix_id.is_empty());
 }

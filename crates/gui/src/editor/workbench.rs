@@ -48,12 +48,13 @@ struct LayoutPreferences {
 
 #[derive(Clone, Debug)]
 pub struct QuickFixAuditEntry {
+    pub operation_id: String,
     pub diagnostic_id: String,
     pub fix_id: String,
     pub node_id: Option<u32>,
     pub event_ip: Option<u32>,
-    pub before_crc32: u32,
-    pub after_crc32: u32,
+    pub before_sha256: String,
+    pub after_sha256: String,
 }
 
 #[derive(Clone, Debug)]
@@ -137,8 +138,10 @@ pub struct EditorWorkbench {
     pub localization_catalog: LocalizationCatalog,
     pub selected_issue: Option<usize>,
     pub imported_report_stale: bool,
+    pub imported_report_untrusted: bool,
     pub last_fix_snapshot: Option<NodeGraph>,
     pub quick_fix_audit: Vec<QuickFixAuditEntry>,
+    pub operation_log: Vec<visual_novel_engine::authoring::OperationLogEntry>,
     pub show_fix_confirm: bool,
     pub fix_diff_dialog: Option<DiffDialog>,
     pub pending_structural_fix: Option<PendingStructuralFix>,
@@ -250,8 +253,10 @@ impl EditorWorkbench {
             localization_catalog: LocalizationCatalog::default(),
             selected_issue: None,
             imported_report_stale: false,
+            imported_report_untrusted: false,
             last_fix_snapshot: None,
             quick_fix_audit: Vec::new(),
+            operation_log: Vec::new(),
             show_fix_confirm: false,
             fix_diff_dialog: None,
             pending_structural_fix: None,

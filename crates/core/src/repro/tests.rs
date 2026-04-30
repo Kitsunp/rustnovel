@@ -17,7 +17,13 @@ fn linear_script() -> ScriptRaw {
 
 #[test]
 fn repro_case_json_roundtrip() {
-    let mut case = ReproCase::new("repro", linear_script());
+    let mut case = ReproCase::new("repro", linear_script()).with_diagnostic_context(
+        "diag-1",
+        "0123456789abcdef",
+        "op-1",
+    );
+    case.plugins.push("sample-plugin".to_string());
+    case.asset_manifest_sha256 = Some("asset-hash".to_string());
     case.oracle.expected_stop_reason = Some(ReproStopReason::Finished);
     case.oracle.monitors.push(ReproMonitor::EventKindAtStep {
         monitor_id: "m_event".to_string(),
@@ -28,6 +34,18 @@ fn repro_case_json_roundtrip() {
     let loaded = ReproCase::from_json(&payload).expect("deserialize repro");
     assert_eq!(loaded.schema, REPRO_CASE_SCHEMA);
     assert_eq!(loaded.oracle.monitors.len(), 1);
+    assert_eq!(loaded.diagnostic_id.as_deref(), Some("diag-1"));
+    assert_eq!(loaded.operation_id.as_deref(), Some("op-1"));
+    assert_eq!(
+        loaded.semantic_fingerprint_sha256.as_deref(),
+        Some("0123456789abcdef")
+    );
+    assert_eq!(loaded.asset_manifest_sha256.as_deref(), Some("asset-hash"));
+    assert!(loaded
+        .capabilities
+        .iter()
+        .any(|cap| cap == "extcall_simulated"));
+    assert_eq!(loaded.plugins, vec!["sample-plugin"]);
 }
 
 #[test]

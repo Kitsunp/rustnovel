@@ -8,6 +8,9 @@
 *.pyo
 __pycache__/
 .venv/
+.venv*/
+.cargo-home/
+.ci-tmp/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -41,3 +44,4 @@ docs/phase10_p0_checklist.md
 docs/phase10_production_plan.md
 examples/renpy_the_question/
 examples/imported_*/
+docs/audits/rustnovel_v3_closure_audit_2026-04-29.md

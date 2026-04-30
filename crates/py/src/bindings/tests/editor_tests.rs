@@ -19,15 +19,23 @@ fn py_lint_issue_preserves_traceability_fields() {
     assert_eq!(mapped.edge_from, None);
     assert_eq!(mapped.edge_to, None);
     assert_eq!(mapped.asset_path, None);
-    assert_eq!(mapped.diagnostic_id, "DRYRUN:DRY_PARITY_MISMATCH:7:3");
+    assert!(mapped
+        .diagnostic_id
+        .starts_with("authoring-diagnostic-v2:DRYRUN:DRY_PARITY_MISMATCH:7:3"));
     assert!(!mapped.message_es.is_empty());
     assert!(!mapped.message_en.is_empty());
+    assert_eq!(mapped.message_key, "diagnostic.dry.parity.mismatch");
+    assert!(!mapped.what_happened_es.is_empty());
+    assert!(!mapped.what_happened_en.is_empty());
     assert!(!mapped.root_cause_es.is_empty());
     assert!(!mapped.root_cause_en.is_empty());
     assert!(!mapped.why_failed_es.is_empty());
     assert!(!mapped.why_failed_en.is_empty());
     assert!(!mapped.how_to_fix_es.is_empty());
     assert!(!mapped.how_to_fix_en.is_empty());
+    assert!(!mapped.consequence_en.is_empty());
+    assert!(!mapped.action_steps_en.is_empty());
+    assert!(!mapped.expected_en.is_empty());
     assert!(mapped.docs_ref.starts_with("docs/"));
 }
 

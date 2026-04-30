@@ -47,4 +47,4 @@ if ($LASTEXITCODE -ne 0) { Write-Error "Fallo al instalar paquete Python"; exit 
 
 Write-Host "`n=== ¡Instalación Completada! ===" -ForegroundColor Green
 Write-Host "Para probar Rust GUI: cargo run -p visual_novel_gui --example gui_demo"
-Write-Host "Para probar Python GUI: python examples/python/gui_demo.py"
+Write-Host "Para probar Python headless: python examples/python/headless_demo.py"

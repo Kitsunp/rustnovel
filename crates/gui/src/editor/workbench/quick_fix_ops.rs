@@ -1,10 +1,10 @@
 use super::*;
 use crate::editor::quick_fix::{apply_fix, suggest_fixes, QuickFixCandidate, QuickFixRisk};
-use std::hash::{Hash, Hasher};
 use visual_novel_engine::ScriptRaw;
 
 impl EditorWorkbench {
     pub fn apply_issue_fix(&mut self, issue_index: usize, fix_id: &str) -> Result<(), String> {
+        self.ensure_report_allows_fix(false)?;
         let issue = self
             .validation_issues
             .get(issue_index)
@@ -14,10 +14,8 @@ impl EditorWorkbench {
     }
 
     pub fn apply_all_safe_fixes(&mut self) -> usize {
-        if self.imported_report_stale {
-            self.toast = Some(ToastState::warning(
-                "Imported report is stale; automatic fixes are blocked",
-            ));
+        if let Err(reason) = self.ensure_report_allows_fix(false) {
+            self.toast = Some(ToastState::warning(reason));
             return 0;
         }
         let mut applied = 0usize;
@@ -59,9 +57,7 @@ impl EditorWorkbench {
         &mut self,
         include_review: bool,
     ) -> Result<usize, String> {
-        if self.imported_report_stale {
-            return Err("imported report is stale; automatic fixes are blocked".to_string());
-        }
+        self.ensure_report_allows_fix(include_review)?;
         let plan = self.build_autofix_plan(include_review);
         if plan.is_empty() {
             return Err("no auto-fix candidates available".to_string());
@@ -100,6 +96,7 @@ impl EditorWorkbench {
     }
 
     pub fn apply_pending_autofix_batch(&mut self) -> Result<AutoFixBatchResult, String> {
+        self.ensure_report_allows_fix(false)?;
         let Some(pending) = self.pending_auto_fix_batch.take() else {
             return Err("no pending auto-fix batch".to_string());
         };
@@ -120,6 +117,7 @@ impl EditorWorkbench {
         issue_index: usize,
         include_review: bool,
     ) -> Result<String, String> {
+        self.ensure_report_allows_fix(include_review)?;
         let issue = self
             .validation_issues
             .get(issue_index)
@@ -129,6 +127,7 @@ impl EditorWorkbench {
             .ok_or_else(|| "no candidate fix available for selected issue".to_string())?;
 
         if candidate.structural {
+            self.ensure_report_allows_fix(true)?;
             self.prepare_structural_fix_confirmation(issue_index, candidate.fix_id)?;
             return Ok(format!(
                 "Structural fix '{}' prepared. Review diff and confirm.",
@@ -136,6 +135,7 @@ impl EditorWorkbench {
             ));
         }
 
+        self.ensure_report_allows_fix(false)?;
         self.apply_issue_fix(issue_index, candidate.fix_id)?;
         Ok(format!("Applied fix '{}'", candidate.fix_id))
     }
@@ -155,6 +155,7 @@ impl EditorWorkbench {
         issue_index: usize,
         fix_id: &str,
     ) -> Result<(), String> {
+        self.ensure_report_allows_fix(true)?;
         let (before_script, after_script) = self.preview_issue_fix_scripts(issue_index, fix_id)?;
         self.pending_structural_fix = Some(PendingStructuralFix {
             issue_index,
@@ -170,33 +171,59 @@ impl EditorWorkbench {
     }
 
     pub fn apply_pending_structural_fix(&mut self) -> Result<String, String> {
+        self.ensure_report_allows_fix(true)?;
         let Some(pending) = self.pending_structural_fix.clone() else {
             return Err("no pending structural fix".to_string());
         };
-        self.apply_issue_fix(pending.issue_index, &pending.fix_id)?;
+        let issue = self
+            .validation_issues
+            .get(pending.issue_index)
+            .cloned()
+            .ok_or_else(|| format!("invalid issue index {}", pending.issue_index))?;
+        self.apply_issue_fix_for_issue(&issue, &pending.fix_id)?;
         self.pending_structural_fix = None;
         Ok(pending.fix_id)
     }
 
     fn apply_issue_fix_for_issue(&mut self, issue: &LintIssue, fix_id: &str) -> Result<(), String> {
         let before_graph = self.node_graph.clone();
-        let before_crc32 = crc32_graph(&before_graph);
+        let before_sha256 =
+            visual_novel_engine::authoring::authoring_graph_sha256(before_graph.authoring_graph());
 
         let changed = apply_fix(&mut self.node_graph, issue, fix_id)?;
         if !changed {
             return Err(format!("fix '{fix_id}' made no changes"));
         }
 
-        let after_crc32 = crc32_graph(&self.node_graph);
+        let after_sha256 = visual_novel_engine::authoring::authoring_graph_sha256(
+            self.node_graph.authoring_graph(),
+        );
+        let operation_id = format!("quickfix:{}:{}", fix_id, self.quick_fix_audit.len() + 1);
+        let after_script = self.node_graph.to_script();
+        let after_fingerprint = visual_novel_engine::authoring::build_authoring_report_fingerprint(
+            self.node_graph.authoring_graph(),
+            &after_script,
+        );
         self.last_fix_snapshot = Some(before_graph);
         self.quick_fix_audit.push(QuickFixAuditEntry {
+            operation_id: operation_id.clone(),
             diagnostic_id: issue.diagnostic_id(),
             fix_id: fix_id.to_string(),
             node_id: issue.node_id,
             event_ip: issue.event_ip,
-            before_crc32,
-            after_crc32,
+            before_sha256,
+            after_sha256,
         });
+        self.operation_log.push(
+            visual_novel_engine::authoring::OperationLogEntry::new(
+                operation_id,
+                "quick_fix",
+                "applied",
+                format!("Applied quick-fix '{fix_id}'"),
+            )
+            .with_diagnostic(issue)
+            .with_fingerprint(&after_fingerprint),
+        );
 
         let previous_diag_id = issue.diagnostic_id();
         let _ = self.sync_graph_to_script();
@@ -243,16 +270,18 @@ impl EditorWorkbench {
         }
         plan
     }
-}
 
-fn crc32_graph(graph: &NodeGraph) -> u32 {
-    let script = graph.to_script();
-    let payload = script
-        .to_json()
-        .unwrap_or_else(|_| format!("fallback_nodes_{}", graph.len()));
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    payload.hash(&mut hasher);
-    (hasher.finish() & u32::MAX as u64) as u32
+    fn ensure_report_allows_fix(&self, allow_manual_review: bool) -> Result<(), String> {
+        if self.imported_report_untrusted {
+            return Err(
+                "imported report has no trusted fingerprint; fixes are blocked".to_string(),
+            );
+        }
+        if self.imported_report_stale && !allow_manual_review {
+            return Err("imported report is stale; automatic fixes are blocked".to_string());
+        }
+        Ok(())
+    }
 }
 
 fn select_candidate_for_issue<'a>(

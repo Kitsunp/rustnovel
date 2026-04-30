@@ -53,7 +53,7 @@ fn peek_next_assets_collects_scene_assets() {
         music: Some("music/theme.ogg".to_string()),
         characters: vec![CharacterPlacementRaw {
             name: "Ava".to_string(),
-            expression: Some("smile".to_string()),
+            expression: Some("sprites/ava_smile.png".to_string()),
             position: Some("center".to_string()),
             x: None,
             y: None,
@@ -73,8 +73,8 @@ fn peek_next_assets_collects_scene_assets() {
     let assets = engine.peek_next_assets(1);
     assert!(assets.contains(&AssetId::from_path("bg/room.png")));
     assert!(assets.contains(&AssetId::from_path("music/theme.ogg")));
-    assert!(assets.contains(&AssetId::from_path("Ava")));
-    assert!(assets.contains(&AssetId::from_path("smile")));
+    assert!(assets.contains(&AssetId::from_path("sprites/ava_smile.png")));
+    assert!(!assets.contains(&AssetId::from_path("Ava")));
 }
 
 #[test]
