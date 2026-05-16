@@ -24,6 +24,8 @@ impl EditorWorkbench {
                 self.manifest_path = Some(path.clone());
                 self.composer_image_cache.clear();
                 self.composer_image_failures.clear();
+                self.audio_duration_cache.clear();
+                self.composer_layer_overrides.clear();
                 self.player_audio_backend = None;
                 self.player_audio_root = None;
                 self.localization_catalog =
@@ -66,15 +68,12 @@ impl EditorWorkbench {
     pub fn load_script(&mut self, path: std::path::PathBuf) {
         match crate::editor::project_io::load_script(path.clone()) {
             Ok(loaded_script) => {
-                if self.project_root.is_none() {
-                    self.project_root = path.parent().map(std::path::Path::to_path_buf);
-                }
+                self.project_root = path.parent().map(std::path::Path::to_path_buf);
                 self.manifest_path = None;
+                self.manifest = None;
                 if let Some(root) = &self.project_root {
                     self.localization_catalog = Self::discover_locales_without_manifest(root);
-                    if self.player_locale.trim().is_empty() {
-                        self.player_locale = self.localization_catalog.default_locale.clone();
-                    }
+                    self.player_locale = self.localization_catalog.default_locale.clone();
                 }
                 self.apply_loaded_script(loaded_script, path, true);
             }
@@ -95,6 +94,9 @@ impl EditorWorkbench {
         show_toast: bool,
     ) {
         self.node_graph = loaded_script.graph;
+        self.operation_log = loaded_script.operation_log;
+        self.verification_runs = loaded_script.verification_runs;
+        self.composer_layer_overrides = loaded_script.composer_layer_overrides;
         let mut stack = UndoStack::new();
         stack.push(self.node_graph.clone());
         self.undo_stack = stack;
@@ -103,7 +105,7 @@ impl EditorWorkbench {
         self.composer_entity_owners.clear();
         self.composer_image_cache.clear();
         self.composer_image_failures.clear();
-        self.composer_layer_overrides.clear();
+        self.audio_duration_cache.clear();
         self.player_audio_backend = None;
         self.player_audio_root = None;
 
@@ -172,8 +174,12 @@ impl EditorWorkbench {
             let Some(stem) = path.file_stem().and_then(|name| name.to_str()) else {
                 continue;
             };
+            let Some(file_name) = path.file_name() else {
+                continue;
+            };
+            let requested = std::path::PathBuf::from(file_name);
             let Ok(Some(path)) =
-                crate::editor::project_io::resolve_existing_project_path(&locale_dir, &path)
+                crate::editor::project_io::resolve_existing_project_path(&locale_dir, &requested)
             else {
                 continue;
             };
@@ -195,7 +201,13 @@ impl EditorWorkbench {
     }
 
     pub fn execute_save(&mut self, path: &std::path::Path, _content_unused: &str) {
-        if let Err(e) = crate::editor::project_io::save_script(path, &self.node_graph) {
+        if let Err(e) = crate::editor::project_io::save_authoring_document_with_metadata(
+            path,
+            &self.node_graph,
+            &self.composer_layer_overrides,
+            &self.operation_log,
+            &self.verification_runs,
+        ) {
             tracing::error!("Failed to save: {}", e);
             self.toast = Some(ToastState::error(format!("Save failed: {}", e)));
         } else {

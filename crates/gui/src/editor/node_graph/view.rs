@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl NodeGraph {
     /// Returns the current zoom level.
@@ -94,6 +95,59 @@ impl NodeGraph {
 
         let new_pos = egui::pos2(pos.x + 50.0, pos.y + 50.0);
         let new_id = self.add_node(node, new_pos);
-        self.selected = Some(new_id);
+        self.set_single_selection(Some(new_id));
+    }
+
+    /// Duplicates the current selection as a coherent group.
+    ///
+    /// Internal connections between selected nodes are recreated in the copy,
+    /// while external connections are intentionally left detached so the user
+    /// can reconnect the duplicated branch explicitly.
+    pub fn duplicate_selected_nodes(&mut self) -> Vec<u32> {
+        let selected = self.selected_node_ids();
+        if selected.is_empty() {
+            return Vec::new();
+        }
+
+        let selected_set = selected.iter().copied().collect::<BTreeSet<_>>();
+        let mut id_map = BTreeMap::new();
+        let mut new_ids = Vec::with_capacity(selected.len());
+
+        for old_id in &selected {
+            let Some(node) = self.get_node(*old_id).cloned() else {
+                continue;
+            };
+            let Some(pos) = self.get_node_pos(*old_id) else {
+                continue;
+            };
+            let new_id = self.add_node(node, egui::pos2(pos.x + 50.0, pos.y + 50.0));
+            id_map.insert(*old_id, new_id);
+            new_ids.push(new_id);
+        }
+
+        let internal_connections = self
+            .connections()
+            .filter(|conn| selected_set.contains(&conn.from) && selected_set.contains(&conn.to))
+            .collect::<Vec<_>>();
+        for conn in internal_connections {
+            let (Some(from), Some(to)) = (id_map.get(&conn.from), id_map.get(&conn.to)) else {
+                continue;
+            };
+            self.connect_port(*from, conn.from_port, *to);
+        }
+
+        self.selected_nodes = new_ids.iter().copied().collect();
+        self.selected = self
+            .selected
+            .and_then(|old_primary| id_map.get(&old_primary).copied())
+            .or_else(|| new_ids.last().copied());
+
+        self.queue_operation_hint(
+            "node_created",
+            format!("Duplicated {} selected node(s)", new_ids.len()),
+            Some("graph.nodes".to_string()),
+            true,
+        );
+        new_ids
     }
 }

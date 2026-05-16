@@ -166,6 +166,10 @@ pub struct PyLintIssue {
     #[pyo3(get)]
     pub(crate) trace_id: Option<String>,
     #[pyo3(get)]
+    pub(crate) operation_id: Option<String>,
+    #[pyo3(get)]
+    pub(crate) blocked_by: Option<String>,
+    #[pyo3(get)]
     pub(crate) semantic_values: Vec<String>,
 }
 
@@ -252,6 +256,8 @@ impl PyLintIssue {
             dict.set_item("target", &self.target)?;
             dict.set_item("field_path", &self.field_path)?;
             dict.set_item("trace_id", &self.trace_id)?;
+            dict.set_item("operation_id", &self.operation_id)?;
+            dict.set_item("blocked_by", &self.blocked_by)?;
             dict.set_item("semantic_values", &self.semantic_values)?;
             Ok(dict.into())
         })
@@ -302,6 +308,8 @@ impl From<LintIssue> for PyLintIssue {
                 .evidence_trace
                 .as_ref()
                 .map(|trace| trace.trace_id.clone()),
+            operation_id: issue.operation_id.clone(),
+            blocked_by: issue.blocked_by.clone(),
             semantic_values: issue
                 .semantic_values
                 .iter()

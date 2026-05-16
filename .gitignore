@@ -44,4 +44,6 @@ docs/phase10_p0_checklist.md
 docs/phase10_production_plan.md
 examples/renpy_the_question/
 examples/imported_*/
+examples/scripts/assets/**/dry_run_repro_case.json
 docs/audits/rustnovel_v3_closure_audit_2026-04-29.md
+docs/audits/rustnovel_post_cierre_api_gui_subgrafos_closure_2026-05-06.md

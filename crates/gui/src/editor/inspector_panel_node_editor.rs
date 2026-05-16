@@ -149,6 +149,26 @@ impl<'a> InspectorPanel<'a> {
                         &mut standard_changed,
                     );
                 }
+                StoryNode::SubgraphCall {
+                    fragment_id,
+                    entry_port,
+                    exit_port,
+                } => {
+                    ui.label("Subgraph Fragment:");
+                    standard_changed |= ui.text_edit_singleline(fragment_id).changed();
+                    ui.label("Entry Port:");
+                    let mut entry = entry_port.clone().unwrap_or_default();
+                    if ui.text_edit_singleline(&mut entry).changed() {
+                        *entry_port = (!entry.trim().is_empty()).then_some(entry);
+                        standard_changed = true;
+                    }
+                    ui.label("Exit Port:");
+                    let mut exit = exit_port.clone().unwrap_or_default();
+                    if ui.text_edit_singleline(&mut exit).changed() {
+                        *exit_port = (!exit.trim().is_empty()).then_some(exit);
+                        standard_changed = true;
+                    }
+                }
             }
 
             if standard_changed {

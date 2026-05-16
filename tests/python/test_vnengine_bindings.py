@@ -223,6 +223,69 @@ class GuiBindingTests(unittest.TestCase):
         self.assertIsNotNone(config)
         self.assertTrue(callable(vn.run_visual_novel))
 
+    def test_export_bundle_api_can_materialize_windows_executable(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "export_bundle"):
+            self.skipTest("Native module without export_bundle API")
+
+        with workspace_tempdir("export-bundle-exe") as root:
+            project = root / "project"
+            (project / "runtime").mkdir(parents=True)
+            (project / "project.vnm").write_text(
+                "\n".join(
+                    [
+                        'manifest_schema_version = "1.0"',
+                        "",
+                        "[metadata]",
+                        'name = "Python Export"',
+                        'author = "QA"',
+                        'version = "0.1.0"',
+                        "",
+                        "[settings]",
+                        "resolution = [1280, 720]",
+                        'default_language = "en"',
+                        'supported_languages = ["en"]',
+                        'entry_point = "main.json"',
+                        "",
+                        "[assets]",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (project / "main.json").write_text(
+                json.dumps(
+                    {
+                        "script_schema_version": SCRIPT_SCHEMA_VERSION,
+                        "events": [
+                            {
+                                "type": "dialogue",
+                                "speaker": "Narrator",
+                                "text": "Packaged",
+                            }
+                        ],
+                        "labels": {"start": 0},
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            (project / "runtime" / "vn-runtime.exe").write_bytes(b"fake-exe")
+
+            out = root / "dist"
+            report = json.loads(
+                vn.export_bundle(
+                    str(project),
+                    str(out),
+                    runtime_artifact="runtime/vn-runtime.exe",
+                )
+            )
+
+            self.assertEqual(report["runtime_artifact"], "runtime/vn-runtime.exe")
+            self.assertEqual(report["executable"], "game.exe")
+            self.assertEqual((out / "game.exe").read_bytes(), b"fake-exe")
+
     def test_node_graph_search_and_bookmarks(self):
         import visual_novel_engine as vn
 
@@ -367,6 +430,370 @@ class GuiBindingTests(unittest.TestCase):
         self.assertEqual(
             json.loads(restored.to_script_json())["events"][0]["type"], "jump_if"
         )
+
+    def test_node_graph_connect_or_branch_api_creates_real_choice_hub(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+        if not hasattr(vn.NodeGraph, "connect_or_branch"):
+            self.skipTest("Native graph binding does not expose branch connection API")
+
+        graph = vn.NodeGraph()
+        start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)
+        source = graph.add_node(
+            vn.StoryNode.dialogue("Narrator", "Pick a route"), 0.0, 100.0
+        )
+        first = graph.add_node(vn.StoryNode.dialogue("A", "First"), -100.0, 220.0)
+        second = graph.add_node(vn.StoryNode.dialogue("B", "Second"), 100.0, 220.0)
+        end = graph.add_node(vn.StoryNode.end(), 0.0, 340.0)
+
+        graph.connect(start, source)
+        self.assertTrue(graph.connect_or_branch(source, 0, first))
+        self.assertTrue(graph.connect_or_branch(source, 0, second))
+        graph.connect(first, end)
+        graph.connect(second, end)
+
+        payload = json.loads(graph.to_script_json())
+        choice = next(event for event in payload["events"] if event["type"] == "choice")
+        self.assertEqual(
+            [option["text"] for option in choice["options"]], ["Continue", "New route"]
+        )
+        target_texts = {
+            payload["events"][payload["labels"][option["target"]]]["text"]
+            for option in choice["options"]
+        }
+        self.assertEqual(target_texts, {"First", "Second"})
+
+    def test_node_graph_connect_choice_new_option_uses_exportable_text(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+        if not hasattr(vn.NodeGraph, "connect_or_branch"):
+            self.skipTest("Native graph binding does not expose branch connection API")
+
+        graph = vn.NodeGraph()
+        start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)
+        choice = graph.add_node(vn.StoryNode.choice("Route?", ["A"]), 0.0, 100.0)
+        first = graph.add_node(vn.StoryNode.dialogue("A", "First"), -100.0, 220.0)
+        second = graph.add_node(vn.StoryNode.dialogue("B", "Second"), 100.0, 220.0)
+        end = graph.add_node(vn.StoryNode.end(), 0.0, 340.0)
+        graph.connect(start, choice)
+        graph.connect_port(choice, 0, first)
+        graph.connect(first, end)
+        graph.connect(second, end)
+
+        self.assertTrue(graph.connect_or_branch(choice, 1, second))
+        payload = json.loads(graph.to_script_json())
+        choice_event = next(
+            event for event in payload["events"] if event["type"] == "choice"
+        )
+        self.assertEqual(
+            [option["text"] for option in choice_event["options"]],
+            ["A", "New route"],
+        )
+
+    def test_python_can_inspect_branch_hub_connections_and_positions(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+        if not hasattr(vn.NodeGraph, "connections"):
+            self.skipTest("Native graph binding does not expose graph inspection")
+
+        graph = vn.NodeGraph()
+        source = graph.add_node(vn.StoryNode.dialogue("N", "Go"), 0.0, 0.0)
+        first = graph.add_node(vn.StoryNode.end(), -120.0, 180.0)
+        second = graph.add_node(vn.StoryNode.end(), 120.0, 180.0)
+
+        self.assertTrue(graph.connect_or_branch(source, 0, first))
+        self.assertTrue(graph.connect_or_branch(source, 0, second))
+
+        self.assertEqual(set(graph.node_ids()), {source, first, second, 4})
+        source_connection = next(
+            connection for connection in graph.connections() if connection[0] == source
+        )
+        hub = source_connection[2]
+        self.assertEqual(graph.get_node(hub).node_type, "Choice")
+        self.assertEqual(graph.node_position(hub), (0.0, 120.0))
+        hub_edges = {
+            (port, target)
+            for from_id, port, target in graph.connections()
+            if from_id == hub
+        }
+        self.assertEqual(hub_edges, {(0, first), (1, second)})
+        nodes = {node_id: node.node_type for node_id, node, _, _ in graph.nodes()}
+        self.assertEqual(nodes[hub], "Choice")
+
+    def test_composer_layer_overrides_are_visible_in_python_snapshots(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+        if not hasattr(vn.NodeGraph, "set_layer_visible"):
+            self.skipTest("Native graph binding does not expose composer layers")
+
+        graph = vn.NodeGraph()
+        scene = graph.add_node(
+            vn.StoryNode.scene_full(
+                None,
+                "bg/room.png",
+                None,
+                [("Ava", "characters/ava.png", "center", 10, 20, 1.0)],
+            ),
+            0.0,
+            0.0,
+        )
+        objects = graph.list_layered_objects(scene)
+        character = next(obj for obj in objects if obj.character_name == "Ava")
+
+        graph.set_layer_locked(character.object_id, True)
+        locked_character = next(
+            obj
+            for obj in graph.compose_scene_snapshot(scene).objects
+            if obj.object_id == character.object_id
+        )
+        self.assertTrue(locked_character.locked)
+        self.assertTrue(locked_character.visible)
+
+        graph.set_layer_visible(character.object_id, False)
+        hidden_character = next(
+            obj
+            for obj in graph.list_layered_objects(scene)
+            if obj.object_id == character.object_id
+        )
+        self.assertFalse(hidden_character.visible)
+        self.assertTrue(hidden_character.locked)
+
+    def test_composer_layer_overrides_roundtrip_through_authoring_save(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+        if not hasattr(vn.NodeGraph, "set_layer_visible"):
+            self.skipTest("Native graph binding does not expose composer layers")
+
+        graph = vn.NodeGraph()
+        scene = graph.add_node(
+            vn.StoryNode.scene_full(
+                None,
+                "bg/room.png",
+                None,
+                [("Ava", "characters/ava.png", "center", 10, 20, 1.0)],
+            ),
+            0.0,
+            0.0,
+        )
+        character = next(
+            obj
+            for obj in graph.list_layered_objects(scene)
+            if obj.character_name == "Ava"
+        )
+        graph.set_layer_locked(character.object_id, True)
+        graph.set_layer_visible(character.object_id, False)
+
+        with workspace_tempdir("composer-layer-override-save") as tmp:
+            path = tmp / "game.vnauthoring"
+            graph.save(str(path))
+            loaded = vn.NodeGraph.load(str(path))
+            restored = next(
+                obj
+                for obj in loaded.list_layered_objects(scene)
+                if obj.object_id == character.object_id
+            )
+
+        self.assertFalse(restored.visible)
+        self.assertTrue(restored.locked)
+
+    def test_validation_report_fingerprint_includes_composer_layer_overrides(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+        if not hasattr(vn.NodeGraph, "validation_report"):
+            self.skipTest("Native graph binding does not expose report v2")
+
+        graph = vn.NodeGraph()
+        scene = graph.add_node(
+            vn.StoryNode.scene_full(
+                None,
+                "bg/room.png",
+                None,
+                [("Ava", "characters/ava.png", "center", 10, 20, 1.0)],
+            ),
+            0.0,
+            0.0,
+        )
+        character = next(
+            obj
+            for obj in graph.list_layered_objects(scene)
+            if obj.character_name == "Ava"
+        )
+        before = json.loads(graph.validation_report().fingerprints_json())
+
+        graph.set_layer_visible(character.object_id, False)
+        after = json.loads(graph.validation_report().fingerprints_json())
+
+        self.assertEqual(
+            before["story_semantic_sha256"],
+            after["story_semantic_sha256"],
+            "composer-only layer state must not stale semantic reports",
+        )
+        self.assertNotEqual(before["layout_sha256"], after["layout_sha256"])
+        self.assertNotEqual(
+            before["full_document_sha256"], after["full_document_sha256"]
+        )
+
+    def test_validation_report_exposes_issue_envelopes_and_stale_compare(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+        if not hasattr(vn, "AuthoringValidationReport"):
+            self.skipTest("Native report v2 bindings are not available")
+
+        graph = vn.NodeGraph()
+        graph.add_node(
+            vn.StoryNode.choice("Route?", ["Option 1"]),
+            0.0,
+            0.0,
+        )
+        report = graph.validation_report()
+        issue_envelopes = [json.loads(item) for item in report.issues()]
+        self.assertEqual(len(issue_envelopes), report.issue_count)
+        self.assertIn("diagnostic_id", issue_envelopes[0])
+        self.assertEqual(
+            len(json.loads(report.issues_json())),
+            len(issue_envelopes),
+        )
+        self.assertFalse(report.is_stale_against(report.fingerprints_json()))
+
+        graph.add_node(
+            vn.StoryNode.dialogue("Narrator", "New semantic node"), 120.0, 0.0
+        )
+        changed_report = graph.validation_report()
+        self.assertTrue(report.is_stale_against_report(changed_report))
+
+    def test_node_graph_preserves_operation_log_and_verifications(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+        if not hasattr(vn.NodeGraph, "operation_log"):
+            self.skipTest("Native graph binding does not expose operation log")
+
+        graph = vn.NodeGraph()
+        graph.add_node(vn.StoryNode.dialogue("Narrator", "Trace me"), 0.0, 0.0)
+
+        with workspace_tempdir("authoring-operation-log-save") as tmp:
+            path = tmp / "game.vnauthoring"
+            graph.save(str(path))
+            document = json.loads(path.read_text())
+            document["operation_log"] = [
+                {
+                    "schema": "vnengine.operation_log.v2",
+                    "operation_id": "op:test-python-preserve",
+                    "created_unix_ms": 1,
+                    "operation_kind": "node_created",
+                    "operation_kind_v2": "node_created",
+                    "diagnostic_id": None,
+                    "semantic_fingerprint_sha256": None,
+                    "status": "applied",
+                    "details": "created from external tool",
+                }
+            ]
+            document["verification_runs"] = [
+                {
+                    "schema": "vnengine.verification_run.v2",
+                    "operation_id": "op:test-python-preserve",
+                    "created_unix_ms": 2,
+                    "validation_profile": "python-test",
+                    "semantic_fingerprint_sha256": "semantic",
+                    "story_semantic_sha256": "semantic",
+                    "diagnostic_ids": [],
+                    "resolved_diagnostic_ids": [],
+                    "introduced_diagnostic_ids": [],
+                }
+            ]
+            path.write_text(json.dumps(document, separators=(",", ":"), sort_keys=True))
+
+            loaded = vn.NodeGraph.load(str(path))
+            self.assertEqual(len(loaded.operation_log()), 1)
+            self.assertEqual(len(loaded.verification_runs()), 1)
+            self.assertIn(
+                "op:test-python-preserve", loaded.operation_log()[0].to_json()
+            )
+
+            roundtrip = tmp / "roundtrip.vnauthoring"
+            loaded.save(str(roundtrip))
+            saved = json.loads(roundtrip.read_text())
+
+        self.assertEqual(
+            saved["operation_log"][0]["operation_id"], "op:test-python-preserve"
+        )
+        self.assertEqual(
+            saved["verification_runs"][0]["operation_id"], "op:test-python-preserve"
+        )
+
+    def test_python_graph_mutations_emit_operation_log_and_verification_runs(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
+            self.skipTest("GUI graph bindings are not available in this native build")
+        if not hasattr(vn.NodeGraph, "operation_log"):
+            self.skipTest("Native graph binding does not expose operation log")
+
+        graph = vn.NodeGraph()
+        start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)
+        scene = graph.add_node(
+            vn.StoryNode.scene_full(
+                None,
+                "bg/room.png",
+                None,
+                [("Ava", "characters/ava.png", "center", 10, 20, 1.0)],
+            ),
+            0.0,
+            100.0,
+        )
+        graph.connect(start, scene)
+        self.assertTrue(graph.create_fragment("intro", "Intro", [scene]))
+        self.assertTrue(graph.enter_fragment("intro"))
+        self.assertTrue(graph.leave_fragment())
+        character = next(
+            obj
+            for obj in graph.list_layered_objects(scene)
+            if obj.character_name == "Ava"
+        )
+        graph.set_layer_locked(character.object_id, True)
+        self.assertFalse(
+            graph.move_scene_object(character.object_id, 40, 50, 1.1),
+            "locked composer objects must not move through the Python headless API",
+        )
+        graph.set_layer_locked(character.object_id, False)
+        self.assertTrue(graph.move_scene_object(character.object_id, 40, 50, 1.1))
+
+        operations = [json.loads(entry.to_json()) for entry in graph.operation_log()]
+        kinds = [entry["operation_kind"] for entry in operations]
+        for expected in [
+            "node_created",
+            "node_connected",
+            "fragment_created",
+            "fragment_entered",
+            "fragment_left",
+            "layer_lock_changed",
+            "composer_object_moved",
+        ]:
+            self.assertIn(expected, kinds)
+        self.assertEqual(len(graph.verification_runs()), len(graph.operation_log()))
+        moved = next(
+            entry
+            for entry in operations
+            if entry["operation_kind"] == "composer_object_moved"
+        )
+        self.assertIn("composer.objects[", moved["field_paths"][0]["value"])
+        self.assertIsNotNone(moved["before_fingerprint_sha256"])
+        self.assertIsNotNone(moved["after_fingerprint_sha256"])
 
     def test_node_graph_validate_rejects_windows_drive_asset_path(self):
         import visual_novel_engine as vn

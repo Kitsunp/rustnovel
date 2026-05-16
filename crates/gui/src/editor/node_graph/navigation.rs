@@ -43,6 +43,67 @@ impl NodeGraph {
     pub fn first_node_referencing_asset(&self, asset_path: &str) -> Option<u32> {
         self.nodes_referencing_asset(asset_path).into_iter().next()
     }
+
+    /// Resolves the most useful graph node to focus for a diagnostic issue.
+    pub fn focus_node_for_issue(
+        &self,
+        issue: &visual_novel_engine::authoring::LintIssue,
+    ) -> Option<u32> {
+        issue
+            .node_id
+            .or_else(|| {
+                issue
+                    .target
+                    .as_ref()
+                    .and_then(target_focus_node)
+            })
+            .or(issue.edge_from)
+            .or_else(|| {
+                issue
+                    .event_ip
+                    .and_then(|event_ip| self.node_for_event_ip(event_ip))
+            })
+            .or_else(|| {
+                issue
+                    .field_path
+                    .as_ref()
+                    .and_then(|field_path| node_id_from_field_path(field_path.value.as_str()))
+            })
+            .or_else(|| {
+                issue
+                    .asset_path
+                    .as_ref()
+                    .and_then(|asset| self.first_node_referencing_asset(asset))
+            })
+    }
+}
+
+fn target_focus_node(target: &visual_novel_engine::authoring::DiagnosticTarget) -> Option<u32> {
+    use visual_novel_engine::authoring::DiagnosticTarget;
+    match target {
+        DiagnosticTarget::Node { node_id }
+        | DiagnosticTarget::ChoiceOption { node_id, .. }
+        | DiagnosticTarget::JumpTarget { node_id, .. } => Some(*node_id),
+        DiagnosticTarget::Edge { from, .. } => Some(*from),
+        DiagnosticTarget::AssetRef { node_id, .. }
+        | DiagnosticTarget::Character { node_id, .. }
+        | DiagnosticTarget::AudioChannel { node_id, .. }
+        | DiagnosticTarget::Transition { node_id, .. } => *node_id,
+        DiagnosticTarget::RuntimeEvent { .. }
+        | DiagnosticTarget::Graph
+        | DiagnosticTarget::SceneProfile { .. }
+        | DiagnosticTarget::SceneLayer { .. }
+        | DiagnosticTarget::Fragment { .. } => None,
+        DiagnosticTarget::Generic { field_path } => field_path
+            .as_ref()
+            .and_then(|field_path| node_id_from_field_path(field_path.value.as_str())),
+    }
+}
+
+fn node_id_from_field_path(value: &str) -> Option<u32> {
+    let rest = value.strip_prefix("graph.nodes[")?;
+    let (id, _) = rest.split_once(']')?;
+    id.parse().ok()
 }
 
 fn node_references_asset(node: &StoryNode, asset_path: &str) -> bool {

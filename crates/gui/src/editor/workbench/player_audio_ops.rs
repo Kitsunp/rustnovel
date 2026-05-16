@@ -130,6 +130,23 @@ impl EditorWorkbench {
         volume: Option<f32>,
         loop_playback: bool,
     ) {
+        self.play_editor_audio_preview_from_offset(
+            channel,
+            path,
+            volume,
+            loop_playback,
+            Duration::ZERO,
+        );
+    }
+
+    pub(crate) fn play_editor_audio_preview_from_offset(
+        &mut self,
+        channel: &str,
+        path: &str,
+        volume: Option<f32>,
+        loop_playback: bool,
+        start_at: Duration,
+    ) {
         if path.trim().is_empty() {
             self.toast = Some(ToastState::warning("Audio preview requires an asset path"));
             return;
@@ -161,7 +178,43 @@ impl EditorWorkbench {
                 return;
             }
         };
-        self.apply_player_audio_commands(vec![command]);
+        if !start_at.is_zero() && normalize_audio_channel(channel) == "bgm" {
+            self.apply_editor_bgm_preview_command_from_offset(
+                path,
+                volume,
+                loop_playback,
+                start_at,
+            );
+        } else {
+            self.apply_player_audio_commands(vec![command]);
+        }
+    }
+
+    fn apply_editor_bgm_preview_command_from_offset(
+        &mut self,
+        path: &str,
+        volume: Option<f32>,
+        loop_playback: bool,
+        start_at: Duration,
+    ) {
+        self.ensure_player_audio_backend();
+        let playback_path = self.resolve_preview_audio_path("BGM", path);
+        let output_volume = self.mix_volume(volume, AudioPreviewChannel::Bgm);
+        self.player_state.last_audio_event = Some(format!(
+            "play_bgm path={} loop={} volume={:?} offset_ms={}",
+            playback_path,
+            loop_playback,
+            output_volume,
+            start_at.as_millis()
+        ));
+        if let Some(audio_backend) = self.player_audio_backend.as_mut() {
+            audio_backend.play_music_with_options_at(
+                playback_path.as_str(),
+                loop_playback,
+                output_volume,
+                start_at,
+            );
+        }
     }
 
     pub(crate) fn stop_editor_audio_preview(&mut self, channel: &str) {

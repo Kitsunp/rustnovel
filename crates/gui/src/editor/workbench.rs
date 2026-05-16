@@ -75,6 +75,15 @@ pub struct PendingAutoFixBatch {
     pub operations: Vec<PendingAutoFixOperation>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct PendingEditorOperation {
+    pub kind: String,
+    pub details: String,
+    pub field_path: Option<String>,
+    pub before_value: Option<String>,
+    pub after_value: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AutoFixBatchResult {
     pub applied: usize,
@@ -113,6 +122,7 @@ pub struct EditorWorkbench {
     pub composer_entity_owners: std::collections::HashMap<u32, u32>,
     pub composer_image_cache: std::collections::HashMap<String, egui::TextureHandle>,
     pub composer_image_failures: std::collections::HashMap<String, String>,
+    pub audio_duration_cache: std::collections::HashMap<String, Option<f32>>,
     pub composer_preview_quality: crate::editor::PreviewQuality,
     pub composer_stage_fit: crate::editor::StageFit,
     pub composer_layer_overrides:
@@ -144,9 +154,10 @@ pub struct EditorWorkbench {
     pub last_fix_snapshot: Option<NodeGraph>,
     pub quick_fix_audit: Vec<QuickFixAuditEntry>,
     pub operation_log: Vec<visual_novel_engine::authoring::OperationLogEntry>,
+    pub verification_runs: Vec<visual_novel_engine::authoring::VerificationRun>,
     pub last_operation_fingerprint:
         Option<visual_novel_engine::authoring::AuthoringReportFingerprint>,
-    pending_editor_operation: Option<(String, String, Option<String>)>,
+    pending_editor_operation: Option<PendingEditorOperation>,
     pub show_fix_confirm: bool,
     pub fix_diff_dialog: Option<DiffDialog>,
     pub pending_structural_fix: Option<PendingStructuralFix>,
@@ -239,6 +250,7 @@ impl EditorWorkbench {
             composer_entity_owners: std::collections::HashMap::new(),
             composer_image_cache: std::collections::HashMap::new(),
             composer_image_failures: std::collections::HashMap::new(),
+            audio_duration_cache: std::collections::HashMap::new(),
             composer_preview_quality: crate::editor::PreviewQuality::default(),
             composer_stage_fit: crate::editor::StageFit::default(),
             composer_layer_overrides: std::collections::HashMap::new(),
@@ -263,6 +275,7 @@ impl EditorWorkbench {
             last_fix_snapshot: None,
             quick_fix_audit: Vec::new(),
             operation_log: Vec::new(),
+            verification_runs: Vec::new(),
             last_operation_fingerprint: None,
             pending_editor_operation: None,
             show_fix_confirm: false,
@@ -383,63 +396,6 @@ impl EditorWorkbench {
         ctx.memory_mut(|memory| memory.reset_areas());
         self.toast = Some(ToastState::success("Layout restablecido"));
     }
-
-    pub(crate) fn queue_editor_operation(
-        &mut self,
-        kind: impl Into<String>,
-        details: impl Into<String>,
-        field_path: Option<String>,
-    ) {
-        self.pending_editor_operation = Some((kind.into(), details.into(), field_path));
-    }
-
-    pub(crate) fn refresh_operation_fingerprint(&mut self) {
-        self.last_operation_fingerprint = self.current_authoring_fingerprint();
-    }
-
-    pub(crate) fn record_pending_editor_operation(&mut self) {
-        let after = match self.current_authoring_fingerprint() {
-            Some(after) => after,
-            None => return,
-        };
-        let (kind, details, field_path) =
-            self.pending_editor_operation.take().unwrap_or_else(|| {
-                (
-                    "editor_graph_mutation".to_string(),
-                    "Graph changed through editor UI".to_string(),
-                    None,
-                )
-            });
-        let operation_id = format!("editor:{}:{}", kind, self.operation_log.len() + 1);
-        let mut entry = visual_novel_engine::authoring::OperationLogEntry::new(
-            operation_id,
-            kind,
-            "applied",
-            details,
-        );
-        if let Some(before) = self.last_operation_fingerprint.as_ref() {
-            entry = entry.with_before_after_fingerprints(before, &after);
-        } else {
-            entry = entry.with_fingerprint(&after);
-        }
-        if let Some(field_path) = field_path {
-            entry = entry.with_field_path(field_path);
-        }
-        self.last_operation_fingerprint = Some(after);
-        self.operation_log.push(entry);
-    }
-
-    fn current_authoring_fingerprint(
-        &self,
-    ) -> Option<visual_novel_engine::authoring::AuthoringReportFingerprint> {
-        let script = self.node_graph.to_script();
-        Some(
-            visual_novel_engine::authoring::build_authoring_report_fingerprint(
-                self.node_graph.authoring_graph(),
-                &script,
-            ),
-        )
-    }
 }
 
 mod app_ui;
@@ -448,8 +404,10 @@ mod audio_preview_store;
 mod compile_cache;
 mod compile_ops;
 mod composer_ops;
+mod fragments_ui;
 mod import_ops;
 mod layout;
+mod operation_ops;
 mod player_audio_ops;
 mod player_audio_path;
 mod player_mode_ops;

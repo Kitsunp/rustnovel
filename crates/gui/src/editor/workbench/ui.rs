@@ -28,7 +28,9 @@ impl EditorWorkbench {
     }
 
     pub(super) fn render_editor_mode(&mut self, ctx: &egui::Context) {
+        self.handle_global_editor_shortcuts(ctx);
         let selected_before = self.selected_node;
+        let graph_before_editor_interaction = self.node_graph.clone();
         let layout = super::layout::editor_panel_layout(
             ctx.available_rect().width(),
             ctx.available_rect().height(),
@@ -235,6 +237,7 @@ impl EditorWorkbench {
                             self.project_root.as_deref(),
                             &mut self.composer_image_cache,
                             &mut self.composer_image_failures,
+                            &mut self.audio_duration_cache,
                         )
                         .ui(ui),
                     );
@@ -258,8 +261,31 @@ impl EditorWorkbench {
         for action in asset_browser_actions {
             match action {
                 crate::editor::AssetBrowserAction::Import(kind) => self.import_asset_dialog(kind),
-                crate::editor::AssetBrowserAction::PreviewAudio { path } => {
-                    self.play_editor_audio_preview("bgm", &path, None, true);
+                crate::editor::AssetBrowserAction::Remove { kind, name } => {
+                    match self.remove_asset_from_manifest(kind, &name) {
+                        Ok(()) => {
+                            self.toast = Some(ToastState::success(format!(
+                                "{} removed from manifest: {}",
+                                kind.label(),
+                                name
+                            )));
+                        }
+                        Err(err) => {
+                            self.toast = Some(ToastState::error(format!(
+                                "{} removal failed: {err}",
+                                kind.label()
+                            )));
+                        }
+                    }
+                }
+                crate::editor::AssetBrowserAction::PreviewAudio { path, offset_ms } => {
+                    self.play_editor_audio_preview_from_offset(
+                        "bgm",
+                        &path,
+                        None,
+                        true,
+                        std::time::Duration::from_millis(offset_ms),
+                    );
                 }
                 crate::editor::AssetBrowserAction::StopAudio => {
                     self.stop_editor_audio_preview("bgm")
@@ -319,9 +345,19 @@ impl EditorWorkbench {
         } else {
             self.composer_entity_owners.clone()
         };
+        let active_event_node_id = self.engine.as_ref().and_then(|engine| {
+            self.node_graph
+                .authoring_graph()
+                .node_for_event_ip(engine.state().position)
+        });
+        let composer_selected_node = self.node_graph.selected.or(self.selected_node);
+        let selected_authoring_node =
+            composer_selected_node.and_then(|node_id| self.node_graph.get_node(node_id).cloned());
         let mut composer_actions = Vec::new();
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            self.render_fragments_panel(ui);
+            ui.separator();
             let stage_resolution = self
                 .manifest
                 .as_ref()
@@ -338,6 +374,9 @@ impl EditorWorkbench {
                     image_failures: &mut self.composer_image_failures,
                     selected_entity_id: &mut self.selected_entity,
                     layer_overrides: &mut self.composer_layer_overrides,
+                    active_event_node_id,
+                    selected_authoring_node_id: composer_selected_node,
+                    selected_authoring_node: selected_authoring_node.as_ref(),
                 },
             );
             if let Some(act) = composer.ui(ui, &entity_owners) {
@@ -351,7 +390,7 @@ impl EditorWorkbench {
         for action in composer_actions {
             match action {
                 crate::editor::visual_composer::VisualComposerAction::SelectNode(nid) => {
-                    self.node_graph.selected = Some(nid);
+                    self.node_graph.set_single_selection(Some(nid));
                     self.selected_node = Some(nid);
                     self.selected_entity = None;
                 }
@@ -368,18 +407,76 @@ impl EditorWorkbench {
                     mutation,
                 } => {
                     if self.apply_composer_node_mutation(node_id, mutation) {
-                        self.node_graph.selected = Some(node_id);
+                        self.node_graph.set_single_selection(Some(node_id));
                         self.selected_node = Some(node_id);
                         self.node_graph.mark_modified();
-                        self.queue_editor_operation(
-                            "composer_drag_entity",
-                            format!("Moved Visual Composer entity for node {node_id}"),
-                            Some(format!("graph.nodes[{node_id}].visual.transform")),
-                        );
                     }
                 }
+                crate::editor::visual_composer::VisualComposerAction::AssignAssetToNode {
+                    node_id,
+                    target,
+                    asset,
+                } => match self.apply_imported_asset_to_node(node_id, target, asset.clone()) {
+                    Ok(()) => {
+                        self.node_graph.set_single_selection(Some(node_id));
+                        self.selected_node = Some(node_id);
+                        self.toast = Some(ToastState::success(format!(
+                            "Assigned asset to selected node: {asset}"
+                        )));
+                    }
+                    Err(err) => {
+                        self.toast =
+                            Some(ToastState::error(format!("Asset assignment failed: {err}")));
+                    }
+                },
+                crate::editor::visual_composer::VisualComposerAction::AddCharacterToNode {
+                    node_id,
+                    name,
+                    asset,
+                    x,
+                    y,
+                } => match self.add_character_asset_to_node(node_id, name, asset.clone(), x, y) {
+                    Ok(()) => {
+                        self.node_graph.set_single_selection(Some(node_id));
+                        self.selected_node = Some(node_id);
+                        self.toast = Some(ToastState::success(format!(
+                            "Added character asset to selected scene: {asset}"
+                        )));
+                    }
+                    Err(err) => {
+                        self.toast = Some(ToastState::error(format!(
+                            "Character assignment failed: {err}"
+                        )));
+                    }
+                },
+                crate::editor::visual_composer::VisualComposerAction::LayerVisibilityChanged {
+                    object_id,
+                    visible,
+                } => {
+                    self.node_graph.mark_modified();
+                    self.queue_editor_operation_with_values(
+                        "layer_visibility_changed",
+                        format!("Set layer {object_id} visible={visible}"),
+                        Some(format!("composer.layers[{object_id}].visible")),
+                        Some((!visible).to_string()),
+                        Some(visible.to_string()),
+                    );
+                }
+                crate::editor::visual_composer::VisualComposerAction::LayerLockChanged {
+                    object_id,
+                    locked,
+                } => {
+                    self.node_graph.mark_modified();
+                    self.queue_editor_operation_with_values(
+                        "layer_lock_changed",
+                        format!("Set layer {object_id} locked={locked}"),
+                        Some(format!("composer.layers[{object_id}].locked")),
+                        Some((!locked).to_string()),
+                        Some(locked.to_string()),
+                    );
+                }
                 crate::editor::visual_composer::VisualComposerAction::TestFromSelection => {
-                    self.start_composer_runtime_preview_from_selection();
+                    self.start_composer_runtime_preview_from_node(composer_selected_node);
                 }
                 crate::editor::visual_composer::VisualComposerAction::TestRestart => {
                     self.restart_composer_runtime_preview();
@@ -388,6 +485,12 @@ impl EditorWorkbench {
                     self.advance_composer_runtime_preview(None);
                 }
                 crate::editor::visual_composer::VisualComposerAction::TestChoose(index) => {
+                    if composer_selected_node
+                        .and_then(|node_id| self.node_graph.get_node(node_id))
+                        .is_some_and(|node| matches!(node, crate::editor::StoryNode::Choice { .. }))
+                    {
+                        self.start_composer_runtime_preview_from_node(composer_selected_node);
+                    }
                     self.advance_composer_runtime_preview(Some(index));
                 }
             }
@@ -422,14 +525,14 @@ impl EditorWorkbench {
         if self.selected_node != selected_before {
             match self.selected_node {
                 Some(requested) if self.node_graph.get_node(requested).is_some() => {
-                    self.node_graph.selected = Some(requested);
+                    self.node_graph.set_single_selection(Some(requested));
                     self.selected_entity = None;
                 }
                 Some(_) => {
                     self.selected_node = self.node_graph.selected;
                 }
                 None => {
-                    self.node_graph.selected = None;
+                    self.node_graph.set_single_selection(None);
                 }
             }
         }
@@ -444,15 +547,13 @@ impl EditorWorkbench {
             self.refresh_scene_from_engine_preview();
         }
 
-        if self.node_graph.is_modified() {
-            self.record_pending_editor_operation();
-            self.undo_stack.push(self.node_graph.clone());
-            self.node_graph.clear_modified();
-            let _ = self.sync_graph_to_script();
+        if self.node_graph.is_modified() && self.node_graph.dragging_node.is_none() {
+            self.commit_modified_graph(graph_before_editor_interaction);
         }
 
         // 6. Floating/Detached Node Editor
         if self.node_editor_window_open && self.show_graph {
+            let graph_before_detached_interaction = self.node_graph.clone();
             let mut embedded_open = self.node_editor_window_open;
             let mut detached_closed = false;
             ctx.show_viewport_immediate(
@@ -488,9 +589,8 @@ impl EditorWorkbench {
             );
             self.node_editor_window_open = embedded_open && !detached_closed;
 
-            if self.node_graph.is_modified() {
-                self.record_pending_editor_operation();
-                let _ = self.sync_graph_to_script();
+            if self.node_graph.is_modified() && self.node_graph.dragging_node.is_none() {
+                self.commit_modified_graph(graph_before_detached_interaction);
             }
         }
     }

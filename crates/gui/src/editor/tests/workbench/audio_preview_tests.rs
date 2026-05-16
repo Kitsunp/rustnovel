@@ -7,6 +7,7 @@ use super::super::*;
 #[derive(Default, Debug)]
 struct AudioProbeState {
     bgm: Vec<(String, bool, Option<f32>)>,
+    bgm_with_offset: Vec<(String, bool, Option<f32>, u128)>,
     sfx: Vec<(String, Option<f32>)>,
     stop_bgm: usize,
 }
@@ -26,6 +27,21 @@ impl visual_novel_runtime::Audio for AudioProbe {
             .borrow_mut()
             .bgm
             .push((id.to_string(), loop_playback, volume));
+    }
+
+    fn play_music_with_options_at(
+        &mut self,
+        id: &str,
+        loop_playback: bool,
+        volume: Option<f32>,
+        start_at: Duration,
+    ) {
+        self.state.borrow_mut().bgm_with_offset.push((
+            id.to_string(),
+            loop_playback,
+            volume,
+            start_at.as_millis(),
+        ));
     }
 
     fn stop_music(&mut self) {
@@ -72,6 +88,39 @@ fn editor_audio_preview_uses_backend_and_mix_controls() {
     let state = state.borrow();
     assert_eq!(state.sfx.len(), 1);
     assert_eq!(state.sfx[0], ("audio/click.ogg".to_string(), Some(0.0)));
+}
+
+#[test]
+fn editor_audio_preview_from_offset_routes_seekable_bgm_without_affecting_sfx() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+    let state = Rc::new(RefCell::new(AudioProbeState::default()));
+    workbench.player_audio_backend = Some(Box::new(AudioProbe {
+        state: state.clone(),
+    }));
+    workbench.player_state.bgm_volume = 0.5;
+
+    workbench.play_editor_audio_preview_from_offset(
+        "bgm",
+        "audio/theme.ogg",
+        Some(0.8),
+        false,
+        Duration::from_millis(1250),
+    );
+    workbench.play_editor_audio_preview_from_offset(
+        "sfx",
+        "audio/click.ogg",
+        None,
+        false,
+        Duration::from_millis(500),
+    );
+
+    let state = state.borrow();
+    assert_eq!(
+        state.bgm_with_offset,
+        vec![("audio/theme.ogg".to_string(), false, Some(0.4), 1250)]
+    );
+    assert_eq!(state.sfx, vec![("audio/click.ogg".to_string(), Some(1.0))]);
 }
 
 #[test]

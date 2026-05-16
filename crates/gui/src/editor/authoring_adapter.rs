@@ -29,22 +29,32 @@ pub(crate) fn replace_gui_semantics_from_authoring(
     let dragging_node = graph.dragging_node;
     let dragged_node = dragging_node.and_then(|id| graph.get_node(id).cloned());
     let connecting_from = graph.connecting_from;
+    let connecting_sticky = graph.connecting_sticky;
     let connecting_node = connecting_from.and_then(|(id, _)| graph.get_node(id).cloned());
     let context_menu = graph.context_menu.clone();
     let context_node = context_menu
         .as_ref()
-        .and_then(|menu| graph.get_node(menu.node_id).cloned());
+        .and_then(|menu| menu.node_id)
+        .and_then(|node_id| graph.get_node(node_id).cloned());
 
     graph.replace_authoring_graph(authoring.clone());
     graph.selected = selected.filter(|id| same_node(graph, *id, selected_node.as_ref()));
+    graph.selected_nodes.clear();
+    if let Some(selected) = graph.selected {
+        graph.selected_nodes.insert(selected);
+    }
     graph.pan = pan;
     graph.zoom = zoom;
     graph.editing = editing.filter(|id| same_node(graph, *id, editing_node.as_ref()));
     graph.dragging_node = dragging_node.filter(|id| same_node(graph, *id, dragged_node.as_ref()));
     graph.connecting_from =
         connecting_from.filter(|(id, _)| same_node(graph, *id, connecting_node.as_ref()));
-    graph.context_menu =
-        context_menu.filter(|menu| same_node(graph, menu.node_id, context_node.as_ref()));
+    graph.connecting_sticky = graph.connecting_from.is_some() && connecting_sticky;
+    graph.context_menu = context_menu.filter(|menu| {
+        menu.node_id
+            .map(|node_id| same_node(graph, node_id, context_node.as_ref()))
+            .unwrap_or(true)
+    });
 }
 
 fn same_node(graph: &NodeGraph, node_id: u32, previous: Option<&crate::editor::StoryNode>) -> bool {
@@ -66,6 +76,7 @@ mod tests {
         let mut graph = NodeGraph::new();
         let old = graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
         graph.selected = Some(old);
+        graph.selected_nodes.insert(old);
         graph.pan = egui::vec2(8.0, 9.0);
         graph.zoom = 1.7;
 
@@ -86,6 +97,7 @@ mod tests {
         replace_gui_semantics_from_authoring(&mut graph, &next);
 
         assert_eq!(graph.selected, None);
+        assert!(graph.selected_nodes.is_empty());
         assert_eq!(graph.pan, egui::vec2(8.0, 9.0));
         assert_eq!(graph.zoom, 1.7);
         assert!(matches!(

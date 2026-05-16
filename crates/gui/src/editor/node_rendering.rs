@@ -82,7 +82,10 @@ pub fn render_context_menu(graph: &mut NodeGraph, ui: &egui::Ui) {
         return;
     };
 
-    let node_id = menu.node_id;
+    let Some(node_id) = menu.node_id else {
+        render_canvas_context_menu(graph, ui, menu.position, menu.graph_position);
+        return;
+    };
     let node_snapshot = graph.get_node(node_id).cloned();
     let scene_profile = match &node_snapshot {
         Some(StoryNode::Scene { profile, .. }) => profile.clone(),
@@ -124,7 +127,11 @@ pub fn render_context_menu(graph: &mut NodeGraph, ui: &egui::Ui) {
                 ui.separator();
 
                 if ui.button("Connect To...").clicked() {
-                    graph.connecting_from = Some((node_id, 0));
+                    let from_port = node_snapshot
+                        .as_ref()
+                        .map(default_context_connect_port)
+                        .unwrap_or(0);
+                    graph.start_connection_pick(node_id, from_port);
                     graph.context_menu = None;
                 }
                 if ui.button("Disconnect Outputs").clicked() {
@@ -176,20 +183,101 @@ pub fn render_context_menu(graph: &mut NodeGraph, ui: &egui::Ui) {
         });
 }
 
+fn render_canvas_context_menu(
+    graph: &mut NodeGraph,
+    ui: &egui::Ui,
+    position: egui::Pos2,
+    graph_position: Option<egui::Pos2>,
+) {
+    let insert_pos = graph_position.unwrap_or(egui::pos2(0.0, 0.0));
+    egui::Area::new(egui::Id::new("node_canvas_context_menu"))
+        .fixed_pos(position)
+        .order(egui::Order::Foreground)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_width(180.0);
+                ui.label(egui::RichText::new("Create Node").strong());
+                ui.separator();
+                for (label, node) in canvas_node_palette_items() {
+                    if ui.button(label).clicked() {
+                        add_canvas_node_from_palette(graph, node, insert_pos);
+                        graph.context_menu = None;
+                    }
+                }
+            });
+        });
+}
+
+pub(crate) fn add_canvas_node_from_palette(
+    graph: &mut NodeGraph,
+    node: StoryNode,
+    insert_pos: egui::Pos2,
+) -> u32 {
+    let id = graph.add_node(node, insert_pos);
+    if graph.connecting_from.is_some() {
+        let changed = graph.finish_connection_to(id);
+        if !changed {
+            graph.set_single_selection(Some(id));
+        }
+    } else {
+        graph.set_single_selection(Some(id));
+    }
+    id
+}
+
+fn canvas_node_palette_items() -> Vec<(&'static str, StoryNode)> {
+    let mut items = vec![
+        ("Dialogue", StoryNode::default()),
+        (
+            "Choice",
+            StoryNode::Choice {
+                prompt: "Choose:".to_string(),
+                options: vec!["A".to_string(), "B".to_string()],
+            },
+        ),
+        (
+            "Scene",
+            StoryNode::Scene {
+                profile: None,
+                background: None,
+                music: None,
+                characters: Vec::new(),
+            },
+        ),
+        (
+            "Jump",
+            StoryNode::Jump {
+                target: "label".to_string(),
+            },
+        ),
+        ("Start", StoryNode::Start),
+        ("End", StoryNode::End),
+    ];
+    items.extend(crate::editor::node_editor::extended_node_palette_items());
+    items
+}
+
+pub(crate) fn default_context_connect_port(node: &StoryNode) -> usize {
+    match node {
+        StoryNode::Choice { options, .. } => options.len(),
+        _ => 0,
+    }
+}
+
 /// Renders the inline node editor window.
 pub fn render_inline_editor(graph: &mut NodeGraph, ui: &egui::Ui) {
     let Some(editing_id) = graph.editing else {
         return;
     };
 
-    let Some(node) = graph.get_node_mut(editing_id) else {
+    let Some(original_node) = graph.get_node(editing_id).cloned() else {
         graph.editing = None;
         return;
     };
 
     let mut changed = false;
     let mut close_editor = false;
-    let mut node_clone = node.clone();
+    let mut node_clone = original_node.clone();
 
     egui::Window::new("Edit Node")
         .collapsible(false)
@@ -346,6 +434,33 @@ pub fn render_inline_editor(graph: &mut NodeGraph, ui: &egui::Ui) {
                         }
                     });
                 }
+                StoryNode::SubgraphCall {
+                    fragment_id,
+                    entry_port,
+                    exit_port,
+                } => {
+                    ui.label("Subgraph Call");
+                    ui.horizontal(|ui| {
+                        ui.label("Fragment:");
+                        changed |= ui.text_edit_singleline(fragment_id).changed();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Entry:");
+                        let mut value = entry_port.clone().unwrap_or_default();
+                        if ui.text_edit_singleline(&mut value).changed() {
+                            *entry_port = (!value.trim().is_empty()).then_some(value);
+                            changed = true;
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Exit:");
+                        let mut value = exit_port.clone().unwrap_or_default();
+                        if ui.text_edit_singleline(&mut value).changed() {
+                            *exit_port = (!value.trim().is_empty()).then_some(value);
+                            changed = true;
+                        }
+                    });
+                }
             }
 
             ui.separator();
@@ -357,8 +472,16 @@ pub fn render_inline_editor(graph: &mut NodeGraph, ui: &egui::Ui) {
     // Apply changes
     if changed {
         if let Some(node) = graph.get_node_mut(editing_id) {
-            *node = node_clone;
+            *node = node_clone.clone();
         }
+        graph.queue_operation_hint_with_values(
+            "field_edited",
+            format!("Edited node {editing_id}"),
+            Some(format!("graph.nodes[{editing_id}]")),
+            serde_json::to_string(&original_node).ok(),
+            serde_json::to_string(&node_clone).ok(),
+            true,
+        );
         graph.mark_modified();
     }
 

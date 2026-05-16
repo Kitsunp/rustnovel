@@ -277,6 +277,22 @@ impl PyStoryNode {
     }
 
     #[staticmethod]
+    #[pyo3(signature = (fragment_id, entry_port=None, exit_port=None))]
+    fn subgraph_call(
+        fragment_id: String,
+        entry_port: Option<String>,
+        exit_port: Option<String>,
+    ) -> Self {
+        Self {
+            inner: StoryNode::SubgraphCall {
+                fragment_id,
+                entry_port,
+                exit_port,
+            },
+        }
+    }
+
+    #[staticmethod]
     fn generic(event_json: String) -> PyResult<Self> {
         let event: EventRaw = serde_json::from_str(&event_json)
             .map_err(|err| PyValueError::new_err(format!("Invalid event JSON: {err}")))?;

@@ -81,6 +81,8 @@ pub struct ExportBundleReport {
     pub assets_manifest: String,
     pub assets_copied: usize,
     pub runtime_artifact: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable: Option<String>,
     pub launcher: String,
     pub integrity: String,
     pub bundle_hmac_sha256: Option<String>,
@@ -212,12 +214,22 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
         ))
     })?;
 
-    let runtime_rel = copy_runtime_artifact(
+    let runtime_artifact = copy_runtime_artifact(
         spec.runtime_artifact.as_deref(),
         &project_root,
         &runtime_dir,
     )?;
-    let launcher_rel = write_launcher(spec.target_platform, &output_root, runtime_rel.as_deref())?;
+    let executable_rel = materialize_executable(
+        spec.target_platform,
+        &output_root,
+        runtime_artifact.as_ref(),
+    )?;
+    let launch_target = executable_rel.as_deref().or_else(|| {
+        runtime_artifact
+            .as_ref()
+            .map(|runtime| runtime.rel_path.as_str())
+    });
+    let launcher_rel = write_launcher(spec.target_platform, &output_root, launch_target)?;
 
     let bundle_hmac_sha256 = match spec.integrity {
         BundleIntegrity::None => None,
@@ -264,7 +276,8 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
         ),
         assets_manifest: normalize_path_display(Path::new("meta/assets_manifest.json")),
         assets_copied: assets_manifest_entries.len(),
-        runtime_artifact: runtime_rel,
+        runtime_artifact: runtime_artifact.map(|runtime| runtime.rel_path),
+        executable: executable_rel,
         launcher: launcher_rel,
         integrity: spec.integrity.as_str().to_string(),
         bundle_hmac_sha256,
@@ -338,11 +351,17 @@ fn copy_assets_tree(
     Ok(manifest)
 }
 
+#[derive(Debug, Clone)]
+struct CopiedRuntimeArtifact {
+    rel_path: String,
+    output_path: PathBuf,
+}
+
 fn copy_runtime_artifact(
     runtime_artifact: Option<&Path>,
     project_root: &Path,
     runtime_output_root: &Path,
-) -> VnResult<Option<String>> {
+) -> VnResult<Option<CopiedRuntimeArtifact>> {
     let Some(raw_path) = runtime_artifact else {
         return Ok(None);
     };
@@ -374,9 +393,40 @@ fn copy_runtime_artifact(
         ))
     })?;
 
-    Ok(Some(normalize_path_display(
-        Path::new("runtime").join(file_name).as_path(),
-    )))
+    Ok(Some(CopiedRuntimeArtifact {
+        rel_path: normalize_path_display(Path::new("runtime").join(file_name).as_path()),
+        output_path: destination,
+    }))
+}
+
+fn materialize_executable(
+    target: ExportTargetPlatform,
+    output_root: &Path,
+    runtime: Option<&CopiedRuntimeArtifact>,
+) -> VnResult<Option<String>> {
+    let Some(runtime) = runtime else {
+        return Ok(None);
+    };
+    if target != ExportTargetPlatform::Windows || !has_extension(&runtime.output_path, "exe") {
+        return Ok(None);
+    }
+
+    let executable_rel = "game.exe";
+    let executable_out = output_root.join(executable_rel);
+    fs::copy(&runtime.output_path, &executable_out).map_err(|e| {
+        invalid_bundle(format!(
+            "copy windows executable '{}' -> '{}': {e}",
+            runtime.output_path.display(),
+            executable_out.display()
+        ))
+    })?;
+    Ok(Some(executable_rel.to_string()))
+}
+
+fn has_extension(path: &Path, expected: &str) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(expected))
 }
 
 fn write_launcher(

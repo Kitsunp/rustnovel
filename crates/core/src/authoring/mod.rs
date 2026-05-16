@@ -3,6 +3,7 @@
 //! This module keeps semantic story editing independent from egui/eframe.
 
 pub mod compiler;
+pub mod composer;
 mod diagnostics;
 mod document;
 mod entry;
@@ -36,11 +37,13 @@ pub use graph::{
     NodeGraph, PortalNode, SceneLayer, SceneProfile,
 };
 pub use lint::{LintCode, LintIssue, LintSeverity, ValidationPhase};
-pub use operation_log::{OperationLogEntry, VerificationRun};
+pub use operation_log::{OperationKind, OperationLogEntry, VerificationRun};
 pub use quick_fix::{QuickFixCandidate, QuickFixRisk};
 pub use report_fingerprint::{
+    authoring_document_layout_sha256, authoring_document_sha256,
     authoring_fingerprints_semantically_match, authoring_graph_sha256, authoring_layout_sha256,
-    authoring_story_graph_sha256, build_authoring_report_fingerprint, AuthoringReportBuildInfo,
+    authoring_story_graph_sha256, build_authoring_document_report_fingerprint,
+    build_authoring_report_fingerprint, collect_authoring_asset_refs, AuthoringReportBuildInfo,
     AuthoringReportFingerprint, AuthoringSemanticFingerprint,
 };
 pub use types::{AuthoringPosition, StoryNode, NODE_VERTICAL_SPACING};
@@ -54,6 +57,9 @@ pub use validation::{
 };
 pub use validation_report::AuthoringValidationReport;
 
+#[cfg(test)]
+#[path = "composer_tests.rs"]
+mod composer_tests;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;

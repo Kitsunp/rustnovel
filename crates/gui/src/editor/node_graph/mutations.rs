@@ -28,7 +28,15 @@ impl NodeGraph {
         let Some(pos) = self.get_node_pos(target_id) else {
             return;
         };
+        let target_node = self.get_node(target_id).cloned();
+        let new_choice_label = choice_route_label_for_inserted_node(&node);
         let new_id = self.add_node(node, egui::pos2(pos.x, pos.y + NODE_VERTICAL_SPACING));
+
+        if matches!(target_node, Some(StoryNode::Choice { .. })) {
+            self.connect_new_choice_option(target_id, new_id, new_choice_label);
+            return;
+        }
+
         let old_target = self
             .connections()
             .find(|conn| conn.from == target_id && conn.from_port == 0)
@@ -62,10 +70,24 @@ impl NodeGraph {
         let Some(pos) = self.get_node_pos(node_id) else {
             return;
         };
+        if matches!(node, StoryNode::Choice { .. }) {
+            let branch = self.add_path_dialogue("New Route", pos.x + 120.0, pos.y + 140.0);
+            self.connect_new_choice_option(node_id, branch, "New route");
+            self.set_single_selection(Some(node_id));
+            return;
+        }
+
         let previous_continuation = self
             .connections()
             .find(|conn| conn.from == node_id && conn.from_port == 0)
             .map(|conn| conn.to);
+        if previous_continuation
+            .is_some_and(|id| matches!(self.get_node(id), Some(StoryNode::Choice { .. })))
+        {
+            self.set_single_selection(previous_continuation);
+            return;
+        }
+
         let choice_pos = egui::pos2(pos.x, pos.y + 120.0);
         let choice_id = self.add_node(
             StoryNode::Choice {
@@ -84,6 +106,7 @@ impl NodeGraph {
             self.connect(branch_a, continuation);
             self.connect(branch_b, continuation);
         }
+        self.set_single_selection(Some(choice_id));
     }
 
     pub fn save_scene_profile(&mut self, profile_id: impl Into<String>, node_id: u32) -> bool {
@@ -141,5 +164,27 @@ impl NodeGraph {
             },
             egui::pos2(x, y),
         )
+    }
+}
+
+fn choice_route_label_for_inserted_node(node: &StoryNode) -> String {
+    match node {
+        StoryNode::Dialogue { speaker, .. } if !speaker.trim().is_empty() => {
+            format!("Talk to {speaker}")
+        }
+        StoryNode::Scene { background, .. }
+        | StoryNode::ScenePatch(visual_novel_engine::ScenePatchRaw { background, .. }) => {
+            background
+                .as_deref()
+                .and_then(|value| {
+                    std::path::Path::new(value)
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                })
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| format!("Go to {value}"))
+                .unwrap_or_else(|| "New route".to_string())
+        }
+        _ => "New route".to_string(),
     }
 }

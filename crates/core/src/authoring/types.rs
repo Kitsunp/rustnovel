@@ -69,6 +69,11 @@ pub enum StoryNode {
         y: i32,
         scale: Option<f32>,
     },
+    SubgraphCall {
+        fragment_id: String,
+        entry_port: Option<String>,
+        exit_port: Option<String>,
+    },
     Generic(EventRaw),
 }
 
@@ -97,6 +102,7 @@ impl StoryNode {
             StoryNode::AudioAction { .. } => "Audio",
             StoryNode::Transition { .. } => "Transition",
             StoryNode::CharacterPlacement { .. } => "Placement",
+            StoryNode::SubgraphCall { .. } => "Subgraph Call",
             StoryNode::Generic(EventRaw::ExtCall { .. }) => "ExtCall",
             StoryNode::Generic(_) => "Generic Event",
         }
@@ -120,7 +126,8 @@ impl StoryNode {
             StoryNode::Start | StoryNode::End | StoryNode::Generic(_)
         ) || matches!(
             self,
-            StoryNode::Generic(EventRaw::ExtCall { .. } | EventRaw::SetFlag { .. })
+            StoryNode::SubgraphCall { .. }
+                | StoryNode::Generic(EventRaw::ExtCall { .. } | EventRaw::SetFlag { .. })
         )
     }
 }

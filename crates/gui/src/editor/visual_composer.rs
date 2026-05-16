@@ -4,14 +4,21 @@ use std::collections::HashMap;
 use std::path::Path;
 use visual_novel_engine::{Engine, EntityId, SceneState};
 
-use crate::editor::{PreviewQuality, StageFit};
+use crate::editor::{AssetFieldTarget, PreviewQuality, StageFit};
 
 mod layers;
-pub use layers::{layered_scene_objects, LayerOverride, LayeredSceneObject, StageLayerKind};
+mod overlays;
+pub(crate) use layers::scene_entity_object_id;
+pub use layers::{
+    layered_scene_objects, layered_scene_objects_with_authoring_overlay, LayerOverride,
+    LayeredSceneObject, StageLayerKind,
+};
 
 pub enum ComposerNodeMutation {
     CharacterPosition {
         name: String,
+        expression: Option<String>,
+        source_instance_index: usize,
         x: i32,
         y: i32,
         scale: Option<f32>,
@@ -27,6 +34,26 @@ pub enum VisualComposerAction {
     MutateNode {
         node_id: u32,
         mutation: ComposerNodeMutation,
+    },
+    AssignAssetToNode {
+        node_id: u32,
+        target: AssetFieldTarget,
+        asset: String,
+    },
+    AddCharacterToNode {
+        node_id: u32,
+        name: String,
+        asset: String,
+        x: i32,
+        y: i32,
+    },
+    LayerVisibilityChanged {
+        object_id: String,
+        visible: bool,
+    },
+    LayerLockChanged {
+        object_id: String,
+        locked: bool,
     },
     TestFromSelection,
     TestRestart,
@@ -46,6 +73,9 @@ pub struct VisualComposerPanel<'a> {
     image_failures: &'a mut HashMap<String, String>,
     selected_entity_id: &'a mut Option<u32>,
     layer_overrides: &'a mut HashMap<String, LayerOverride>,
+    active_event_node_id: Option<u32>,
+    selected_authoring_node_id: Option<u32>,
+    selected_authoring_node: Option<&'a StoryNode>,
 }
 
 pub struct VisualComposerPanelParams<'a> {
@@ -59,6 +89,9 @@ pub struct VisualComposerPanelParams<'a> {
     pub image_failures: &'a mut HashMap<String, String>,
     pub selected_entity_id: &'a mut Option<u32>,
     pub layer_overrides: &'a mut HashMap<String, LayerOverride>,
+    pub active_event_node_id: Option<u32>,
+    pub selected_authoring_node_id: Option<u32>,
+    pub selected_authoring_node: Option<&'a StoryNode>,
 }
 
 impl<'a> VisualComposerPanel<'a> {
@@ -74,6 +107,9 @@ impl<'a> VisualComposerPanel<'a> {
             image_failures: params.image_failures,
             selected_entity_id: params.selected_entity_id,
             layer_overrides: params.layer_overrides,
+            active_event_node_id: params.active_event_node_id,
+            selected_authoring_node_id: params.selected_authoring_node_id,
+            selected_authoring_node: params.selected_authoring_node,
         }
     }
 
@@ -114,11 +150,19 @@ impl<'a> VisualComposerPanel<'a> {
             if ui.small_button("Restart").clicked() {
                 action = Some(VisualComposerAction::TestRestart);
             }
-            self.render_runtime_controls(ui, &mut action);
+            overlays::render_runtime_controls(ui, self.engine, &mut action);
         });
         ui.separator();
-        let objects = layered_scene_objects(self.scene, entity_owners, self.engine);
-        self.render_layer_panel(ui, &objects);
+        let objects = layered_scene_objects_with_authoring_overlay(
+            self.scene,
+            entity_owners,
+            self.engine,
+            self.selected_authoring_node_id,
+            self.selected_authoring_node,
+        );
+        if let Some(layer_action) = self.render_layer_panel(ui, &objects) {
+            action = Some(layer_action);
+        }
 
         let available_size = ui.available_size();
         let status_height = 28.0;
@@ -143,37 +187,64 @@ impl<'a> VisualComposerPanel<'a> {
                     let drop_pos = response.hover_pos().unwrap_or(viewport_rect.center());
                     let local = (drop_pos - geometry.stage_rect.min) / geometry.scale;
                     let pos = egui::pos2(local.x.max(0.0), local.y.max(0.0));
-                    let node = match dragged.kind {
-                        "char" => Some(StoryNode::ScenePatch(visual_novel_engine::ScenePatchRaw {
-                            add: vec![visual_novel_engine::CharacterPlacementRaw {
-                                name: dragged.name.to_string(),
-                                expression: Some(dragged.path.to_string()),
-                                position: None,
-                                x: Some(pos.x.round() as i32),
-                                y: Some(pos.y.round() as i32),
-                                scale: Some(1.0),
-                            }],
-                            ..Default::default()
-                        })),
-                        "bg" => Some(StoryNode::Scene {
-                            profile: None,
-                            background: Some(dragged.path.to_string()),
-                            music: None,
-                            characters: Vec::new(),
-                        }),
-                        "audio" => Some(StoryNode::AudioAction {
-                            channel: "bgm".to_string(),
-                            action: "play".to_string(),
-                            asset: Some(dragged.path.to_string()),
-                            volume: None,
-                            fade_duration_ms: None,
-                            loop_playback: Some(true),
-                        }),
-                        _ => None,
-                    };
+                    if let Some((node_id, target, asset)) = assignment_for_dropped_asset(
+                        dragged.kind,
+                        dragged.path,
+                        self.selected_authoring_node_id,
+                        self.selected_authoring_node,
+                    ) {
+                        action = Some(VisualComposerAction::AssignAssetToNode {
+                            node_id,
+                            target,
+                            asset,
+                        });
+                    } else if let Some(node_id) = character_drop_target_node(
+                        dragged.kind,
+                        self.selected_authoring_node_id,
+                        self.selected_authoring_node,
+                    ) {
+                        action = Some(VisualComposerAction::AddCharacterToNode {
+                            node_id,
+                            name: dragged.name.to_string(),
+                            asset: dragged.path.to_string(),
+                            x: pos.x.round() as i32,
+                            y: pos.y.round() as i32,
+                        });
+                    } else {
+                        let node = match dragged.kind {
+                            "char" => {
+                                Some(StoryNode::ScenePatch(visual_novel_engine::ScenePatchRaw {
+                                    add: vec![visual_novel_engine::CharacterPlacementRaw {
+                                        name: dragged.name.to_string(),
+                                        expression: Some(dragged.path.to_string()),
+                                        position: None,
+                                        x: Some(pos.x.round() as i32),
+                                        y: Some(pos.y.round() as i32),
+                                        scale: Some(1.0),
+                                    }],
+                                    ..Default::default()
+                                }))
+                            }
+                            "bg" => Some(StoryNode::Scene {
+                                profile: None,
+                                background: Some(dragged.path.to_string()),
+                                music: None,
+                                characters: Vec::new(),
+                            }),
+                            "audio" => Some(StoryNode::AudioAction {
+                                channel: "bgm".to_string(),
+                                action: "play".to_string(),
+                                asset: Some(dragged.path.to_string()),
+                                volume: None,
+                                fade_duration_ms: None,
+                                loop_playback: Some(true),
+                            }),
+                            _ => None,
+                        };
 
-                    if let Some(node) = node {
-                        action = Some(VisualComposerAction::CreateNode { node, pos });
+                        if let Some(node) = node {
+                            action = Some(VisualComposerAction::CreateNode { node, pos });
+                        }
                     }
 
                     ui.memory_mut(|mem| mem.data.remove::<String>(egui::Id::new("dragged_asset")));
@@ -198,6 +269,7 @@ impl<'a> VisualComposerPanel<'a> {
             geometry,
             self.selected_entity_id,
             entity_owners,
+            self.active_event_node_id,
         );
         if let Some(node_id) = stage_action.selected_node {
             action = Some(VisualComposerAction::SelectNode(node_id));
@@ -207,13 +279,22 @@ impl<'a> VisualComposerPanel<'a> {
                 node_id: moved.node_id,
                 mutation: ComposerNodeMutation::CharacterPosition {
                     name: moved.name,
+                    expression: moved.expression,
+                    source_instance_index: moved.source_instance_index,
                     x: moved.x,
                     y: moved.y,
                     scale: moved.scale,
                 },
             });
         }
-        self.render_runtime_overlay(ui, geometry, &mut action);
+        overlays::render_runtime_overlay(
+            ui,
+            geometry,
+            self.engine,
+            self.selected_authoring_node,
+            self.layer_overrides,
+            &mut action,
+        );
 
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
@@ -239,9 +320,14 @@ impl<'a> VisualComposerPanel<'a> {
         action
     }
 
-    fn render_layer_panel(&mut self, ui: &mut egui::Ui, objects: &[LayeredSceneObject]) {
+    fn render_layer_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        objects: &[LayeredSceneObject],
+    ) -> Option<VisualComposerAction> {
+        let mut action = None;
         egui::CollapsingHeader::new("Layers")
-            .default_open(false)
+            .default_open(true)
             .show(ui, |ui| {
                 if objects.is_empty() {
                     ui.label("No layers");
@@ -259,8 +345,24 @@ impl<'a> VisualComposerPanel<'a> {
                                     locked: object.locked,
                                 });
                             ui.horizontal(|ui| {
-                                ui.checkbox(&mut entry.visible, "");
-                                ui.checkbox(&mut entry.locked, "Lock");
+                                if ui.checkbox(&mut entry.visible, "").changed() {
+                                    action = Some(VisualComposerAction::LayerVisibilityChanged {
+                                        object_id: object.object_id.clone(),
+                                        visible: entry.visible,
+                                    });
+                                }
+                                if ui.checkbox(&mut entry.locked, "Lock").changed() {
+                                    action = Some(VisualComposerAction::LayerLockChanged {
+                                        object_id: object.object_id.clone(),
+                                        locked: entry.locked,
+                                    });
+                                }
+                                if object.source_node_id == self.active_event_node_id {
+                                    ui.label(
+                                        egui::RichText::new("active")
+                                            .color(egui::Color32::from_rgb(120, 220, 255)),
+                                    );
+                                }
                                 ui.label(format!(
                                     "{} | z={} | {}",
                                     object.kind.label(),
@@ -271,149 +373,7 @@ impl<'a> VisualComposerPanel<'a> {
                         }
                     });
             });
-    }
-
-    fn render_runtime_overlay(
-        &self,
-        ui: &mut egui::Ui,
-        geometry: crate::editor::scene_stage::StageGeometry,
-        action: &mut Option<VisualComposerAction>,
-    ) {
-        let Some(engine) = self.engine else {
-            return;
-        };
-        let Ok(event) = engine.current_event() else {
-            return;
-        };
-        match event {
-            visual_novel_engine::EventCompiled::Dialogue(dialogue) => {
-                let box_height = (geometry.stage_rect.height() * 0.26).clamp(90.0, 180.0);
-                let rect = egui::Rect::from_min_size(
-                    egui::pos2(
-                        geometry.stage_rect.left() + 24.0,
-                        geometry.stage_rect.bottom() - box_height - 24.0,
-                    ),
-                    egui::vec2(geometry.stage_rect.width() - 48.0, box_height),
-                );
-                ui.painter().rect_filled(
-                    rect,
-                    6.0,
-                    egui::Color32::from_rgba_premultiplied(8, 8, 14, 220),
-                );
-                ui.painter().rect_stroke(
-                    rect,
-                    6.0,
-                    egui::Stroke::new(1.0, egui::Color32::from_gray(130)),
-                );
-                ui.painter().text(
-                    rect.left_top() + egui::vec2(16.0, 12.0),
-                    egui::Align2::LEFT_TOP,
-                    dialogue.speaker.as_ref(),
-                    egui::FontId::proportional(15.0),
-                    egui::Color32::from_rgb(180, 210, 255),
-                );
-                ui.painter().text(
-                    rect.left_top() + egui::vec2(16.0, 40.0),
-                    egui::Align2::LEFT_TOP,
-                    dialogue.text.as_ref(),
-                    egui::FontId::proportional(17.0),
-                    egui::Color32::WHITE,
-                );
-                if ui
-                    .interact(
-                        rect,
-                        egui::Id::new("composer_dialogue_overlay"),
-                        egui::Sense::click(),
-                    )
-                    .clicked()
-                {
-                    *action = Some(VisualComposerAction::TestAdvance);
-                }
-            }
-            visual_novel_engine::EventCompiled::Choice(choice) => {
-                let panel = egui::Rect::from_center_size(
-                    geometry.stage_rect.center(),
-                    egui::vec2(
-                        (geometry.stage_rect.width() * 0.58).clamp(280.0, 640.0),
-                        (choice.options.len() as f32 * 42.0 + 76.0).clamp(120.0, 360.0),
-                    ),
-                );
-                ui.painter().rect_filled(
-                    panel,
-                    6.0,
-                    egui::Color32::from_rgba_premultiplied(10, 12, 18, 230),
-                );
-                ui.painter().text(
-                    panel.left_top() + egui::vec2(18.0, 14.0),
-                    egui::Align2::LEFT_TOP,
-                    choice.prompt.as_ref(),
-                    egui::FontId::proportional(17.0),
-                    egui::Color32::WHITE,
-                );
-                for (idx, option) in choice.options.iter().enumerate() {
-                    let rect = egui::Rect::from_min_size(
-                        panel.left_top() + egui::vec2(18.0, 48.0 + idx as f32 * 42.0),
-                        egui::vec2(panel.width() - 36.0, 32.0),
-                    );
-                    let response = ui.interact(
-                        rect,
-                        egui::Id::new(("composer_choice_overlay", idx)),
-                        egui::Sense::click(),
-                    );
-                    let fill = if response.hovered() {
-                        egui::Color32::from_rgb(52, 88, 116)
-                    } else {
-                        egui::Color32::from_rgb(36, 54, 72)
-                    };
-                    ui.painter().rect_filled(rect, 4.0, fill);
-                    ui.painter().text(
-                        rect.left_center() + egui::vec2(12.0, 0.0),
-                        egui::Align2::LEFT_CENTER,
-                        option.text.as_ref(),
-                        egui::FontId::proportional(15.0),
-                        egui::Color32::WHITE,
-                    );
-                    if response.clicked() {
-                        *action = Some(VisualComposerAction::TestChoose(idx));
-                    }
-                }
-            }
-            visual_novel_engine::EventCompiled::Transition(transition) => {
-                let alpha = if transition.kind == 1 { 96 } else { 150 };
-                ui.painter().rect_filled(
-                    geometry.stage_rect,
-                    0.0,
-                    egui::Color32::from_rgba_premultiplied(0, 0, 0, alpha),
-                );
-            }
-            _ => {}
-        }
-    }
-
-    fn render_runtime_controls(
-        &self,
-        ui: &mut egui::Ui,
-        action: &mut Option<VisualComposerAction>,
-    ) {
-        let Some(engine) = self.engine else {
-            return;
-        };
-        match engine.current_event() {
-            Ok(visual_novel_engine::EventCompiled::Choice(choice)) => {
-                for (idx, option) in choice.options.iter().enumerate() {
-                    if ui.small_button(format!("Pick {}", idx + 1)).clicked() {
-                        *action = Some(VisualComposerAction::TestChoose(idx));
-                    }
-                    ui.label(option.text.as_ref());
-                }
-            }
-            Ok(_) => {
-                if ui.small_button("Next").clicked() {
-                    *action = Some(VisualComposerAction::TestAdvance);
-                }
-            }
-            Err(_) => {}
-        }
+        action
     }
 
     fn stage_size(&self) -> (f32, f32) {
@@ -475,8 +435,40 @@ fn audio_channel_label(channel: u8) -> &'static str {
     }
 }
 
+pub(crate) fn assignment_for_dropped_asset(
+    kind: &str,
+    asset_path: &str,
+    selected_node_id: Option<u32>,
+    selected_node: Option<&StoryNode>,
+) -> Option<(u32, AssetFieldTarget, String)> {
+    let node_id = selected_node_id?;
+    let node = selected_node?;
+    let target = match (kind, node) {
+        ("bg", StoryNode::Scene { .. }) => AssetFieldTarget::SceneBackground,
+        ("bg", StoryNode::ScenePatch(_)) => AssetFieldTarget::ScenePatchBackground,
+        ("audio", StoryNode::Scene { .. }) => AssetFieldTarget::SceneMusic,
+        ("audio", StoryNode::ScenePatch(_)) => AssetFieldTarget::ScenePatchMusic,
+        ("audio", StoryNode::AudioAction { .. }) => AssetFieldTarget::AudioActionAsset,
+        _ => return None,
+    };
+    Some((node_id, target, asset_path.to_string()))
+}
+
+pub(crate) fn character_drop_target_node(
+    kind: &str,
+    selected_node_id: Option<u32>,
+    selected_node: Option<&StoryNode>,
+) -> Option<u32> {
+    let node_id = selected_node_id?;
+    let node = selected_node?;
+    (kind == "char" && matches!(node, StoryNode::Scene { .. } | StoryNode::ScenePatch(_)))
+        .then_some(node_id)
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::editor::{AssetFieldTarget, StoryNode};
+
     #[test]
     fn low_z_order_image_is_background_layer() {
         let image = visual_novel_engine::EntityKind::Image(visual_novel_engine::ImageData {
@@ -496,5 +488,104 @@ mod tests {
         assert_eq!(parsed.kind, "char");
         assert_eq!(parsed.name, "furina");
         assert_eq!(parsed.path, "assets/characters/furina.png");
+    }
+
+    #[test]
+    fn dropped_background_assigns_to_selected_scene_instead_of_creating_duplicate_scene() {
+        let scene = StoryNode::Scene {
+            profile: None,
+            background: None,
+            music: None,
+            characters: Vec::new(),
+        };
+
+        let assignment = super::assignment_for_dropped_asset(
+            "bg",
+            "assets/backgrounds/room.png",
+            Some(9),
+            Some(&scene),
+        )
+        .expect("selected scene should accept background drop");
+
+        assert_eq!(
+            assignment,
+            (
+                9,
+                AssetFieldTarget::SceneBackground,
+                "assets/backgrounds/room.png".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn dropped_audio_can_target_scene_music_patch_music_or_audio_node() {
+        let scene = StoryNode::Scene {
+            profile: None,
+            background: None,
+            music: None,
+            characters: Vec::new(),
+        };
+        let patch = StoryNode::ScenePatch(Default::default());
+        let audio = StoryNode::AudioAction {
+            channel: "bgm".to_string(),
+            action: "play".to_string(),
+            asset: None,
+            volume: None,
+            fade_duration_ms: None,
+            loop_playback: Some(true),
+        };
+
+        assert_eq!(
+            super::assignment_for_dropped_asset(
+                "audio",
+                "assets/audio/theme.ogg",
+                Some(1),
+                Some(&scene)
+            )
+            .map(|(_, target, _)| target),
+            Some(AssetFieldTarget::SceneMusic)
+        );
+        assert_eq!(
+            super::assignment_for_dropped_asset(
+                "audio",
+                "assets/audio/theme.ogg",
+                Some(2),
+                Some(&patch)
+            )
+            .map(|(_, target, _)| target),
+            Some(AssetFieldTarget::ScenePatchMusic)
+        );
+        assert_eq!(
+            super::assignment_for_dropped_asset(
+                "audio",
+                "assets/audio/theme.ogg",
+                Some(3),
+                Some(&audio)
+            )
+            .map(|(_, target, _)| target),
+            Some(AssetFieldTarget::AudioActionAsset)
+        );
+    }
+
+    #[test]
+    fn dropped_character_targets_selected_scene_instead_of_creating_duplicate_patch() {
+        let scene = StoryNode::Scene {
+            profile: None,
+            background: None,
+            music: None,
+            characters: Vec::new(),
+        };
+
+        assert!(super::assignment_for_dropped_asset(
+            "char",
+            "assets/characters/ava.png",
+            Some(1),
+            Some(&scene)
+        )
+        .is_none());
+        assert_eq!(
+            super::character_drop_target_node("char", Some(1), Some(&scene)),
+            Some(1)
+        );
     }
 }

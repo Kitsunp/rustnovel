@@ -3,7 +3,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{CharacterPlacementRaw, EventRaw, ScenePatchRaw, ScriptRaw};
 
-use super::{NodeGraph, SceneProfile, StoryNode, AUTHORING_DOCUMENT_SCHEMA_VERSION};
+use super::{
+    AuthoringDocument, NodeGraph, SceneProfile, StoryNode, AUTHORING_DOCUMENT_SCHEMA_VERSION,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthoringReportBuildInfo {
@@ -44,7 +46,16 @@ pub fn build_authoring_report_fingerprint(
     graph: &NodeGraph,
     script: &ScriptRaw,
 ) -> AuthoringReportFingerprint {
-    let mut asset_refs = collect_asset_refs(graph);
+    let document = AuthoringDocument::new(graph.clone());
+    build_authoring_document_report_fingerprint(&document, script)
+}
+
+pub fn build_authoring_document_report_fingerprint(
+    document: &AuthoringDocument,
+    script: &ScriptRaw,
+) -> AuthoringReportFingerprint {
+    let graph = &document.graph;
+    let mut asset_refs = collect_authoring_asset_refs(graph);
     asset_refs.sort();
     asset_refs.dedup();
     let story_graph_sha256 = authoring_story_graph_sha256(graph);
@@ -56,8 +67,8 @@ pub fn build_authoring_report_fingerprint(
         asset_refs_count: asset_refs.len(),
     };
     let story_semantic_sha256 = sha256_json(&semantic);
-    let layout_sha256 = authoring_layout_sha256(graph);
-    let full_document_sha256 = authoring_graph_sha256(graph);
+    let layout_sha256 = authoring_document_layout_sha256(document);
+    let full_document_sha256 = authoring_document_sha256(document);
 
     AuthoringReportFingerprint {
         fingerprint_schema_version: "vnengine.authoring.fingerprint.v2".to_string(),
@@ -82,7 +93,11 @@ pub fn build_authoring_report_fingerprint(
 }
 
 pub fn authoring_graph_sha256(graph: &NodeGraph) -> String {
-    sha256_json(&super::AuthoringDocument::new(graph.clone()))
+    sha256_json(&AuthoringDocument::new(graph.clone()))
+}
+
+pub fn authoring_document_sha256(document: &AuthoringDocument) -> String {
+    sha256_json(document)
 }
 
 pub fn authoring_story_graph_sha256(graph: &NodeGraph) -> String {
@@ -110,6 +125,17 @@ pub fn authoring_story_graph_sha256(graph: &NodeGraph) -> String {
 }
 
 pub fn authoring_layout_sha256(graph: &NodeGraph) -> String {
+    sha256_json(&graph_layout_payload(graph))
+}
+
+pub fn authoring_document_layout_sha256(document: &AuthoringDocument) -> String {
+    sha256_json(&serde_json::json!({
+        "graph": graph_layout_payload(&document.graph),
+        "composer_layer_overrides": document.composer_layer_overrides,
+    }))
+}
+
+fn graph_layout_payload(graph: &NodeGraph) -> serde_json::Value {
     let mut positions = graph
         .nodes()
         .map(|(id, _, position)| {
@@ -125,10 +151,10 @@ pub fn authoring_layout_sha256(graph: &NodeGraph) -> String {
         .bookmarks()
         .map(|(name, target)| serde_json::json!({ "name": name, "target": target }))
         .collect::<Vec<_>>();
-    sha256_json(&serde_json::json!({
+    serde_json::json!({
         "positions": positions,
         "bookmarks": bookmarks,
-    }))
+    })
 }
 
 pub fn authoring_fingerprints_semantically_match(
@@ -170,7 +196,7 @@ fn semantic_value(value: &serde_json::Value) -> Option<serde_json::Value> {
     }))
 }
 
-fn collect_asset_refs(graph: &NodeGraph) -> Vec<String> {
+pub fn collect_authoring_asset_refs(graph: &NodeGraph) -> Vec<String> {
     let mut refs = Vec::new();
     for (_, node, _) in graph.nodes() {
         collect_node_asset_refs(node, &mut refs);
@@ -178,6 +204,8 @@ fn collect_asset_refs(graph: &NodeGraph) -> Vec<String> {
     for (_, profile) in graph.scene_profiles() {
         collect_profile_asset_refs(profile, &mut refs);
     }
+    refs.sort();
+    refs.dedup();
     refs
 }
 

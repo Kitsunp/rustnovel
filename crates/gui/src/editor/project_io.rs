@@ -4,7 +4,8 @@ use crate::editor::node_graph::NodeGraph;
 use std::path::{Component, Path, PathBuf};
 use visual_novel_engine::{
     authoring::{
-        export_runtime_script_from_authoring, load_authoring_document_or_script, AuthoringDocument,
+        composer::LayerOverride, export_runtime_script_from_authoring,
+        parse_authoring_document_or_script, AuthoringDocument, OperationLogEntry, VerificationRun,
     },
     manifest::{ManifestMigrationReport, ProjectManifest},
 };
@@ -18,6 +19,9 @@ pub struct LoadedProject {
 pub struct LoadedScript {
     pub graph: NodeGraph,
     pub was_imported: bool,
+    pub composer_layer_overrides: std::collections::HashMap<String, LayerOverride>,
+    pub operation_log: Vec<OperationLogEntry>,
+    pub verification_runs: Vec<VerificationRun>,
 }
 
 pub(crate) fn resolve_existing_project_path(
@@ -97,11 +101,24 @@ pub fn load_project(path: PathBuf) -> Result<LoadedProject, EditorError> {
 }
 
 pub fn load_script(path: PathBuf) -> Result<LoadedScript, EditorError> {
-    let graph = load_authoring_document_or_script(&path)
+    let source = std::fs::read_to_string(&path).map_err(EditorError::IoError)?;
+    if let Ok(document) = AuthoringDocument::from_json(&source) {
+        return Ok(LoadedScript {
+            graph: from_authoring_graph(&document.graph),
+            was_imported: false,
+            composer_layer_overrides: document.composer_layer_overrides.into_iter().collect(),
+            operation_log: document.operation_log,
+            verification_runs: document.verification_runs,
+        });
+    }
+    let graph = parse_authoring_document_or_script(&source)
         .map_err(|e| EditorError::CompileError(format!("Parse error: {}", e)))?;
     Ok(LoadedScript {
         graph: from_authoring_graph(&graph),
         was_imported: false,
+        composer_layer_overrides: std::collections::HashMap::new(),
+        operation_log: Vec::new(),
+        verification_runs: Vec::new(),
     })
 }
 
@@ -113,7 +130,23 @@ pub fn save_authoring_document(
     path: &std::path::Path,
     graph: &NodeGraph,
 ) -> Result<(), EditorError> {
-    let document = AuthoringDocument::new(to_authoring_graph(graph));
+    save_authoring_document_with_metadata(path, graph, &std::collections::HashMap::new(), &[], &[])
+}
+
+pub fn save_authoring_document_with_metadata(
+    path: &std::path::Path,
+    graph: &NodeGraph,
+    composer_layer_overrides: &std::collections::HashMap<String, LayerOverride>,
+    operation_log: &[OperationLogEntry],
+    verification_runs: &[VerificationRun],
+) -> Result<(), EditorError> {
+    let mut document = AuthoringDocument::new(to_authoring_graph(graph));
+    document.composer_layer_overrides = composer_layer_overrides
+        .iter()
+        .map(|(key, value)| (key.clone(), *value))
+        .collect();
+    document.operation_log = operation_log.to_vec();
+    document.verification_runs = verification_runs.to_vec();
     let json = document
         .to_json()
         .map_err(|e| EditorError::CompileError(format!("Serialization error: {}", e)))?;
@@ -264,5 +297,67 @@ entry_point = "../outside.json"
             Some(StoryNode::Dialogue { speaker, text })
                 if speaker == "Draft" && text == "Disconnected but important"
         ));
+    }
+
+    #[test]
+    fn authoring_save_load_preserves_operation_log_and_verification_runs() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("tracked.vnauthoring");
+        let mut graph = NodeGraph::new();
+        graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+        let operation = visual_novel_engine::authoring::OperationLogEntry::new_typed(
+            visual_novel_engine::authoring::OperationKind::NodeCreated,
+            "applied",
+            "created start node",
+        );
+        let verification = visual_novel_engine::authoring::VerificationRun::from_diagnostics(
+            &operation.operation_id,
+            "gui-save",
+            &visual_novel_engine::authoring::build_authoring_report_fingerprint(
+                &to_authoring_graph(&graph),
+                &to_authoring_graph(&graph).to_script_lossy_for_diagnostics(),
+            ),
+            &[],
+            &[],
+        );
+
+        save_authoring_document_with_metadata(
+            &path,
+            &graph,
+            &std::collections::HashMap::new(),
+            std::slice::from_ref(&operation),
+            std::slice::from_ref(&verification),
+        )
+        .expect("save with metadata");
+
+        let loaded = load_script(path).expect("load with metadata");
+        assert_eq!(loaded.operation_log.len(), 1);
+        assert_eq!(loaded.verification_runs.len(), 1);
+        assert_eq!(
+            loaded.operation_log[0].operation_kind,
+            operation.operation_kind
+        );
+    }
+
+    #[test]
+    fn authoring_save_load_preserves_composer_layer_overrides() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("layers.vnauthoring");
+        let mut graph = NodeGraph::new();
+        graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+        let mut overrides = std::collections::HashMap::new();
+        overrides.insert(
+            "node:1:character:graph.nodes[1].visual.characters[0]:0".to_string(),
+            visual_novel_engine::authoring::composer::LayerOverride {
+                visible: false,
+                locked: true,
+            },
+        );
+
+        save_authoring_document_with_metadata(&path, &graph, &overrides, &[], &[])
+            .expect("save layer overrides");
+        let loaded = load_script(path).expect("load layer overrides");
+
+        assert_eq!(loaded.composer_layer_overrides, overrides);
     }
 }

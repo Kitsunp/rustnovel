@@ -11,10 +11,18 @@ impl<'a> NodeEditorPanel<'a> {
         let mut clicked_node = None;
         let mut right_clicked_node = None;
         let mut double_clicked_node = None;
+        let mut clicked_connection_target = None;
+        let mut clicked_on_any_node = false;
+        let mut right_clicked_canvas = None;
         let nodes: Vec<_> = self.graph.nodes().collect();
 
+        if self.graph.connecting_sticky && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.graph.cancel_connection();
+        }
+
         // 1. Handle Drag Start (Nodes)
-        if response.drag_started_by(egui::PointerButton::Primary) {
+        if response.drag_started_by(egui::PointerButton::Primary) && !ui.input(|i| i.modifiers.ctrl)
+        {
             if let Some(pos) = response.interact_pointer_pos() {
                 // Check ports first (priority over node move)
                 for (id, node, n_pos) in nodes.iter().rev() {
@@ -24,7 +32,7 @@ impl<'a> NodeEditorPanel<'a> {
                             let port_pos = self.calculate_port_pos(*n_pos, node, i);
                             let screen_pos = self.graph_to_screen(rect, port_pos);
                             if screen_pos.distance(pos) < 10.0 * self.graph.zoom() {
-                                self.graph.connecting_from = Some((*id, i));
+                                self.graph.start_connection_drag(*id, i);
                                 return; // Consumed by port drag
                             }
                         }
@@ -33,7 +41,7 @@ impl<'a> NodeEditorPanel<'a> {
                             let port_pos = self.calculate_port_pos(*n_pos, node, port);
                             let screen_pos = self.graph_to_screen(rect, port_pos);
                             if screen_pos.distance(pos) < 10.0 * self.graph.zoom() {
-                                self.graph.connecting_from = Some((*id, port));
+                                self.graph.start_connection_drag(*id, port);
                                 return;
                             }
                         }
@@ -42,7 +50,7 @@ impl<'a> NodeEditorPanel<'a> {
                         let port_pos = self.calculate_port_pos(*n_pos, node, 0);
                         let screen_pos = self.graph_to_screen(rect, port_pos);
                         if screen_pos.distance(pos) < 10.0 * self.graph.zoom() {
-                            self.graph.connecting_from = Some((*id, 0));
+                            self.graph.start_connection_drag(*id, 0);
                             return;
                         }
                     }
@@ -58,9 +66,16 @@ impl<'a> NodeEditorPanel<'a> {
                     let size = egui::vec2(NODE_WIDTH, height) * self.graph.zoom();
                     let node_rect = egui::Rect::from_min_size(screen_pos, size);
                     if node_rect.contains(pos) {
+                        self.undo_stack.push(self.graph.clone());
                         self.graph.dragging_node = Some(*id);
                         break;
                     }
+                }
+
+                if self.graph.dragging_node.is_none() && !ui.input(|i| i.modifiers.ctrl) {
+                    let graph_pos = self.screen_to_graph(rect, pos);
+                    self.graph.marquee_start = Some(graph_pos);
+                    self.graph.marquee_current = Some(graph_pos);
                 }
             }
         }
@@ -70,7 +85,11 @@ impl<'a> NodeEditorPanel<'a> {
             if let Some(id) = self.graph.dragging_node {
                 let delta = ui.input(|i| i.pointer.delta()) / self.graph.zoom();
                 if delta.length_sq() > 0.0 {
-                    self.graph.translate_node(id, delta);
+                    self.graph.translate_selected_or_node_for_drag(id, delta);
+                }
+            } else if self.graph.marquee_start.is_some() {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    self.graph.marquee_current = Some(self.screen_to_graph(rect, pos));
                 }
             }
         }
@@ -96,15 +115,42 @@ impl<'a> NodeEditorPanel<'a> {
                                 .connecting_from
                                 .map(|(_, port)| port)
                                 .unwrap_or(0);
-                            self.graph.connect_port(from, port, *to_id);
+                            self.graph.connect_or_branch(from, port, *to_id);
                             dropped_on_node = true;
                             break;
                         }
                     }
                 }
                 let _ = dropped_on_node;
-                self.graph.connecting_from = None;
+                self.graph.cancel_connection();
             }
+            self.finish_marquee_selection(ui);
+        } else if !ui.input(|i| i.pointer.primary_down()) {
+            if self.graph.marquee_start.is_some() {
+                self.finish_marquee_selection(ui);
+            }
+            self.graph.dragging_node = None;
+            if !self.graph.connecting_sticky {
+                self.graph.cancel_connection();
+            }
+        }
+
+        if let (Some(start), Some(current)) = (self.graph.marquee_start, self.graph.marquee_current)
+        {
+            let marquee_rect = egui::Rect::from_two_pos(
+                self.graph_to_screen(rect, start),
+                self.graph_to_screen(rect, current),
+            );
+            painter.rect_filled(
+                marquee_rect,
+                0.0,
+                egui::Color32::from_rgba_unmultiplied(90, 150, 255, 28),
+            );
+            painter.rect_stroke(
+                marquee_rect,
+                0.0,
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 180, 255)),
+            );
         }
 
         // Rendering Loop
@@ -118,7 +164,8 @@ impl<'a> NodeEditorPanel<'a> {
                 continue;
             }
 
-            let is_selected = self.graph.selected == Some(*id);
+            let is_selected =
+                self.graph.selected == Some(*id) || self.graph.selected_nodes.contains(id);
             let is_connecting = self.graph.connecting_from.map(|(nid, _)| nid) == Some(*id);
             let is_dragging = self.graph.dragging_node == Some(*id);
 
@@ -333,10 +380,15 @@ impl<'a> NodeEditorPanel<'a> {
                 }
             }
 
-            if response.clicked() && !is_dragging && self.graph.connecting_from.is_none() {
+            if response.clicked() && !is_dragging {
                 if let Some(p) = response.interact_pointer_pos() {
                     if node_rect.contains(p) {
-                        clicked_node = Some(*id);
+                        clicked_on_any_node = true;
+                        if let Some((from, port)) = self.graph.connecting_from {
+                            clicked_connection_target = Some((from, port, *id));
+                        } else {
+                            clicked_node = Some(*id);
+                        }
                     }
                 }
             }
@@ -359,124 +411,44 @@ impl<'a> NodeEditorPanel<'a> {
             }
         }
 
+        if let Some((from, port, to)) = clicked_connection_target {
+            self.graph.connecting_from = Some((from, port));
+            self.graph.finish_connection_to(to);
+            return;
+        }
+        if self.graph.connecting_sticky && response.clicked() && !clicked_on_any_node {
+            self.graph.cancel_connection();
+        }
+
         if let Some(id) = clicked_node {
-            self.graph.selected = Some(id);
+            if ui.input(|input| input.modifiers.ctrl) {
+                self.graph.toggle_multi_selection(id);
+            } else {
+                self.graph.set_single_selection(Some(id));
+            }
         }
         if let Some((id, pos)) = right_clicked_node {
-            self.graph.context_menu = Some(ContextMenu {
-                node_id: id,
-                position: pos,
-            });
+            self.graph.context_menu = Some(ContextMenu::for_node(id, pos));
+        } else if response.secondary_clicked() {
+            if let Some(pos) = response
+                .interact_pointer_pos()
+                .filter(|pos| rect.contains(*pos))
+            {
+                right_clicked_canvas = Some((pos, self.screen_to_graph(rect, pos)));
+            }
+        }
+        if let Some((screen_pos, graph_pos)) = right_clicked_canvas {
+            self.graph.context_menu = Some(ContextMenu::for_canvas(screen_pos, graph_pos));
         }
         if let Some(id) = double_clicked_node {
-            self.graph.editing = Some(id);
-        }
-    }
-
-    fn get_node_height(&self, node: &StoryNode) -> f32 {
-        crate::editor::node_types::node_visual_height(node)
-    }
-
-    fn get_node_preview(&self, node: &StoryNode) -> String {
-        match node {
-            StoryNode::Dialogue { speaker, .. } => speaker.chars().take(15).collect(),
-            StoryNode::Choice { prompt, .. } => prompt.chars().take(15).collect(),
-            StoryNode::Scene {
-                background, music, ..
-            } => {
-                let bg = background.as_deref().unwrap_or("<none>");
-                let bgm = music.as_deref().unwrap_or("<none>");
-                format!(
-                    "bg:{} bgm:{}",
-                    bg.chars().take(8).collect::<String>(),
-                    bgm.chars().take(8).collect::<String>()
-                )
-            }
-            StoryNode::Jump { target } => {
-                format!("→ {}", target.chars().take(10).collect::<String>())
-            }
-            StoryNode::SetVariable { key, value } => format!("{} = {}", key, value),
-            StoryNode::SetFlag { key, value } => format!("{} = {}", key, value),
-            StoryNode::ScenePatch(patch) => {
-                let bg = patch
-                    .background
-                    .as_ref()
-                    .map(|value| value.chars().take(10).collect::<String>())
-                    .unwrap_or_else(|| "-".to_string());
-                let bgm = patch
-                    .music
-                    .as_ref()
-                    .map(|value| value.chars().take(10).collect::<String>())
-                    .unwrap_or_else(|| "-".to_string());
-                format!(
-                    "Scene? bg:{bg} bgm:{bgm} add:{} upd:{} rem:{}",
-                    patch.add.len(),
-                    patch.update.len(),
-                    patch.remove.len()
-                )
-            }
-            StoryNode::JumpIf { .. } => "Conditional".to_string(),
-            StoryNode::Start => "Entry Point".to_string(),
-            StoryNode::End => "Exit Point".to_string(),
-            StoryNode::Generic(event) => match event {
-                visual_novel_engine::EventRaw::ExtCall { command, .. } => {
-                    format!("Ext: {}", command.chars().take(12).collect::<String>())
+            if let Some(StoryNode::SubgraphCall { fragment_id, .. }) = self.graph.get_node(id) {
+                let fragment_id = fragment_id.clone();
+                if !self.graph.enter_fragment(&fragment_id) {
+                    self.graph.editing = Some(id);
                 }
-                _ => {
-                    let json = event.to_json_value();
-                    let type_name = json
-                        .get("type")
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("unknown");
-                    format!("Generic: {}", type_name)
-                }
-            },
-            StoryNode::AudioAction {
-                channel, action, ..
-            } => {
-                format!("{} {}", action, channel)
-            }
-            StoryNode::Transition { kind, .. } => {
-                format!("Transition: {}", kind)
-            }
-            StoryNode::CharacterPlacement { name, x, y, .. } => {
-                format!("{}: ({}, {})", name, x, y)
+            } else {
+                self.graph.editing = Some(id);
             }
         }
-    }
-
-    pub(super) fn render_connecting_line(
-        &self,
-        painter: &egui::Painter,
-        rect: egui::Rect,
-        response: &egui::Response,
-    ) {
-        if let Some((from_id, from_port)) = self.graph.connecting_from {
-            if let Some((_, node, pos)) = self.graph.nodes().find(|(id, _, _)| *id == from_id) {
-                if let Some(cursor) = response.hover_pos() {
-                    let from =
-                        self.graph_to_screen(rect, self.calculate_port_pos(pos, &node, from_port));
-                    painter.line_segment(
-                        [from, cursor],
-                        egui::Stroke::new(2.0, egui::Color32::YELLOW),
-                    );
-                }
-            }
-        }
-    }
-
-    pub(super) fn render_status_bar(&self, painter: &egui::Painter, rect: egui::Rect) {
-        let hint = if self.graph.connecting_from.is_some() {
-            "Drag to node to connect - drag to empty space to disconnect - Esc cancels"
-        } else {
-            "Drag from socket to connect - Double-click to edit"
-        };
-        painter.text(
-            rect.max - egui::vec2(10.0, 10.0),
-            egui::Align2::RIGHT_BOTTOM,
-            hint,
-            egui::FontId::proportional(11.0),
-            egui::Color32::from_rgb(120, 120, 130),
-        );
     }
 }

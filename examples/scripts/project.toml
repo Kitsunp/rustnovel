@@ -16,14 +16,17 @@ supported_languages = ["en"]
 entry_point = "demo_story.json"
 
 [assets.backgrounds]
-genshin-furina_1 = 'assets\backgrounds\genshin-furina-1.png'
-genshin-furina_4 = 'assets\backgrounds\genshin-furina-4.png'
-genshin-furina_5 = 'assets\backgrounds\genshin-furina-5.png'
-genshin-furina_3 = 'assets\backgrounds\genshin-furina-3.png'
 genshin-furina_7 = 'assets\backgrounds\genshin-furina.png'
+genshin-furina_1 = 'assets\backgrounds\genshin-furina-1.png'
 genshin-furina_2 = 'assets\backgrounds\genshin-furina-2.png'
-genshin-furina_6 = 'assets\backgrounds\genshin-furina-6.png'
+genshin-furina_4 = 'assets\backgrounds\genshin-furina-4.png'
+genshin-furina_9 = 'assets\backgrounds\genshin-furina.png'
+genshin-furina_5 = 'assets\backgrounds\genshin-furina-5.png'
+genshin-furina-1 = 'assets\backgrounds\genshin-furina-1.png'
 genshin-furina = 'assets\backgrounds\genshin-furina.png'
+genshin-furina_6 = 'assets\backgrounds\genshin-furina-6.png'
+genshin-furina_8 = 'assets\backgrounds\genshin-furina.png'
+genshin-furina_3 = 'assets\backgrounds\genshin-furina-3.png'
 
 [assets.characters]
 

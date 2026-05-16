@@ -93,6 +93,13 @@ pub enum LintCode {
     DryRunParityMismatch,
     DryRunExtCallSimulated,
     DryRunFinished,
+    FragmentPortStale,
+    FragmentNodeMissing,
+    FragmentOwnershipConflict,
+    FragmentEmpty,
+    SubgraphCallInvalid,
+    FragmentRecursion,
+    FragmentLabelCollision,
 }
 
 impl LintCode {
@@ -134,6 +141,13 @@ impl LintCode {
         Self::DryRunParityMismatch,
         Self::DryRunExtCallSimulated,
         Self::DryRunFinished,
+        Self::FragmentPortStale,
+        Self::FragmentNodeMissing,
+        Self::FragmentOwnershipConflict,
+        Self::FragmentEmpty,
+        Self::SubgraphCallInvalid,
+        Self::FragmentRecursion,
+        Self::FragmentLabelCollision,
     ];
 
     pub fn label(self) -> &'static str {
@@ -175,6 +189,13 @@ impl LintCode {
             LintCode::DryRunParityMismatch => "DRY_PARITY_MISMATCH",
             LintCode::DryRunExtCallSimulated => "DRY_EXTCALL_SIMULATED",
             LintCode::DryRunFinished => "DRY_FINISHED",
+            LintCode::FragmentPortStale => "VAL_FRAGMENT_PORT_STALE",
+            LintCode::FragmentNodeMissing => "VAL_FRAGMENT_NODE_MISSING",
+            LintCode::FragmentOwnershipConflict => "VAL_FRAGMENT_OWNERSHIP_CONFLICT",
+            LintCode::FragmentEmpty => "VAL_FRAGMENT_EMPTY",
+            LintCode::SubgraphCallInvalid => "VAL_SUBGRAPH_CALL_INVALID",
+            LintCode::FragmentRecursion => "VAL_FRAGMENT_RECURSION",
+            LintCode::FragmentLabelCollision => "VAL_FRAGMENT_LABEL_COLLISION",
         }
     }
 
@@ -198,6 +219,7 @@ pub struct LintIssue {
     pub field_path: Option<FieldPath>,
     pub semantic_values: Vec<SemanticValue>,
     pub evidence_trace: Option<EvidenceTrace>,
+    pub operation_id: Option<String>,
     pub severity: LintSeverity,
     pub phase: ValidationPhase,
     pub code: LintCode,
@@ -283,6 +305,7 @@ impl LintIssue {
             field_path: None,
             semantic_values: Vec::new(),
             evidence_trace: None,
+            operation_id: None,
             severity,
             phase,
             code,
@@ -330,6 +353,11 @@ impl LintIssue {
 
     pub fn with_blocked_by(mut self, blocked_by: impl Into<String>) -> Self {
         self.blocked_by = Some(blocked_by.into());
+        self
+    }
+
+    pub fn with_operation_id(mut self, operation_id: impl Into<String>) -> Self {
+        self.operation_id = Some(operation_id.into());
         self
     }
 

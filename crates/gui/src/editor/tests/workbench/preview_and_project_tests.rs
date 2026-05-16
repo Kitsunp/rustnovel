@@ -165,6 +165,104 @@ entry_point = "main.json"
 }
 
 #[test]
+fn load_standalone_script_replaces_previous_project_root_and_manifest_state() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+    let dir = tempdir().expect("tempdir");
+    let first_root = dir.path().join("first_project");
+    let second_root = dir.path().join("second_project");
+    fs::create_dir_all(first_root.join("locales")).expect("mkdir first locales");
+    fs::create_dir_all(second_root.join("locales")).expect("mkdir second locales");
+
+    fs::write(
+        first_root.join("main.json"),
+        r#"{
+  "script_schema_version": "1.0",
+  "events": [
+    { "type": "scene", "background": "backgrounds/old.png" }
+  ],
+  "labels": { "start": 0 }
+}"#,
+    )
+    .expect("write first script");
+    fs::write(
+        first_root.join("project.vnm"),
+        r#"
+schema_version = "1.0"
+
+[metadata]
+name = "First"
+author = "QA"
+version = "0.1.0"
+
+[settings]
+resolution = [1280, 720]
+default_language = "es"
+supported_languages = ["es"]
+entry_point = "main.json"
+
+[assets]
+"#,
+    )
+    .expect("write first manifest");
+    fs::write(first_root.join("locales/es.json"), r#"{"old":"viejo"}"#)
+        .expect("write first locale");
+
+    fs::write(
+        second_root.join("main.json"),
+        r#"{
+  "script_schema_version": "1.0",
+  "events": [
+    { "type": "scene", "background": "backgrounds/new.png" }
+  ],
+  "labels": { "start": 0 }
+}"#,
+    )
+    .expect("write second script");
+    fs::write(second_root.join("locales/fr.json"), r#"{"new":"nouveau"}"#)
+        .expect("write second locale");
+
+    workbench
+        .load_project_with_status(first_root.join("project.vnm"), false)
+        .expect("first project should load");
+    assert_eq!(
+        workbench.project_root.as_deref(),
+        Some(first_root.as_path())
+    );
+    assert!(workbench.manifest.is_some());
+
+    workbench.load_script(second_root.join("main.json"));
+
+    assert_eq!(
+        workbench.project_root.as_deref(),
+        Some(second_root.as_path()),
+        "standalone script load must not keep resolving assets against the old project"
+    );
+    assert!(
+        workbench.manifest.is_none(),
+        "standalone scripts should not keep stale manifest assets/settings from a previous project"
+    );
+    assert!(
+        workbench.manifest_path.is_none(),
+        "standalone script load should clear manifest path"
+    );
+    assert_eq!(
+        workbench.localization_catalog.locale_codes(),
+        vec!["fr".to_string()],
+        "locale discovery should use the new script directory"
+    );
+    assert_eq!(workbench.player_locale, "fr");
+    assert!(
+        workbench.scene.iter().any(|entity| matches!(
+            &entity.kind,
+            visual_novel_engine::EntityKind::Image(image)
+                if image.path.as_ref() == "backgrounds/new.png"
+        )),
+        "preview scene should come from the newly loaded script"
+    );
+}
+
+#[test]
 fn sync_graph_to_script_builds_non_empty_scene_preview_from_visual_events() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);
@@ -267,6 +365,127 @@ fn scene_preview_tracks_selected_node_context() {
             visual_novel_engine::EntityKind::Image(image) if image.path.as_ref() == "bg/two.png"
         )),
         "composer preview should follow selected node context"
+    );
+}
+
+#[test]
+fn scene_preview_reconstructs_selected_context_from_start_after_runtime_advances() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+
+    let start = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+    let scene_a = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/one.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        },
+        egui::pos2(0.0, 100.0),
+    );
+    let scene_b = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/two.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        },
+        egui::pos2(0.0, 200.0),
+    );
+    workbench.node_graph.connect(start, scene_a);
+    workbench.node_graph.connect(scene_a, scene_b);
+    workbench
+        .sync_graph_to_script()
+        .expect("scene chain should compile");
+    workbench
+        .engine
+        .as_mut()
+        .expect("engine should exist")
+        .jump_to_label(&format!("node_{scene_b}"))
+        .expect("runtime should advance to the later scene");
+
+    workbench.selected_node = Some(scene_a);
+    workbench.refresh_scene_from_engine_preview();
+
+    assert!(
+        workbench.scene.iter().any(|entity| matches!(
+            &entity.kind,
+            visual_novel_engine::EntityKind::Image(image) if image.path.as_ref() == "bg/one.png"
+        )),
+        "composer preview should rebuild from script start when selecting an earlier node"
+    );
+    assert!(
+        !workbench.scene.iter().any(|entity| matches!(
+            &entity.kind,
+            visual_novel_engine::EntityKind::Image(image) if image.path.as_ref() == "bg/two.png"
+        )),
+        "later runtime visual state must not leak into earlier selected-node preview"
+    );
+}
+
+#[test]
+fn scene_preview_uses_selected_branch_scene_when_default_choice_route_misses_target() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+
+    let start = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+    let choice = workbench.node_graph.add_node(
+        StoryNode::Choice {
+            prompt: "Where?".to_string(),
+            options: vec!["A".to_string(), "B".to_string()],
+        },
+        egui::pos2(0.0, 100.0),
+    );
+    let scene_a = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/a.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        },
+        egui::pos2(-160.0, 220.0),
+    );
+    let scene_b = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/b.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        },
+        egui::pos2(160.0, 220.0),
+    );
+    let end = workbench
+        .node_graph
+        .add_node(StoryNode::End, egui::pos2(0.0, 360.0));
+    workbench.node_graph.connect(start, choice);
+    workbench.node_graph.connect_port(choice, 0, scene_a);
+    workbench.node_graph.connect_port(choice, 1, scene_b);
+    workbench.node_graph.connect(scene_a, end);
+    workbench.node_graph.connect(scene_b, end);
+    workbench
+        .sync_graph_to_script()
+        .expect("branching graph should compile");
+
+    workbench.selected_node = Some(scene_b);
+    workbench.refresh_scene_from_engine_preview();
+
+    assert!(
+        workbench.scene.iter().any(|entity| matches!(
+            &entity.kind,
+            visual_novel_engine::EntityKind::Image(image) if image.path.as_ref() == "bg/b.png"
+        )),
+        "selected branch scene should preview bg/b.png"
+    );
+    assert!(
+        !workbench.scene.iter().any(|entity| matches!(
+            &entity.kind,
+            visual_novel_engine::EntityKind::Image(image) if image.path.as_ref() == "bg/a.png"
+        )),
+        "composer must not silently show the default choice branch"
     );
 }
 
@@ -404,6 +623,8 @@ fn composer_mutation_updates_node_character_position() {
         scene,
         crate::editor::visual_composer::ComposerNodeMutation::CharacterPosition {
             name: "hero".to_string(),
+            expression: None,
+            source_instance_index: 0,
             x: 640,
             y: 360,
             scale: Some(1.25),

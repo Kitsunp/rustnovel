@@ -10,6 +10,31 @@ fn test_node_editor_panel_creation() {
 }
 
 #[test]
+fn extended_node_palette_exposes_runtime_authoring_nodes() {
+    let labels = extended_node_palette_items()
+        .into_iter()
+        .map(|(label, _)| label)
+        .collect::<Vec<_>>();
+
+    for required in [
+        "Scene Patch",
+        "Branch If",
+        "Set Variable",
+        "Set Flag",
+        "Audio",
+        "Transition",
+        "Character Placement",
+        "ExtCall",
+        "Subgraph Call",
+    ] {
+        assert!(
+            labels.contains(&required),
+            "missing authoring palette node {required}"
+        );
+    }
+}
+
+#[test]
 fn node_at_position_respects_dynamic_choice_height() {
     let mut graph = NodeGraph::new();
     let choice = graph.add_node(
@@ -72,4 +97,61 @@ fn auto_layout_hierarchical_resolves_overlaps_in_dense_graph() {
             );
         }
     }
+}
+
+#[test]
+fn keyboard_undo_redo_restore_graph_and_leave_typed_operation_hint() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+    let mut undo = UndoStack::new();
+    undo.push(graph.clone());
+    let end = graph.add_node(StoryNode::End, egui::pos2(0.0, 120.0));
+    graph.connect(start, end);
+
+    {
+        let mut panel = NodeEditorPanel::new(&mut graph, &mut undo);
+        assert!(panel.apply_undo_shortcut());
+    }
+
+    assert_eq!(graph.len(), 1);
+    let hint = graph
+        .take_operation_hint()
+        .expect("undo should create an operation hint");
+    assert_eq!(hint.kind, "undo");
+    assert!(!hint.push_undo_snapshot);
+
+    {
+        let mut panel = NodeEditorPanel::new(&mut graph, &mut undo);
+        assert!(panel.apply_redo_shortcut());
+    }
+
+    assert_eq!(graph.len(), 2);
+    assert_eq!(
+        graph
+            .take_operation_hint()
+            .expect("redo should create an operation hint")
+            .kind,
+        "redo"
+    );
+}
+
+#[test]
+fn graph_shortcuts_are_scoped_to_hover_or_active_graph_interaction() {
+    assert!(graph_shortcut_scope_active(true, false));
+    assert!(graph_shortcut_scope_active(false, true));
+    assert!(
+        !graph_shortcut_scope_active(false, false),
+        "node editor shortcuts must not steal keys from composer/inspector panels"
+    );
+}
+
+#[test]
+fn active_graph_interaction_keeps_shortcuts_available_after_pointer_leaves_canvas() {
+    let mut graph = NodeGraph::new();
+    assert!(!graph.has_active_interaction());
+
+    let node = graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+    graph.start_connection_pick(node, 0);
+
+    assert!(graph.has_active_interaction());
 }

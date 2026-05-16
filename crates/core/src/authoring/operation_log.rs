@@ -5,13 +5,81 @@ use serde::{Deserialize, Serialize};
 
 use super::{AuthoringReportFingerprint, DiagnosticTarget, FieldPath, LintIssue};
 
+pub const OPERATION_LOG_SCHEMA_V2: &str = "vnengine.operation_log.v2";
+pub const VERIFICATION_RUN_SCHEMA_V2: &str = "vnengine.verification_run.v2";
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationKind {
+    NodeCreated,
+    NodeRemoved,
+    NodeMoved,
+    NodeConnected,
+    NodeDisconnected,
+    FieldEdited,
+    AssetImported,
+    AssetRemoved,
+    ComposerObjectMoved,
+    LayerVisibilityChanged,
+    LayerLockChanged,
+    FragmentCreated,
+    FragmentRemoved,
+    FragmentEntered,
+    FragmentLeft,
+    SubgraphCallEdited,
+    QuickFixApplied,
+    Undo,
+    Redo,
+    Revert,
+    ReportImported,
+    Legacy(String),
+}
+
+impl OperationKind {
+    pub fn label(&self) -> String {
+        match self {
+            Self::NodeCreated => "node_created",
+            Self::NodeRemoved => "node_removed",
+            Self::NodeMoved => "node_moved",
+            Self::NodeConnected => "node_connected",
+            Self::NodeDisconnected => "node_disconnected",
+            Self::FieldEdited => "field_edited",
+            Self::AssetImported => "asset_imported",
+            Self::AssetRemoved => "asset_removed",
+            Self::ComposerObjectMoved => "composer_object_moved",
+            Self::LayerVisibilityChanged => "layer_visibility_changed",
+            Self::LayerLockChanged => "layer_lock_changed",
+            Self::FragmentCreated => "fragment_created",
+            Self::FragmentRemoved => "fragment_removed",
+            Self::FragmentEntered => "fragment_entered",
+            Self::FragmentLeft => "fragment_left",
+            Self::SubgraphCallEdited => "subgraph_call_edited",
+            Self::QuickFixApplied => "quick_fix_applied",
+            Self::Undo => "undo",
+            Self::Redo => "redo",
+            Self::Revert => "revert",
+            Self::ReportImported => "report_imported",
+            Self::Legacy(value) => value.as_str(),
+        }
+        .to_string()
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OperationLogEntry {
     pub schema: String,
     pub operation_id: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub author_id: Option<String>,
     pub created_unix_ms: u64,
     pub operation_kind: String,
+    #[serde(default)]
+    pub operation_kind_v2: Option<OperationKind>,
     pub diagnostic_id: Option<String>,
+    #[serde(default)]
+    pub repro_id: Option<String>,
     pub semantic_fingerprint_sha256: Option<String>,
     #[serde(default)]
     pub before_fingerprint_sha256: Option<String>,
@@ -19,6 +87,8 @@ pub struct OperationLogEntry {
     pub after_fingerprint_sha256: Option<String>,
     #[serde(default)]
     pub field_paths: Vec<FieldPath>,
+    #[serde(default)]
+    pub affected_targets: Vec<DiagnosticTarget>,
     #[serde(default)]
     pub diagnostic_target: Option<DiagnosticTarget>,
     #[serde(default)]
@@ -33,9 +103,19 @@ pub struct OperationLogEntry {
 pub struct VerificationRun {
     pub schema: String,
     pub operation_id: String,
+    #[serde(default)]
+    pub diagnostic_id: Option<String>,
     pub created_unix_ms: u64,
     pub validation_profile: String,
     pub semantic_fingerprint_sha256: String,
+    #[serde(default)]
+    pub story_semantic_sha256: String,
+    #[serde(default)]
+    pub layout_sha256: Option<String>,
+    #[serde(default)]
+    pub assets_sha256: Option<String>,
+    #[serde(default)]
+    pub full_document_sha256: Option<String>,
     pub diagnostic_ids: Vec<String>,
     pub resolved_diagnostic_ids: Vec<String>,
     pub introduced_diagnostic_ids: Vec<String>,
@@ -61,11 +141,16 @@ impl VerificationRun {
             .collect::<Vec<_>>();
 
         Self {
-            schema: "vnengine.verification_run.v1".to_string(),
+            schema: VERIFICATION_RUN_SCHEMA_V2.to_string(),
             operation_id: operation_id.into(),
+            diagnostic_id: None,
             created_unix_ms: now_unix_ms(),
             validation_profile: validation_profile.into(),
             semantic_fingerprint_sha256: fingerprint.story_semantic_sha256.clone(),
+            story_semantic_sha256: fingerprint.story_semantic_sha256.clone(),
+            layout_sha256: Some(fingerprint.layout_sha256.clone()),
+            assets_sha256: Some(fingerprint.assets_sha256.clone()),
+            full_document_sha256: Some(fingerprint.full_document_sha256.clone()),
             diagnostic_ids: after_ids.into_iter().collect(),
             resolved_diagnostic_ids,
             introduced_diagnostic_ids,
@@ -74,6 +159,35 @@ impl VerificationRun {
 }
 
 impl OperationLogEntry {
+    pub fn new_typed(
+        operation_kind: OperationKind,
+        status: impl Into<String>,
+        details: impl Into<String>,
+    ) -> Self {
+        let label = operation_kind.label();
+        Self {
+            schema: OPERATION_LOG_SCHEMA_V2.to_string(),
+            operation_id: new_operation_id(),
+            session_id: None,
+            author_id: None,
+            created_unix_ms: now_unix_ms(),
+            operation_kind: label,
+            operation_kind_v2: Some(operation_kind),
+            diagnostic_id: None,
+            repro_id: None,
+            semantic_fingerprint_sha256: None,
+            before_fingerprint_sha256: None,
+            after_fingerprint_sha256: None,
+            field_paths: Vec::new(),
+            affected_targets: Vec::new(),
+            diagnostic_target: None,
+            before_value: None,
+            after_value: None,
+            status: status.into(),
+            details: details.into(),
+        }
+    }
+
     pub fn new(
         operation_id: impl Into<String>,
         operation_kind: impl Into<String>,
@@ -81,15 +195,20 @@ impl OperationLogEntry {
         details: impl Into<String>,
     ) -> Self {
         Self {
-            schema: "vnengine.operation_log.v1".to_string(),
+            schema: OPERATION_LOG_SCHEMA_V2.to_string(),
             operation_id: operation_id.into(),
+            session_id: None,
+            author_id: None,
             created_unix_ms: now_unix_ms(),
             operation_kind: operation_kind.into(),
+            operation_kind_v2: None,
             diagnostic_id: None,
+            repro_id: None,
             semantic_fingerprint_sha256: None,
             before_fingerprint_sha256: None,
             after_fingerprint_sha256: None,
             field_paths: Vec::new(),
+            affected_targets: Vec::new(),
             diagnostic_target: None,
             before_value: None,
             after_value: None,
@@ -101,6 +220,9 @@ impl OperationLogEntry {
     pub fn with_diagnostic(mut self, issue: &LintIssue) -> Self {
         self.diagnostic_id = Some(issue.diagnostic_id());
         self.diagnostic_target = issue.target.clone();
+        if let Some(target) = &issue.target {
+            self.affected_targets.push(target.clone());
+        }
         if let Some(field_path) = &issue.field_path {
             self.field_paths.push(field_path.clone());
         }
@@ -129,6 +251,26 @@ impl OperationLogEntry {
         self
     }
 
+    pub fn with_target(mut self, target: DiagnosticTarget) -> Self {
+        self.affected_targets.push(target);
+        self
+    }
+
+    pub fn with_session(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    pub fn with_author(mut self, author_id: impl Into<String>) -> Self {
+        self.author_id = Some(author_id.into());
+        self
+    }
+
+    pub fn with_repro(mut self, repro_id: impl Into<String>) -> Self {
+        self.repro_id = Some(repro_id.into());
+        self
+    }
+
     pub fn with_values(mut self, before: impl Into<String>, after: impl Into<String>) -> Self {
         self.before_value = Some(before.into());
         self.after_value = Some(after.into());
@@ -145,4 +287,8 @@ fn now_unix_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn new_operation_id() -> String {
+    format!("op:{}", uuid::Uuid::new_v4())
 }

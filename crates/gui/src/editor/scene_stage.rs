@@ -2,23 +2,25 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use eframe::egui;
-use visual_novel_engine::{
-    EntityId, EntityKind, EventCompiled, SceneState, Transform, VisualState,
-};
+use visual_novel_engine::{EntityId, EntityKind, SceneState};
 
+use crate::editor::image_asset_cache::{
+    image_failure_message, normalize_asset_path, scene_stage_cache_key,
+    should_retry_missing_image_failure,
+};
+use crate::editor::visual_composer::scene_entity_object_id;
 use crate::editor::visual_composer::LayerOverride;
-use crate::editor::{PreviewQuality, StageFit};
+use crate::editor::PreviewQuality;
 
 #[path = "scene_stage/fallbacks.rs"]
 mod fallbacks;
 use fallbacks::*;
-
-#[derive(Clone, Copy)]
-pub(crate) struct StageGeometry {
-    pub viewport_rect: egui::Rect,
-    pub stage_rect: egui::Rect,
-    pub scale: f32,
-}
+#[path = "scene_stage/geometry.rs"]
+mod geometry;
+pub(crate) use geometry::{
+    clamp_transform_to_stage, display_visual_for_event, entity_rect, is_background_image,
+    scene_from_visual_state, stage_geometry, StageGeometry,
+};
 
 pub(crate) struct SceneStagePainter<'a> {
     project_root: Option<&'a Path>,
@@ -37,6 +39,8 @@ pub(crate) struct SceneStageInteraction {
 pub(crate) struct MovedCharacter {
     pub node_id: u32,
     pub name: String,
+    pub expression: Option<String>,
+    pub source_instance_index: usize,
     pub x: i32,
     pub y: i32,
     pub scale: Option<f32>,
@@ -71,7 +75,13 @@ impl<'a> SceneStagePainter<'a> {
         geometry: StageGeometry,
     ) {
         self.paint_canvas(ui, &geometry, scene.is_empty());
-        for entity in scene.iter_sorted() {
+        for (index, entity) in scene.iter_sorted().enumerate() {
+            if self
+                .entity_layer_override(entity, None, index)
+                .is_some_and(|entry| !entry.visible)
+            {
+                continue;
+            }
             let rect = entity_rect(&entity.kind, &entity.transform, &geometry);
             self.paint_entity(ui, &entity.kind, rect, false);
         }
@@ -84,21 +94,24 @@ impl<'a> SceneStagePainter<'a> {
         geometry: StageGeometry,
         selected_entity_id: &mut Option<u32>,
         entity_owners: &HashMap<u32, u32>,
+        active_node_id: Option<u32>,
     ) -> SceneStageInteraction {
         self.paint_canvas(ui, &geometry, scene.is_empty());
         let mut selected_node = None;
         let mut moved_entity = None;
         let ids = scene
             .iter_sorted()
-            .map(|entity| entity.id.raw())
+            .enumerate()
+            .map(|(index, entity)| (index, entity.id.raw()))
             .collect::<Vec<_>>();
 
-        for raw_id in ids {
+        for (index, raw_id) in ids {
             let Some(entity) = scene.get(EntityId::new(raw_id)).cloned() else {
                 continue;
             };
+            let source_node_id = entity_owners.get(&raw_id).copied();
             if self
-                .entity_layer_override(raw_id)
+                .entity_layer_override(&entity, source_node_id, index)
                 .is_some_and(|entry| !entry.visible)
             {
                 continue;
@@ -110,7 +123,7 @@ impl<'a> SceneStagePainter<'a> {
 
             let rect = entity_rect(&entity.kind, &entity.transform, &geometry);
             let locked = self
-                .entity_layer_override(raw_id)
+                .entity_layer_override(&entity, source_node_id, index)
                 .is_some_and(|entry| entry.locked);
             let sense = if is_background || locked {
                 egui::Sense::hover()
@@ -132,6 +145,14 @@ impl<'a> SceneStagePainter<'a> {
             }
 
             let is_selected = *selected_entity_id == Some(raw_id);
+            let is_active = entity_matches_active_node(source_node_id, active_node_id);
+            if is_active && !is_selected {
+                ui.painter().rect_stroke(
+                    rect.expand(3.0),
+                    0.0,
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(120, 220, 255)),
+                );
+            }
             if is_selected && !is_background {
                 ui.painter().rect_stroke(
                     rect.expand(2.0),
@@ -144,14 +165,27 @@ impl<'a> SceneStagePainter<'a> {
 
         let moved_character = moved_entity.and_then(|(raw_id, delta)| {
             let id = EntityId::new(raw_id);
+            let snapshot = scene.get(id)?.clone();
+            let EntityKind::Character(character) = &snapshot.kind else {
+                return None;
+            };
+            let node_id = *entity_owners.get(&raw_id)?;
+            let expression = character
+                .expression
+                .as_ref()
+                .map(|value| value.as_ref().to_string());
+            let source_instance_index = character_instance_index(
+                scene,
+                entity_owners,
+                raw_id,
+                node_id,
+                character.name.as_ref(),
+                expression.as_deref(),
+            );
             let entity = scene.get_mut(id)?;
             entity.transform.x += delta.x.round() as i32;
             entity.transform.y += delta.y.round() as i32;
             clamp_transform_to_stage(&mut entity.transform, &entity.kind, &geometry);
-            let EntityKind::Character(character) = &entity.kind else {
-                return None;
-            };
-            let node_id = *entity_owners.get(&raw_id)?;
             let scale = if entity.transform.scale == 1000 {
                 None
             } else {
@@ -160,6 +194,8 @@ impl<'a> SceneStagePainter<'a> {
             Some(MovedCharacter {
                 node_id,
                 name: character.name.to_string(),
+                expression,
+                source_instance_index,
                 x: entity.transform.x,
                 y: entity.transform.y,
                 scale,
@@ -200,8 +236,17 @@ impl<'a> SceneStagePainter<'a> {
         }
     }
 
-    fn entity_layer_override(&self, raw_id: u32) -> Option<&LayerOverride> {
-        self.layer_overrides.get(&format!("entity:{raw_id}"))
+    fn entity_layer_override(
+        &self,
+        entity: &visual_novel_engine::Entity,
+        source_node_id: Option<u32>,
+        index: usize,
+    ) -> Option<&LayerOverride> {
+        let stable_id = scene_entity_object_id(entity, source_node_id, index);
+        self.layer_overrides.get(&stable_id).or_else(|| {
+            self.layer_overrides
+                .get(&format!("entity:{}", entity.id.raw()))
+        })
     }
 
     fn paint_entity(
@@ -273,22 +318,54 @@ impl<'a> SceneStagePainter<'a> {
         asset_path: &str,
     ) -> Option<egui::TextureId> {
         let asset_path = normalize_asset_path(asset_path);
-        let cache_key = format!("{}::{asset_path}", self.preview_quality.label());
-        if let Some(texture) = self.image_cache.get(&cache_key) {
+        let project_root = self.project_root?;
+        let request_cache_key =
+            scene_stage_cache_key(project_root, self.preview_quality, &asset_path);
+        if let Some(texture) = self.image_cache.get(&request_cache_key) {
             return Some(texture.id());
         }
-        if self.image_failures.contains_key(&asset_path) {
+        if let Some(should_retry) = self
+            .image_failures
+            .get(&request_cache_key)
+            .map(|failure| should_retry_missing_image_failure(failure, project_root, &asset_path))
+        {
+            if should_retry {
+                self.image_failures.remove(&request_cache_key);
+            } else {
+                return None;
+            }
+        }
+
+        self.asset_store(project_root, &asset_path, &request_cache_key)?;
+        let resolved_asset_path = match self
+            .asset_store
+            .as_ref()
+            .expect("asset store initialized")
+            .resolve_image_path(&asset_path)
+        {
+            Ok(path) => normalize_asset_path(&path),
+            Err(err) => {
+                self.image_failures
+                    .insert(request_cache_key, image_failure_message(&asset_path, &err));
+                return None;
+            }
+        };
+        let cache_key =
+            scene_stage_cache_key(project_root, self.preview_quality, &resolved_asset_path);
+        if let Some(texture) = self.image_cache.get(&cache_key) {
+            let texture = texture.clone();
+            if request_cache_key != cache_key {
+                self.image_cache.insert(request_cache_key, texture.clone());
+            }
+            return Some(texture.id());
+        }
+        if self.image_failures.contains_key(&cache_key) {
             return None;
         }
-        let Some(project_root) = self.project_root else {
-            self.image_failures.insert(
-                asset_path.clone(),
-                format!("image '{asset_path}' project_root not available"),
-            );
-            return None;
-        };
 
-        let image = self.load_image(project_root, &asset_path).ok()?;
+        let image = self
+            .load_image(project_root, &resolved_asset_path, &cache_key)
+            .ok()?;
         let (size, pixels) = self.preview_quality.scaled_image(image.size, &image.pixels);
         let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_ref());
         let texture = ctx.load_texture(
@@ -297,6 +374,9 @@ impl<'a> SceneStagePainter<'a> {
             self.preview_quality.texture_options(),
         );
         let id = texture.id();
+        if request_cache_key != cache_key {
+            self.image_cache.insert(request_cache_key, texture.clone());
+        }
         self.image_cache.insert(cache_key, texture);
         Some(id)
     }
@@ -305,16 +385,17 @@ impl<'a> SceneStagePainter<'a> {
         &mut self,
         project_root: &Path,
         asset_path: &str,
+        failure_key: &str,
     ) -> Result<vnengine_assets::LoadedImage, ()> {
-        let Some(store) = self.asset_store(project_root, asset_path) else {
+        let Some(store) = self.asset_store(project_root, asset_path, failure_key) else {
             return Err(());
         };
         match store.load_image(asset_path) {
             Ok(image) => Ok(image),
             Err(err) => {
                 self.image_failures.insert(
-                    asset_path.to_string(),
-                    format!("image '{asset_path}' load failed: {err}"),
+                    failure_key.to_string(),
+                    image_failure_message(asset_path, &err),
                 );
                 Err(())
             }
@@ -325,6 +406,7 @@ impl<'a> SceneStagePainter<'a> {
         &mut self,
         project_root: &Path,
         asset_path: &str,
+        failure_key: &str,
     ) -> Option<&vnengine_assets::AssetStore> {
         if self.asset_store.is_none() {
             self.asset_store = match vnengine_assets::AssetStore::new(
@@ -336,7 +418,7 @@ impl<'a> SceneStagePainter<'a> {
                 Ok(store) => Some(store),
                 Err(err) => {
                     self.image_failures.insert(
-                        asset_path.to_string(),
+                        failure_key.to_string(),
                         format!("image '{asset_path}' asset store initialization failed: {err}"),
                     );
                     None
@@ -347,125 +429,38 @@ impl<'a> SceneStagePainter<'a> {
     }
 }
 
-pub(crate) fn stage_geometry(
-    viewport_rect: egui::Rect,
-    stage_size: (f32, f32),
-    stage_fit: StageFit,
-) -> StageGeometry {
-    let stage_rect = crate::editor::visual_composer_preview::fit_stage_rect(
-        viewport_rect,
-        stage_size,
-        stage_fit,
-    );
-    let scale = crate::editor::visual_composer_preview::stage_scale(stage_rect, stage_size);
-    StageGeometry {
-        viewport_rect,
-        stage_rect,
-        scale,
+pub(crate) fn entity_matches_active_node(
+    source_node_id: Option<u32>,
+    active_node_id: Option<u32>,
+) -> bool {
+    source_node_id.is_some() && source_node_id == active_node_id
+}
+
+fn character_instance_index(
+    scene: &SceneState,
+    entity_owners: &HashMap<u32, u32>,
+    moved_raw_id: u32,
+    moved_node_id: u32,
+    name: &str,
+    expression: Option<&str>,
+) -> usize {
+    let mut index = 0usize;
+    for entity in scene.iter_sorted() {
+        let raw_id = entity.id.raw();
+        if raw_id == moved_raw_id {
+            break;
+        }
+        if entity_owners.get(&raw_id).copied() != Some(moved_node_id) {
+            continue;
+        }
+        let EntityKind::Character(character) = &entity.kind else {
+            continue;
+        };
+        if character.name.as_ref() == name && character.expression.as_deref() == expression {
+            index += 1;
+        }
     }
-}
-
-pub(crate) fn display_visual_for_event(
-    current: &VisualState,
-    event: &EventCompiled,
-) -> VisualState {
-    let mut visual = current.clone();
-    match event {
-        EventCompiled::Scene(scene) => visual.apply_scene(scene),
-        EventCompiled::Patch(patch) => visual.apply_patch(patch),
-        EventCompiled::SetCharacterPosition(pos) => visual.set_character_position(pos),
-        _ => {}
-    }
-    visual
-}
-
-pub(crate) fn scene_from_visual_state(visual: &VisualState) -> SceneState {
-    let mut scene = SceneState::new();
-    if let Some(background) = &visual.background {
-        let mut transform = Transform::at(0, 0);
-        transform.z_order = -100;
-        let _ = scene.spawn_with_transform(
-            transform,
-            EntityKind::Image(visual_novel_engine::ImageData {
-                path: background.clone(),
-                tint: None,
-            }),
-        );
-    }
-    for (index, character) in visual.characters.iter().enumerate() {
-        let default_x = 220 + (index as i32) * 180;
-        let default_y = 260;
-        let mut transform = Transform::at(
-            character.x.unwrap_or(default_x),
-            character.y.unwrap_or(default_y),
-        );
-        transform.z_order = index as i32;
-        transform.scale = (character.scale.unwrap_or(1.0).clamp(0.1, 4.0) * 1000.0) as u32;
-        let _ = scene.spawn_with_transform(
-            transform,
-            EntityKind::Character(visual_novel_engine::CharacterData {
-                name: character.name.clone(),
-                expression: character.expression.clone(),
-            }),
-        );
-    }
-    scene
-}
-
-pub(crate) fn is_background_image(kind: &EntityKind, z_order: i32) -> bool {
-    matches!(kind, EntityKind::Image(_)) && z_order <= -50
-}
-
-pub(crate) fn clamp_transform_to_stage(
-    transform: &mut Transform,
-    kind: &EntityKind,
-    geometry: &StageGeometry,
-) {
-    if is_background_image(kind, transform.z_order) {
-        transform.x = 0;
-        transform.y = 0;
-        return;
-    }
-    let logical_stage = egui::vec2(
-        geometry.stage_rect.width() / geometry.scale,
-        geometry.stage_rect.height() / geometry.scale,
-    );
-    let logical_size = entity_logical_size(kind, transform);
-    let max_x = (logical_stage.x - logical_size.x).max(0.0).round() as i32;
-    let max_y = (logical_stage.y - logical_size.y).max(0.0).round() as i32;
-    transform.x = transform.x.clamp(0, max_x);
-    transform.y = transform.y.clamp(0, max_y);
-}
-
-fn entity_rect(kind: &EntityKind, transform: &Transform, geometry: &StageGeometry) -> egui::Rect {
-    if is_background_image(kind, transform.z_order) {
-        return geometry.stage_rect;
-    }
-    let position = geometry.stage_rect.min
-        + egui::vec2(
-            transform.x as f32 * geometry.scale,
-            transform.y as f32 * geometry.scale,
-        );
-    egui::Rect::from_min_size(
-        position,
-        entity_logical_size(kind, transform) * geometry.scale,
-    )
-}
-
-fn entity_logical_size(kind: &EntityKind, transform: &Transform) -> egui::Vec2 {
-    let scale = (transform.scale as f32 / 1000.0).clamp(0.1, 4.0);
-    let base_size = match kind {
-        EntityKind::Character(_) => egui::vec2(220.0, 340.0),
-        EntityKind::Image(_) => egui::vec2(220.0, 140.0),
-        EntityKind::Video(_) => egui::vec2(320.0, 180.0),
-        EntityKind::Audio(_) => egui::vec2(300.0, 36.0),
-        EntityKind::Text(_) => egui::vec2(300.0, 54.0),
-    };
-    base_size * scale
-}
-
-fn normalize_asset_path(path: &str) -> String {
-    path.replace('\\', "/")
+    index
 }
 
 #[cfg(test)]

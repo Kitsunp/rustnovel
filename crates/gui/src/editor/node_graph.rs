@@ -6,6 +6,7 @@
 
 use eframe::egui;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 pub use visual_novel_engine::authoring::{GraphConnection, SceneProfile};
 use visual_novel_engine::{
     authoring::{AuthoringPosition, NodeGraph as AuthoringGraph},
@@ -25,6 +26,16 @@ mod navigation;
 mod search;
 mod view;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GraphOperationHint {
+    pub kind: String,
+    pub details: String,
+    pub field_path: Option<String>,
+    pub before_value: Option<String>,
+    pub after_value: Option<String>,
+    pub push_undo_snapshot: bool,
+}
+
 /// A node graph representing the story structure.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeGraph {
@@ -34,6 +45,9 @@ pub struct NodeGraph {
     /// Currently selected node
     #[serde(skip)]
     pub selected: Option<u32>,
+    /// Multi-selection used for grouping fragments and batch graph operations.
+    #[serde(skip)]
+    pub selected_nodes: BTreeSet<u32>,
     /// Pan offset (world-space translation)
     #[serde(default)]
     pub(crate) pan: egui::Vec2,
@@ -49,9 +63,21 @@ pub struct NodeGraph {
     /// Node being connected (Connect To mode)
     #[serde(skip)]
     pub connecting_from: Option<(u32, usize)>,
+    /// True when connection mode was started from context menu and should wait for a click.
+    #[serde(skip)]
+    pub connecting_sticky: bool,
+    /// Graph-space marquee selection start.
+    #[serde(skip)]
+    pub marquee_start: Option<egui::Pos2>,
+    /// Graph-space marquee selection current endpoint.
+    #[serde(skip)]
+    pub marquee_current: Option<egui::Pos2>,
     /// Active context menu
     #[serde(skip)]
     pub context_menu: Option<ContextMenu>,
+    /// Last semantic editor operation inferred at graph level.
+    #[serde(skip)]
+    pub(crate) operation_hint: Option<GraphOperationHint>,
 }
 
 impl Default for NodeGraph {
@@ -59,12 +85,17 @@ impl Default for NodeGraph {
         Self {
             authoring: AuthoringGraph::new(),
             selected: None,
+            selected_nodes: BTreeSet::new(),
             pan: egui::Vec2::ZERO,
             zoom: ZOOM_DEFAULT,
             editing: None,
             dragging_node: None,
             connecting_from: None,
+            connecting_sticky: false,
+            marquee_start: None,
+            marquee_current: None,
             context_menu: None,
+            operation_hint: None,
         }
     }
 }
@@ -76,24 +107,53 @@ impl NodeGraph {
 
     /// Adds a node at the specified position. Returns the node ID.
     pub fn add_node(&mut self, node: StoryNode, pos: egui::Pos2) -> u32 {
-        self.authoring
-            .add_node(node, AuthoringPosition::new(pos.x, pos.y))
+        let id = self
+            .authoring
+            .add_node(node, AuthoringPosition::new(pos.x, pos.y));
+        self.queue_operation_hint(
+            "node_created",
+            format!("Created node {id}"),
+            Some(format!("graph.nodes[{id}]")),
+            true,
+        );
+        id
     }
 
     /// Removes a node and all its connections.
     pub fn remove_node(&mut self, id: u32) {
+        let existed = self.get_node(id).is_some();
         self.authoring.remove_node(id);
 
         if self.selected == Some(id) {
             self.selected = None;
         }
+        self.selected_nodes.remove(&id);
         if self.editing == Some(id) {
             self.editing = None;
+        }
+        if self.dragging_node == Some(id) {
+            self.dragging_node = None;
         }
         if let Some((from_id, _)) = self.connecting_from {
             if from_id == id {
                 self.connecting_from = None;
+                self.connecting_sticky = false;
             }
+        }
+        if self
+            .context_menu
+            .as_ref()
+            .is_some_and(|menu| menu.node_id == Some(id))
+        {
+            self.context_menu = None;
+        }
+        if existed {
+            self.queue_operation_hint(
+                "node_removed",
+                format!("Removed node {id}"),
+                Some(format!("graph.nodes[{id}]")),
+                true,
+            );
         }
     }
 
@@ -164,8 +224,27 @@ impl NodeGraph {
     }
 
     pub fn set_node_pos(&mut self, id: u32, pos: egui::Pos2) -> bool {
-        self.authoring
-            .set_node_pos(id, AuthoringPosition::new(pos.x, pos.y))
+        self.set_node_pos_with_undo_hint(id, pos, true)
+    }
+
+    fn set_node_pos_with_undo_hint(
+        &mut self,
+        id: u32,
+        pos: egui::Pos2,
+        push_undo_snapshot: bool,
+    ) -> bool {
+        let changed = self
+            .authoring
+            .set_node_pos(id, AuthoringPosition::new(pos.x, pos.y));
+        if changed {
+            self.queue_operation_hint(
+                "node_moved",
+                format!("Moved node {id}"),
+                Some(format!("graph.nodes[{id}].layout.position")),
+                push_undo_snapshot,
+            );
+        }
+        changed
     }
 
     pub fn translate_node(&mut self, id: u32, delta: egui::Vec2) -> bool {
@@ -173,6 +252,50 @@ impl NodeGraph {
             return false;
         };
         self.set_node_pos(id, pos + delta)
+    }
+
+    pub(crate) fn translate_node_for_drag(&mut self, id: u32, delta: egui::Vec2) -> bool {
+        let Some(pos) = self.get_node_pos(id) else {
+            return false;
+        };
+        self.set_node_pos_with_undo_hint(id, pos + delta, false)
+    }
+
+    pub fn translate_selected_or_node(&mut self, anchor_id: u32, delta: egui::Vec2) -> usize {
+        self.translate_selected_or_node_impl(anchor_id, delta, false)
+    }
+
+    pub(crate) fn translate_selected_or_node_for_drag(
+        &mut self,
+        anchor_id: u32,
+        delta: egui::Vec2,
+    ) -> usize {
+        self.translate_selected_or_node_impl(anchor_id, delta, true)
+    }
+
+    fn translate_selected_or_node_impl(
+        &mut self,
+        anchor_id: u32,
+        delta: egui::Vec2,
+        drag_preview: bool,
+    ) -> usize {
+        if delta.length_sq() <= f32::EPSILON {
+            return 0;
+        }
+        let ids = if self.selected_nodes.contains(&anchor_id) && self.selected_nodes.len() > 1 {
+            self.selected_nodes.iter().copied().collect::<Vec<_>>()
+        } else {
+            vec![anchor_id]
+        };
+        ids.into_iter()
+            .filter(|node_id| {
+                if drag_preview {
+                    self.translate_node_for_drag(*node_id, delta)
+                } else {
+                    self.translate_node(*node_id, delta)
+                }
+            })
+            .count()
     }
 
     /// Returns an iterator over all nodes as GUI-positioned snapshots.
@@ -201,6 +324,207 @@ impl NodeGraph {
     pub(crate) fn replace_authoring_graph(&mut self, authoring: AuthoringGraph) {
         self.authoring = authoring;
     }
+
+    pub fn toggle_multi_selection(&mut self, node_id: u32) {
+        if !self.selected_nodes.insert(node_id) {
+            self.selected_nodes.remove(&node_id);
+            if self.selected == Some(node_id) {
+                self.selected = self.selected_nodes.iter().next_back().copied();
+            }
+            return;
+        }
+        self.selected = Some(node_id);
+    }
+
+    pub fn set_single_selection(&mut self, node_id: Option<u32>) {
+        self.selected = node_id;
+        self.selected_nodes.clear();
+        if let Some(node_id) = node_id {
+            self.selected_nodes.insert(node_id);
+        }
+    }
+
+    pub fn select_nodes_in_rect(&mut self, rect: egui::Rect, additive: bool) -> usize {
+        let selected = self
+            .nodes()
+            .filter_map(|(id, node, pos)| {
+                let node_rect = egui::Rect::from_min_size(
+                    pos,
+                    egui::vec2(NODE_WIDTH, node_visual_height(&node)),
+                );
+                rect.intersects(node_rect).then_some(id)
+            })
+            .collect::<Vec<_>>();
+        if !additive {
+            self.selected_nodes.clear();
+        }
+        for node_id in &selected {
+            self.selected_nodes.insert(*node_id);
+        }
+        self.selected = selected
+            .last()
+            .copied()
+            .or_else(|| additive.then_some(self.selected).flatten());
+        selected.len()
+    }
+
+    pub fn clear_transient_interaction(&mut self) {
+        self.dragging_node = None;
+        self.connecting_from = None;
+        self.connecting_sticky = false;
+        self.marquee_start = None;
+        self.marquee_current = None;
+        self.context_menu = None;
+    }
+
+    pub(crate) fn has_active_interaction(&self) -> bool {
+        self.dragging_node.is_some()
+            || self.connecting_from.is_some()
+            || self.marquee_start.is_some()
+            || self.context_menu.is_some()
+            || self.editing.is_some()
+    }
+
+    pub(crate) fn queue_operation_hint(
+        &mut self,
+        kind: impl Into<String>,
+        details: impl Into<String>,
+        field_path: Option<String>,
+        push_undo_snapshot: bool,
+    ) {
+        self.queue_operation_hint_with_values(
+            kind,
+            details,
+            field_path,
+            None,
+            None,
+            push_undo_snapshot,
+        );
+    }
+
+    pub(crate) fn queue_operation_hint_with_values(
+        &mut self,
+        kind: impl Into<String>,
+        details: impl Into<String>,
+        field_path: Option<String>,
+        before_value: Option<String>,
+        after_value: Option<String>,
+        push_undo_snapshot: bool,
+    ) {
+        self.operation_hint = Some(GraphOperationHint {
+            kind: kind.into(),
+            details: details.into(),
+            field_path,
+            before_value,
+            after_value,
+            push_undo_snapshot,
+        });
+    }
+
+    pub(crate) fn operation_hint_pushes_undo(&self) -> bool {
+        self.operation_hint
+            .as_ref()
+            .map(|hint| hint.push_undo_snapshot)
+            .unwrap_or(true)
+    }
+
+    pub(crate) fn take_operation_hint(&mut self) -> Option<GraphOperationHint> {
+        self.operation_hint.take()
+    }
+
+    pub(crate) fn clear_operation_hint(&mut self) {
+        self.operation_hint = None;
+    }
+
+    pub fn selected_node_ids(&self) -> Vec<u32> {
+        if self.selected_nodes.is_empty() {
+            self.selected.into_iter().collect()
+        } else {
+            self.selected_nodes.iter().copied().collect()
+        }
+    }
+
+    pub fn create_fragment_from_selection(&mut self, fragment_id: &str, title: &str) -> bool {
+        let node_ids = self.selected_node_ids();
+        let changed =
+            self.authoring
+                .create_fragment(fragment_id.to_string(), title.to_string(), node_ids);
+        if changed {
+            self.queue_operation_hint(
+                "fragment_created",
+                format!("Created fragment {fragment_id}"),
+                Some(format!("graph.fragments[{fragment_id}]")),
+                true,
+            );
+        }
+        changed
+    }
+
+    pub fn remove_fragment(&mut self, fragment_id: &str) -> bool {
+        let changed = self.authoring.remove_fragment(fragment_id).is_some();
+        if changed {
+            self.queue_operation_hint(
+                "fragment_removed",
+                format!("Removed fragment {fragment_id}"),
+                Some(format!("graph.fragments[{fragment_id}]")),
+                true,
+            );
+        }
+        changed
+    }
+
+    pub fn refresh_fragment_ports(&mut self, fragment_id: &str) -> bool {
+        let changed = self.authoring.refresh_fragment_ports(fragment_id);
+        if changed {
+            self.queue_operation_hint(
+                "field_edited",
+                format!("Refreshed ports for fragment {fragment_id}"),
+                Some(format!("graph.fragments[{fragment_id}].ports")),
+                true,
+            );
+        }
+        changed
+    }
+
+    pub fn enter_fragment(&mut self, fragment_id: &str) -> bool {
+        let changed = self.authoring.enter_fragment(fragment_id);
+        if changed {
+            self.queue_operation_hint(
+                "fragment_entered",
+                format!("Entered fragment {fragment_id}"),
+                Some(format!("graph.fragments[{fragment_id}]")),
+                false,
+            );
+            self.mark_modified();
+        }
+        changed
+    }
+
+    pub fn leave_fragment(&mut self) -> bool {
+        let changed = self.authoring.leave_fragment();
+        if changed {
+            self.queue_operation_hint(
+                "fragment_left",
+                "Left active fragment",
+                Some("graph.active_fragment".to_string()),
+                false,
+            );
+            self.mark_modified();
+        }
+        changed
+    }
+
+    pub fn fragments(&self) -> Vec<visual_novel_engine::authoring::GraphFragment> {
+        self.authoring.list_fragments()
+    }
+
+    pub fn active_fragment(&self) -> Option<&str> {
+        self.authoring.active_fragment()
+    }
+
+    pub fn fragment_validation_issues(&self) -> Vec<visual_novel_engine::authoring::LintIssue> {
+        self.authoring.validate_fragments()
+    }
 }
 
 fn default_zoom() -> f32 {
@@ -214,3 +538,7 @@ mod scene_profile_tests;
 #[cfg(test)]
 #[path = "tests/node_graph_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/node_graph_interaction_tests.rs"]
+mod interaction_tests;

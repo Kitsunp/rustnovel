@@ -13,7 +13,7 @@ impl EditorWorkbench {
         if let Some(source_id) = source {
             self.connect_composer_node_from_selection(source_id, new_id);
         }
-        self.node_graph.selected = Some(new_id);
+        self.node_graph.set_single_selection(Some(new_id));
         self.selected_node = Some(new_id);
         self.node_graph.mark_modified();
         new_id
@@ -38,7 +38,7 @@ impl EditorWorkbench {
             StoryNode::End => return,
             _ => 0,
         };
-        self.node_graph.connect_port(source_id, port, new_id);
+        self.node_graph.connect_or_branch(source_id, port, new_id);
     }
 
     pub(super) fn build_entity_node_map(&self) -> std::collections::HashMap<u32, u32> {
@@ -175,9 +175,15 @@ impl EditorWorkbench {
         node_id: u32,
         mutation: crate::editor::visual_composer::ComposerNodeMutation,
     ) -> bool {
-        match mutation {
+        let before_value = self
+            .node_graph
+            .get_node(node_id)
+            .and_then(|node| serde_json::to_string(node).ok());
+        let changed = match mutation {
             crate::editor::visual_composer::ComposerNodeMutation::CharacterPosition {
                 name,
+                expression,
+                source_instance_index,
                 x,
                 y,
                 scale,
@@ -205,9 +211,12 @@ impl EditorWorkbench {
                         changed
                     }
                     StoryNode::Scene { characters, .. } => {
-                        if let Some(character) =
-                            characters.iter_mut().find(|entry| entry.name == name)
-                        {
+                        if let Some(character) = find_character_placement_mut(
+                            characters,
+                            &name,
+                            expression.as_deref(),
+                            source_instance_index,
+                        ) {
                             let changed = character.x != Some(x)
                                 || character.y != Some(y)
                                 || character.scale != scale;
@@ -220,7 +229,7 @@ impl EditorWorkbench {
                         } else {
                             characters.push(visual_novel_engine::CharacterPlacementRaw {
                                 name,
-                                expression: None,
+                                expression,
                                 position: None,
                                 x: Some(x),
                                 y: Some(y),
@@ -230,9 +239,12 @@ impl EditorWorkbench {
                         }
                     }
                     StoryNode::ScenePatch(patch) => {
-                        if let Some(character) =
-                            patch.add.iter_mut().find(|entry| entry.name == name)
-                        {
+                        if let Some(character) = find_character_placement_mut(
+                            &mut patch.add,
+                            &name,
+                            expression.as_deref(),
+                            source_instance_index,
+                        ) {
                             let changed = character.x != Some(x)
                                 || character.y != Some(y)
                                 || character.scale != scale;
@@ -245,7 +257,7 @@ impl EditorWorkbench {
                         } else {
                             patch.add.push(visual_novel_engine::CharacterPlacementRaw {
                                 name,
-                                expression: None,
+                                expression,
                                 position: None,
                                 x: Some(x),
                                 y: Some(y),
@@ -270,17 +282,38 @@ impl EditorWorkbench {
                     _ => false,
                 }
             }
+        };
+        if changed {
+            let after_value = self
+                .node_graph
+                .get_node(node_id)
+                .and_then(|node| serde_json::to_string(node).ok());
+            self.node_graph.queue_operation_hint_with_values(
+                "composer_drag_entity",
+                format!("Moved Visual Composer entity for node {node_id}"),
+                Some(format!("graph.nodes[{node_id}].visual.transform")),
+                before_value,
+                after_value,
+                true,
+            );
         }
+        changed
     }
 
+    #[cfg(test)]
     pub(crate) fn start_composer_runtime_preview_from_selection(&mut self) {
+        self.start_composer_runtime_preview_from_node(
+            self.selected_node.or(self.node_graph.selected),
+        );
+    }
+
+    pub(crate) fn start_composer_runtime_preview_from_node(&mut self, selected_node: Option<u32>) {
         if let Err(err) = self.sync_graph_to_script() {
             self.toast = Some(ToastState::error(format!("Composer test failed: {err}")));
             return;
         }
 
-        let target_label = self
-            .selected_node
+        let target_label = selected_node
             .filter(|node_id| {
                 self.node_graph
                     .get_node(*node_id)
@@ -332,6 +365,7 @@ impl EditorWorkbench {
             Ok(audio_commands) => {
                 self.apply_composer_audio_commands(audio_commands);
                 self.refresh_scene_from_engine_preview();
+                self.select_current_composer_runtime_node();
             }
             Err(err) => {
                 self.toast = Some(ToastState::warning(format!("Composer test stopped: {err}")));
@@ -356,6 +390,7 @@ impl EditorWorkbench {
                 self.player_state.reset_for_restart(0.0);
                 self.apply_composer_audio_commands(audio_commands);
                 self.refresh_scene_from_engine_preview();
+                self.select_current_composer_runtime_node();
                 self.toast = Some(ToastState::success("Composer test ready"));
             }
             Err(err) => {
@@ -376,10 +411,44 @@ impl EditorWorkbench {
         self.ensure_player_audio_backend();
         self.apply_player_audio_commands(audio_commands);
     }
+
+    fn select_current_composer_runtime_node(&mut self) {
+        let Some(engine) = self.engine.as_ref() else {
+            return;
+        };
+        let Some(node_id) = self
+            .node_graph
+            .authoring_graph()
+            .node_for_event_ip(engine.state().position)
+        else {
+            return;
+        };
+        self.node_graph.set_single_selection(Some(node_id));
+        self.selected_node = Some(node_id);
+        self.selected_entity = None;
+    }
 }
 
 fn character_match_key(name: &str, expression: Option<&str>) -> String {
     format!("{}|{}", name.trim(), expression.unwrap_or("").trim())
+}
+
+fn find_character_placement_mut<'a>(
+    characters: &'a mut [visual_novel_engine::CharacterPlacementRaw],
+    name: &str,
+    expression: Option<&str>,
+    source_instance_index: usize,
+) -> Option<&'a mut visual_novel_engine::CharacterPlacementRaw> {
+    let mut seen = 0usize;
+    for character in characters {
+        if character.name == name && character.expression.as_deref() == expression {
+            if seen == source_instance_index {
+                return Some(character);
+            }
+            seen += 1;
+        }
+    }
+    None
 }
 
 fn bind_owner(

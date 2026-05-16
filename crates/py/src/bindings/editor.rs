@@ -6,6 +6,8 @@ use pyo3::prelude::*;
 
 use visual_novel_engine::authoring::validate_authoring_graph;
 
+#[path = "editor_api_v2.rs"]
+mod api_v2;
 #[path = "editor_diagnostics.rs"]
 mod diagnostics;
 #[path = "editor_node_graph.rs"]
@@ -15,6 +17,11 @@ mod story_node;
 #[path = "editor_support.rs"]
 mod support;
 
+pub use api_v2::{
+    PyAuthoringValidationReport, PyComposerPreviewSession, PyComposerSnapshot, PyDiagnosticTarget,
+    PyEvidenceTrace, PyFieldPath, PyFragmentPort, PyGraphFragment, PyLayeredSceneObject,
+    PyOperationLogEntry, PySemanticValue, PyTraceAtom, PyTraceEdge, PyVerificationRun,
+};
 pub use diagnostics::{PyLintIssue, PyLintSeverity, PyQuickFixCandidate};
 pub use node_graph::PyNodeGraph;
 pub use story_node::PyStoryNode;
@@ -39,6 +46,20 @@ pub fn register_editor_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyQuickFixCandidate>()?;
     m.add_class::<PyLintSeverity>()?;
     m.add_class::<PyLintIssue>()?;
+    m.add_class::<PyDiagnosticTarget>()?;
+    m.add_class::<PyFieldPath>()?;
+    m.add_class::<PySemanticValue>()?;
+    m.add_class::<PyEvidenceTrace>()?;
+    m.add_class::<PyTraceAtom>()?;
+    m.add_class::<PyTraceEdge>()?;
+    m.add_class::<PyAuthoringValidationReport>()?;
+    m.add_class::<PyOperationLogEntry>()?;
+    m.add_class::<PyVerificationRun>()?;
+    m.add_class::<PyGraphFragment>()?;
+    m.add_class::<PyFragmentPort>()?;
+    m.add_class::<PyLayeredSceneObject>()?;
+    m.add_class::<PyComposerSnapshot>()?;
+    m.add_class::<PyComposerPreviewSession>()?;
     m.add_function(wrap_pyfunction!(py_validate_graph, m)?)?;
     Ok(())
 }

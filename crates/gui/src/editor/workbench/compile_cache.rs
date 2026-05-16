@@ -1,8 +1,10 @@
 use std::collections::hash_map::DefaultHasher;
+use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use crate::editor::compiler::CompilationResult;
+use visual_novel_engine::authoring::{collect_authoring_asset_refs, should_probe_asset_exists};
 
 use super::EditorWorkbench;
 
@@ -10,6 +12,7 @@ use super::EditorWorkbench;
 struct CompilationCacheKey {
     graph_hash: u64,
     project_root: Option<PathBuf>,
+    asset_state_hash: u64,
 }
 
 #[derive(Clone)]
@@ -26,6 +29,10 @@ pub(super) struct CompilationCache {
 }
 
 impl CompilationCache {
+    pub(super) fn invalidate(&mut self) {
+        self.entry = None;
+    }
+
     fn get_or_compile(
         &mut self,
         graph: &crate::editor::node_graph::NodeGraph,
@@ -66,11 +73,52 @@ impl CompilationCacheKey {
             .hash(&mut hasher);
         let project_root = project_root.map(Path::to_path_buf);
         project_root.hash(&mut hasher);
+        let asset_state_hash = project_root
+            .as_deref()
+            .map(|root| hash_referenced_asset_state(graph, root))
+            .unwrap_or_default();
+        asset_state_hash.hash(&mut hasher);
         Self {
             graph_hash: hasher.finish(),
             project_root,
+            asset_state_hash,
         }
     }
+}
+
+fn hash_referenced_asset_state(
+    graph: &crate::editor::node_graph::NodeGraph,
+    project_root: &Path,
+) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for asset in collect_authoring_asset_refs(graph.authoring_graph()) {
+        let asset = asset.trim();
+        if !should_probe_asset_exists(asset) {
+            continue;
+        }
+        asset.hash(&mut hasher);
+        let path = Path::new(asset);
+        let candidate = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            project_root.join(path)
+        };
+        match fs::metadata(&candidate) {
+            Ok(metadata) => {
+                true.hash(&mut hasher);
+                metadata.is_file().hash(&mut hasher);
+                metadata.len().hash(&mut hasher);
+                if let Ok(modified) = metadata.modified() {
+                    modified.hash(&mut hasher);
+                }
+            }
+            Err(error) => {
+                false.hash(&mut hasher);
+                error.kind().hash(&mut hasher);
+            }
+        }
+    }
+    hasher.finish()
 }
 
 impl EditorWorkbench {

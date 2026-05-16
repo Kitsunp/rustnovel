@@ -97,6 +97,13 @@ fn spec_es(code: LintCode) -> Spec {
         LintCode::DryRunParityMismatch => ("Diferencia preview/runtime", "Las firmas no coinciden.", "Editor y engine interpretan distinto la misma semantica.", "Migra la semantica al core o corrige el nodo.", "Firmas equivalentes."),
         LintCode::DryRunExtCallSimulated => ("ExtCall simulado", "Se encontro una llamada externa.", "La validacion headless no ejecuta plugins por seguridad.", "Documenta la capability o reemplaza por evento nativo.", "Capability declarada."),
         LintCode::DryRunFinished => ("Dry-run terminado", "La ruta probada termino limpio.", "La simulacion alcanzo EndOfScript.", "Revisa cobertura de rutas para ramas alternativas.", "Fin limpio."),
+        LintCode::FragmentPortStale => ("Puerto de fragment obsoleto", "Un puerto de fragment ya no coincide con las conexiones.", "Las conexiones externas cambiaron despues de crear el fragment.", "Refresca los puertos del fragment.", "Puertos sincronizados."),
+        LintCode::FragmentNodeMissing => ("Nodo faltante en fragment", "Un fragment referencia un nodo inexistente.", "El nodo fue eliminado o el documento esta corrupto.", "Quita el nodo del fragment o recrea el fragment.", "Fragment con nodos existentes."),
+        LintCode::FragmentOwnershipConflict => ("Conflicto de ownership de fragment", "Un nodo pertenece a mas de un fragment.", "Los fragments son contenedores estrictos.", "Deja el nodo en un solo fragment o desagrupa uno.", "Ownership unico."),
+        LintCode::FragmentEmpty => ("Fragment vacio", "Un fragment no contiene nodos.", "No hay flujo que agrupar o exportar.", "Agrega nodos al fragment o eliminalo.", "Fragment con contenido."),
+        LintCode::SubgraphCallInvalid => ("SubgraphCall invalido", "Una llamada de subgrafo no resuelve.", "El fragment o sus puertos no existen.", "Selecciona un fragment y puertos validos.", "Llamada resoluble."),
+        LintCode::FragmentRecursion => ("Recursion de fragment", "Un fragment se llama a si mismo directa o indirectamente.", "El flattening determinista no permite recursion.", "Rompe el ciclo de llamadas entre fragments.", "Grafo de fragments aciclico."),
+        LintCode::FragmentLabelCollision => ("Colision de labels de fragment", "Dos labels internos colisionan.", "El namespace determinista no es unico.", "Renombra fragments o nodos implicados.", "Labels internos unicos."),
     };
     Spec { title, what, root, why, consequence, fix, steps, expected }
 }
@@ -144,6 +151,13 @@ fn spec_en(code: LintCode) -> Spec {
         LintCode::DryRunParityMismatch => ("Preview/runtime mismatch", "Signatures do not match.", "Editor and engine interpret the same semantic differently.", "Move the semantic to core or fix the node.", "Equivalent signatures."),
         LintCode::DryRunExtCallSimulated => ("ExtCall simulated", "An external call was found.", "Headless validation does not execute plugins for safety.", "Document the capability or replace it with a native event.", "Declared capability."),
         LintCode::DryRunFinished => ("Dry-run finished", "The tested route ended cleanly.", "Simulation reached EndOfScript.", "Review route coverage for alternate branches.", "Clean finish."),
+        LintCode::FragmentPortStale => ("Stale fragment port", "A fragment port no longer matches connections.", "External connections changed after fragment creation.", "Refresh fragment ports.", "Synchronized ports."),
+        LintCode::FragmentNodeMissing => ("Missing fragment node", "A fragment references a missing node.", "The node was deleted or the document is corrupt.", "Remove the node from the fragment or recreate it.", "Fragment with existing nodes."),
+        LintCode::FragmentOwnershipConflict => ("Fragment ownership conflict", "A node belongs to more than one fragment.", "Fragments are strict containers.", "Keep the node in one fragment or ungroup one fragment.", "Single ownership."),
+        LintCode::FragmentEmpty => ("Empty fragment", "A fragment contains no nodes.", "There is no flow to group or export.", "Add nodes to the fragment or remove it.", "Fragment with content."),
+        LintCode::SubgraphCallInvalid => ("Invalid SubgraphCall", "A subgraph call cannot resolve.", "The fragment or selected ports do not exist.", "Select a valid fragment and ports.", "Resolvable call."),
+        LintCode::FragmentRecursion => ("Fragment recursion", "A fragment calls itself directly or indirectly.", "Deterministic flattening does not allow recursion.", "Break the call cycle between fragments.", "Acyclic fragment graph."),
+        LintCode::FragmentLabelCollision => ("Fragment label collision", "Two internal labels collide.", "Deterministic namespace is not unique.", "Rename involved fragments or nodes.", "Unique internal labels."),
     };
     Spec { title, what, root, why, consequence, fix, steps, expected }
 }

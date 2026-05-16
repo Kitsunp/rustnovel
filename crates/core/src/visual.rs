@@ -51,10 +51,8 @@ impl VisualState {
                 .retain(|character| !remove.contains(&character.name.as_ref()));
         }
         for patch_update in &patch.update {
-            if let Some(existing) = self
-                .characters
-                .iter_mut()
-                .find(|entry| entry.name.as_ref() == patch_update.name.as_ref())
+            if let Some(existing) =
+                unique_character_by_name_mut(&mut self.characters, patch_update.name.as_ref())
             {
                 if let Some(expression) = &patch_update.expression {
                     existing.expression = Some(expression.clone());
@@ -69,7 +67,7 @@ impl VisualState {
                 match self
                     .characters
                     .iter_mut()
-                    .find(|entry| entry.name.as_ref() == new_character.name.as_ref())
+                    .find(|entry| same_character_instance(entry, new_character))
                 {
                     Some(existing) => {
                         existing.expression = new_character.expression.clone();
@@ -86,10 +84,12 @@ impl VisualState {
 
     /// Sets a character's absolute position and scale.
     pub fn set_character_position(&mut self, pos: &SetCharacterPositionCompiled) {
-        if let Some(existing) = self
-            .characters
-            .iter_mut()
-            .find(|entry| entry.name.as_ref() == pos.name.as_ref())
+        let matching_count = character_name_match_count(&self.characters, pos.name.as_ref());
+        if matching_count > 1 {
+            return;
+        }
+        if let Some(existing) =
+            unique_character_by_name_mut(&mut self.characters, pos.name.as_ref())
         {
             existing.x = Some(pos.x);
             existing.y = Some(pos.y);
@@ -106,4 +106,34 @@ impl VisualState {
             scale: pos.scale,
         });
     }
+}
+
+fn same_character_instance(
+    left: &CharacterPlacementCompiled,
+    right: &CharacterPlacementCompiled,
+) -> bool {
+    left.name.as_ref() == right.name.as_ref() && left.expression == right.expression
+}
+
+fn character_name_match_count(characters: &[CharacterPlacementCompiled], name: &str) -> usize {
+    characters
+        .iter()
+        .filter(|entry| entry.name.as_ref() == name)
+        .take(2)
+        .count()
+}
+
+fn unique_character_by_name_mut<'a>(
+    characters: &'a mut [CharacterPlacementCompiled],
+    name: &str,
+) -> Option<&'a mut CharacterPlacementCompiled> {
+    let mut matches = characters
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.name.as_ref() == name);
+    let (index, _) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    characters.get_mut(index)
 }

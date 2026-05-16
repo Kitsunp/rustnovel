@@ -155,19 +155,7 @@ impl<'a> LintPanel<'a> {
 
                     if resp.clicked() {
                         *self.selected_issue = Some(idx);
-                        *self.selected_node = issue
-                            .node_id
-                            .or(issue.edge_from)
-                            .or_else(|| {
-                                issue
-                                    .event_ip
-                                    .and_then(|event_ip| self.graph.node_for_event_ip(event_ip))
-                            })
-                            .or_else(|| {
-                                issue.asset_path.as_ref().and_then(|asset| {
-                                    self.graph.first_node_referencing_asset(asset)
-                                })
-                            });
+                        *self.selected_node = self.graph.focus_node_for_issue(issue);
                     }
 
                     ui.separator();
@@ -217,7 +205,13 @@ impl<'a> LintPanel<'a> {
                         ui.label(explanation.why_failed);
                         ui.label(egui::RichText::new("How to fix").strong());
                         ui.label(explanation.how_to_fix);
-                        ui.hyperlink_to("docs_ref", explanation.docs_ref);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.hyperlink_to(
+                                "Open diagnostic docs",
+                                diagnostic_docs_url(&explanation.docs_ref),
+                            );
+                            ui.label(explanation.docs_ref);
+                        });
                     });
                 ui.separator();
 
@@ -283,4 +277,35 @@ fn render_fix_card(
         }
     });
     ui.separator();
+}
+
+fn diagnostic_docs_url(docs_ref: &str) -> String {
+    let (path, anchor) = docs_ref
+        .split_once('#')
+        .map_or((docs_ref, None), |(path, anchor)| (path, Some(anchor)));
+    let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let absolute = repo_root.join(path);
+    let normalized = absolute.to_string_lossy().replace('\\', "/");
+    let mut url = if normalized.starts_with('/') {
+        format!("file://{normalized}")
+    } else {
+        format!("file:///{normalized}")
+    };
+    if let Some(anchor) = anchor {
+        url.push('#');
+        url.push_str(anchor);
+    }
+    url
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn diagnostic_docs_url_resolves_relative_docs_ref_to_local_file_url() {
+        let url = super::diagnostic_docs_url("docs/diagnostics/authoring.md#val-asset-not-found");
+
+        assert!(url.starts_with("file:///"), "{url}");
+        assert!(url.contains("/docs/diagnostics/authoring.md#val-asset-not-found"));
+        assert!(!url.contains('\\'));
+    }
 }

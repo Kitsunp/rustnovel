@@ -1,14 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{
-    AudioActionRaw, ChoiceOptionRaw, ChoiceRaw, DialogueRaw, EventRaw, SceneTransitionRaw,
-    SceneUpdateRaw, ScriptRaw, SetCharacterPositionRaw, VnError, VnResult,
-};
+use crate::{EventRaw, ScriptRaw};
 
 use super::{AuthoringPosition, NodeGraph, StoryNode, NODE_VERTICAL_SPACING};
 
+mod export;
+mod export_validation;
 mod labels;
-use labels::append_fragment_labels;
+
+pub use export::{to_script, to_script_lossy_for_diagnostics, to_script_strict};
 
 pub fn from_script(script: &ScriptRaw) -> NodeGraph {
     let mut graph = NodeGraph::new();
@@ -51,6 +51,17 @@ pub fn from_script(script: &ScriptRaw) -> NodeGraph {
         connect_event_flow(&mut graph, event, idx, from_id, &flow_targets);
     }
 
+    autoconnect_dangling_nodes(&mut graph, script, &index_to_id, end_id);
+    graph.clear_modified();
+    graph
+}
+
+fn autoconnect_dangling_nodes(
+    graph: &mut NodeGraph,
+    script: &ScriptRaw,
+    index_to_id: &BTreeMap<usize, u32>,
+    end_id: u32,
+) {
     let nodes_with_outgoing = graph
         .connections()
         .map(|conn| conn.from)
@@ -74,60 +85,6 @@ pub fn from_script(script: &ScriptRaw) -> NodeGraph {
             graph.connect(id, end_id);
         }
     }
-
-    graph.clear_modified();
-    graph
-}
-
-pub fn to_script(graph: &NodeGraph) -> ScriptRaw {
-    let mut events = Vec::new();
-    let mut labels = BTreeMap::new();
-    let mut node_event_indices = BTreeMap::new();
-    let node_lookup = graph
-        .nodes()
-        .map(|(id, node, _)| (*id, node))
-        .collect::<BTreeMap<_, _>>();
-    let choice_targets = graph
-        .connections()
-        .map(|conn| ((conn.from, conn.from_port), conn.to))
-        .collect::<BTreeMap<_, _>>();
-
-    for id in graph.script_order_node_ids() {
-        let Some(node) = node_lookup.get(&id).copied() else {
-            continue;
-        };
-        if node.is_marker() {
-            continue;
-        }
-        let event_idx = events.len();
-        labels.insert(format!("node_{id}"), event_idx);
-        node_event_indices.insert(id, event_idx);
-        if let Some(event) = event_from_node(id, node, &node_lookup, &choice_targets) {
-            events.push(event);
-        }
-    }
-
-    append_fragment_labels(graph, &node_event_indices, &mut labels);
-    if events.iter().any(targets_end_label) {
-        labels.insert("__end".to_string(), events.len());
-    }
-    if !events.is_empty() {
-        labels.entry("start".to_string()).or_insert(0);
-    }
-    ScriptRaw::new(events, labels)
-}
-
-pub fn to_script_lossy_for_diagnostics(graph: &NodeGraph) -> ScriptRaw {
-    to_script(graph)
-}
-
-pub fn to_script_strict(graph: &NodeGraph) -> VnResult<ScriptRaw> {
-    validate_strict_graph_export(graph)?;
-    let script = to_script(graph);
-    script
-        .compile()
-        .map(|_| script)
-        .map_err(|err| VnError::invalid_script(format!("strict authoring export failed: {err}")))
 }
 
 fn should_autoconnect_dangling(event: &EventRaw) -> bool {
@@ -246,228 +203,4 @@ fn connect_target(
     } else if let Some(target_id) = targets.index_to_id.get(&target_idx).copied() {
         graph.connect_port(from_id, from_port, target_id);
     }
-}
-
-fn event_from_node(
-    id: u32,
-    node: &StoryNode,
-    node_lookup: &BTreeMap<u32, &StoryNode>,
-    choice_targets: &BTreeMap<(u32, usize), u32>,
-) -> Option<EventRaw> {
-    Some(match node {
-        StoryNode::Dialogue { speaker, text } => EventRaw::Dialogue(DialogueRaw {
-            speaker: speaker.clone(),
-            text: text.clone(),
-        }),
-        StoryNode::Choice { prompt, options } => EventRaw::Choice(ChoiceRaw {
-            prompt: prompt.clone(),
-            options: options
-                .iter()
-                .enumerate()
-                .map(|(port, text)| ChoiceOptionRaw {
-                    text: text.clone(),
-                    target: target_label(id, port, node_lookup, choice_targets),
-                })
-                .collect(),
-        }),
-        StoryNode::Scene {
-            background,
-            music,
-            characters,
-            ..
-        } => EventRaw::Scene(SceneUpdateRaw {
-            background: background.clone(),
-            music: music.clone(),
-            characters: characters.clone(),
-        }),
-        StoryNode::Jump { target } => EventRaw::Jump {
-            target: target.clone(),
-        },
-        StoryNode::SetVariable { key, value } => EventRaw::SetVar {
-            key: key.clone(),
-            value: *value,
-        },
-        StoryNode::SetFlag { key, value } => EventRaw::SetFlag {
-            key: key.clone(),
-            value: *value,
-        },
-        StoryNode::JumpIf { cond, target } => EventRaw::JumpIf {
-            cond: cond.clone(),
-            target: jump_if_target_label(id, target, node_lookup, choice_targets),
-        },
-        StoryNode::ScenePatch(patch) => EventRaw::Patch(patch.clone()),
-        StoryNode::AudioAction {
-            channel,
-            action,
-            asset,
-            volume,
-            fade_duration_ms,
-            loop_playback,
-        } => EventRaw::AudioAction(AudioActionRaw {
-            channel: channel.clone(),
-            action: action.clone(),
-            asset: asset.clone(),
-            volume: *volume,
-            fade_duration_ms: *fade_duration_ms,
-            loop_playback: *loop_playback,
-        }),
-        StoryNode::Transition {
-            kind,
-            duration_ms,
-            color,
-        } => EventRaw::Transition(SceneTransitionRaw {
-            kind: kind.clone(),
-            duration_ms: *duration_ms,
-            color: color.clone(),
-        }),
-        StoryNode::CharacterPlacement { name, x, y, scale } => {
-            EventRaw::SetCharacterPosition(SetCharacterPositionRaw {
-                name: name.clone(),
-                x: *x,
-                y: *y,
-                scale: *scale,
-            })
-        }
-        StoryNode::Generic(event) => event.clone(),
-        StoryNode::Start | StoryNode::End => return None,
-    })
-}
-
-fn jump_if_target_label(
-    node_id: u32,
-    fallback_target: &str,
-    node_lookup: &BTreeMap<u32, &StoryNode>,
-    choice_targets: &BTreeMap<(u32, usize), u32>,
-) -> String {
-    choice_targets
-        .get(&(node_id, 0))
-        .and_then(|target_id| {
-            node_lookup.get(target_id).map(|node| match node {
-                StoryNode::Start => "start".to_string(),
-                StoryNode::End => "__end".to_string(),
-                _ => format!("node_{target_id}"),
-            })
-        })
-        .unwrap_or_else(|| fallback_target.to_string())
-}
-
-fn target_label(
-    node_id: u32,
-    port: usize,
-    node_lookup: &BTreeMap<u32, &StoryNode>,
-    choice_targets: &BTreeMap<(u32, usize), u32>,
-) -> String {
-    choice_targets
-        .get(&(node_id, port))
-        .and_then(|target_id| {
-            node_lookup.get(target_id).map(|node| match node {
-                StoryNode::Start => "start".to_string(),
-                StoryNode::End => "__end".to_string(),
-                _ => format!("node_{target_id}"),
-            })
-        })
-        .unwrap_or_else(|| format!("__unlinked_node_{node_id}_option_{port}"))
-}
-
-fn targets_end_label(event: &EventRaw) -> bool {
-    match event {
-        EventRaw::Jump { target } | EventRaw::JumpIf { target, .. } => target == "__end",
-        EventRaw::Choice(choice) => choice.options.iter().any(|option| option.target == "__end"),
-        _ => false,
-    }
-}
-
-fn validate_strict_graph_export(graph: &NodeGraph) -> VnResult<()> {
-    let node_lookup = graph
-        .nodes()
-        .map(|(id, node, _)| (*id, node))
-        .collect::<BTreeMap<_, _>>();
-    let start_nodes = graph
-        .nodes()
-        .filter_map(|(id, node, _)| matches!(node, StoryNode::Start).then_some(*id))
-        .collect::<Vec<_>>();
-    let flow = graph.flow_analysis(&start_nodes);
-    let script_labels = to_script_lossy_for_diagnostics(graph)
-        .labels
-        .keys()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    let connected_ports = graph
-        .connections()
-        .map(|conn| (conn.from, conn.from_port))
-        .collect::<BTreeSet<_>>();
-
-    for (node_id, node, _) in graph.nodes() {
-        if !node.is_marker() && !flow.reachable.contains(node_id) {
-            return Err(VnError::invalid_script(format!(
-                "node {node_id} is unreachable/draft and cannot be exported in strict mode"
-            )));
-        }
-        if !node.is_marker() && !node.export_supported() {
-            return Err(VnError::invalid_script(format!(
-                "node {node_id} is not export-supported"
-            )));
-        }
-        match node {
-            StoryNode::Choice { options, .. } => {
-                if options.is_empty() {
-                    return Err(VnError::invalid_script(format!(
-                        "choice node {node_id} has no options"
-                    )));
-                }
-                for (port, option) in options.iter().enumerate() {
-                    if option.trim() == format!("Option {}", port + 1) {
-                        return Err(VnError::invalid_script(format!(
-                            "choice node {node_id} option {port} still uses placeholder text"
-                        )));
-                    }
-                    if !connected_ports.contains(&(*node_id, port)) {
-                        return Err(VnError::invalid_script(format!(
-                            "choice node {node_id} option {port} has no target"
-                        )));
-                    }
-                }
-            }
-            StoryNode::Jump { target } if target.trim().is_empty() => {
-                return Err(VnError::invalid_script(format!(
-                    "jump node {node_id} has empty target"
-                )));
-            }
-            StoryNode::Jump { target } if !script_labels.contains(target.trim()) => {
-                return Err(VnError::invalid_script(format!(
-                    "jump node {node_id} points to missing target '{}'",
-                    target.trim()
-                )));
-            }
-            StoryNode::JumpIf { target, .. } => {
-                let has_target_connection = connected_ports.contains(&(*node_id, 0));
-                if target.trim().is_empty() && !has_target_connection {
-                    return Err(VnError::invalid_script(format!(
-                        "jump_if node {node_id} has empty target"
-                    )));
-                }
-                if !has_target_connection
-                    && !target.trim().is_empty()
-                    && !script_labels.contains(target.trim())
-                {
-                    return Err(VnError::invalid_script(format!(
-                        "jump_if node {node_id} points to missing target '{}'",
-                        target.trim()
-                    )));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    for connection in graph.connections() {
-        if !node_lookup.contains_key(&connection.from) || !node_lookup.contains_key(&connection.to)
-        {
-            return Err(VnError::invalid_script(format!(
-                "connection {}:{} -> {} references a missing node",
-                connection.from, connection.from_port, connection.to
-            )));
-        }
-    }
-    Ok(())
 }

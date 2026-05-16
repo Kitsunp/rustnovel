@@ -35,7 +35,8 @@ impl UndoStack {
     /// # Contract
     /// - Clears redo stack (new action invalidates redo)
     /// - Limits history to MAX_UNDO_STATES
-    pub fn push(&mut self, state: NodeGraph) {
+    pub fn push(&mut self, mut state: NodeGraph) {
+        state.clear_operation_hint();
         // Clear redo stack - new action invalidates future
         self.redo_stack.clear();
 
@@ -59,9 +60,12 @@ impl UndoStack {
     /// - Some(state) if there was a state to restore
     /// - None if history is empty
     pub fn undo(&mut self, current: NodeGraph) -> Option<NodeGraph> {
-        if let Some(previous) = self.history.pop_back() {
+        if let Some(mut previous) = self.history.pop_back() {
             // Save current for redo
+            let mut current = current;
+            current.clear_operation_hint();
             self.redo_stack.push_back(current);
+            previous.clear_operation_hint();
             Some(previous)
         } else {
             None
@@ -74,9 +78,12 @@ impl UndoStack {
     /// - Some(state) if there was a state to redo
     /// - None if redo stack is empty
     pub fn redo(&mut self, current: NodeGraph) -> Option<NodeGraph> {
-        if let Some(next) = self.redo_stack.pop_back() {
+        if let Some(mut next) = self.redo_stack.pop_back() {
             // Save current for undo
+            let mut current = current;
+            current.clear_operation_hint();
             self.history.push_back(current);
+            next.clear_operation_hint();
             Some(next)
         } else {
             None

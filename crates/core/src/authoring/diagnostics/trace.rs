@@ -235,6 +235,7 @@ impl SemanticValue {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TraceAtomKind {
+    OperationApplied,
     FieldChanged,
     ValueRead,
     ResolverLookup,
@@ -264,6 +265,8 @@ pub enum TraceRelation {
     Caused,
     Affects,
     CanBeFixedBy,
+    FollowedBy,
+    Suggested,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -302,7 +305,34 @@ impl EvidenceTrace {
         );
         let mut atoms = Vec::new();
         let mut edges = Vec::new();
+        let operation_id = "operation_applied".to_string();
+        let field_changed_id = "field_changed".to_string();
+        let resolver_id = "resolver_lookup".to_string();
+        let rule_id = "rule_evaluated".to_string();
         let failure_id = "failure".to_string();
+        let consequence_id = "runtime_consequence".to_string();
+        let fix_id = "fix_suggested".to_string();
+        atoms.push(TraceAtom {
+            atom_id: operation_id.clone(),
+            kind: TraceAtomKind::OperationApplied,
+            summary: "Current authoring document state was inspected".to_string(),
+            target: target.clone(),
+            field_path: field_path.clone(),
+            semantic_value: None,
+        });
+        atoms.push(TraceAtom {
+            atom_id: field_changed_id.clone(),
+            kind: TraceAtomKind::FieldChanged,
+            summary: "Relevant authoring field participates in validation".to_string(),
+            target: target.clone(),
+            field_path: field_path.clone(),
+            semantic_value: None,
+        });
+        edges.push(TraceEdge {
+            from: operation_id.clone(),
+            to: field_changed_id.clone(),
+            relation: TraceRelation::FollowedBy,
+        });
         for (index, value) in semantic_values.iter().enumerate() {
             let atom_id = format!("value_{index}");
             atoms.push(TraceAtom {
@@ -314,18 +344,86 @@ impl EvidenceTrace {
                 semantic_value: Some(value.clone()),
             });
             edges.push(TraceEdge {
+                from: field_changed_id.clone(),
+                to: atom_id.clone(),
+                relation: TraceRelation::Produced,
+            });
+            edges.push(TraceEdge {
                 from: atom_id,
-                to: failure_id.clone(),
+                to: resolver_id.clone(),
+                relation: TraceRelation::ConsumedBy,
+            });
+        }
+        if semantic_values.is_empty() {
+            edges.push(TraceEdge {
+                from: field_changed_id.clone(),
+                to: resolver_id.clone(),
                 relation: TraceRelation::ConsumedBy,
             });
         }
         atoms.push(TraceAtom {
-            atom_id: failure_id,
+            atom_id: resolver_id.clone(),
+            kind: TraceAtomKind::ResolverLookup,
+            summary: "Resolver looked up the referenced semantic value".to_string(),
+            target: target.clone(),
+            field_path: field_path.clone(),
+            semantic_value: None,
+        });
+        atoms.push(TraceAtom {
+            atom_id: rule_id.clone(),
+            kind: TraceAtomKind::RuleEvaluated,
+            summary: format!(
+                "Validation rule {} evaluated the resolved value",
+                code.label()
+            ),
+            target: target.clone(),
+            field_path: field_path.clone(),
+            semantic_value: None,
+        });
+        edges.push(TraceEdge {
+            from: resolver_id,
+            to: rule_id.clone(),
+            relation: TraceRelation::ConsumedBy,
+        });
+        atoms.push(TraceAtom {
+            atom_id: failure_id.clone(),
             kind: TraceAtomKind::Failure,
             summary: failure_summary.into(),
+            target: target.clone(),
+            field_path: field_path.clone(),
+            semantic_value: None,
+        });
+        edges.push(TraceEdge {
+            from: rule_id,
+            to: failure_id.clone(),
+            relation: TraceRelation::FailedAt,
+        });
+        atoms.push(TraceAtom {
+            atom_id: consequence_id.clone(),
+            kind: TraceAtomKind::RuntimeConsequence,
+            summary: "If exported unchanged, runtime/preview behavior may diverge or fail"
+                .to_string(),
+            target: target.clone(),
+            field_path: field_path.clone(),
+            semantic_value: None,
+        });
+        edges.push(TraceEdge {
+            from: failure_id.clone(),
+            to: consequence_id,
+            relation: TraceRelation::Affects,
+        });
+        atoms.push(TraceAtom {
+            atom_id: fix_id.clone(),
+            kind: TraceAtomKind::FixSuggested,
+            summary: "A manual edit or quick-fix can resolve the diagnostic".to_string(),
             target,
             field_path,
             semantic_value: None,
+        });
+        edges.push(TraceEdge {
+            from: failure_id,
+            to: fix_id,
+            relation: TraceRelation::CanBeFixedBy,
         });
         Self {
             trace_id,

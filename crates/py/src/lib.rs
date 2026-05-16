@@ -3,10 +3,13 @@ mod bindings;
 use pyo3::prelude::*;
 
 pub use bindings::{
-    register_editor_classes, vn_error_to_py, PyAudio, PyEngine, PyGraphEdge, PyGraphNode,
-    PyGraphStats, PyKeyframe, PyLintIssue, PyLintSeverity, PyNodeGraph, PyQuickFixCandidate,
-    PyResourceConfig, PyScriptBuilder, PyStoryGraph, PyStoryNode, PyTimeline, PyTrack, PyVnConfig,
-    StepResult,
+    register_editor_classes, vn_error_to_py, PyAudio, PyAuthoringValidationReport,
+    PyComposerPreviewSession, PyComposerSnapshot, PyDiagnosticTarget, PyEngine, PyEvidenceTrace,
+    PyFieldPath, PyFragmentPort, PyGraphEdge, PyGraphFragment, PyGraphNode, PyGraphStats,
+    PyKeyframe, PyLayeredSceneObject, PyLintIssue, PyLintSeverity, PyNodeGraph,
+    PyOperationLogEntry, PyQuickFixCandidate, PyResourceConfig, PyScriptBuilder, PySemanticValue,
+    PyStoryGraph, PyStoryNode, PyTimeline, PyTraceAtom, PyTraceEdge, PyTrack, PyVerificationRun,
+    PyVnConfig, StepResult,
 };
 
 #[pymodule]
@@ -44,12 +47,13 @@ fn run_visual_novel(script_json: String, _config: Option<PyVnConfig>) -> PyResul
 }
 
 #[pyfunction]
-#[pyo3(signature = (project_root, output_root, entry_script=None, target="windows"))]
+#[pyo3(signature = (project_root, output_root, entry_script=None, target="windows", runtime_artifact=None))]
 fn export_bundle(
     project_root: String,
     output_root: String,
     entry_script: Option<String>,
     target: &str,
+    runtime_artifact: Option<String>,
 ) -> PyResult<String> {
     let target_platform = match target.trim().to_ascii_lowercase().as_str() {
         "windows" | "win" => ::visual_novel_engine::ExportTargetPlatform::Windows,
@@ -66,7 +70,7 @@ fn export_bundle(
         output_root: output_root.into(),
         target_platform,
         entry_script: entry_script.map(Into::into),
-        runtime_artifact: None,
+        runtime_artifact: runtime_artifact.map(Into::into),
         integrity: ::visual_novel_engine::BundleIntegrity::None,
         output_layout_version: 1,
         hmac_key: None,

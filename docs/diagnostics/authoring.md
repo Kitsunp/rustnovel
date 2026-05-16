@@ -116,6 +116,34 @@ Generated placeholder options must be replaced by final player-facing text.
 
 Unsupported authoring semantics must be migrated to native events or documented as capabilities.
 
+## val-fragment-port-stale
+
+Fragment input/output ports no longer match the current external connections and must be refreshed before export.
+
+## val-fragment-node-missing
+
+A fragment references a node that no longer exists in the authoring graph.
+
+## val-fragment-ownership-conflict
+
+A node can belong to only one fragment because fragments are strict containers, not shared views.
+
+## val-fragment-empty
+
+Fragments must contain at least one authoring node to be callable and exportable.
+
+## val-subgraph-call-invalid
+
+SubgraphCall nodes must reference an existing fragment and valid entry/exit ports.
+
+## val-fragment-recursion
+
+Recursive fragment calls are blocked because export flattening is deterministic and non-recursive.
+
+## val-fragment-label-collision
+
+Fragment-internal labels must not collide after deterministic namespacing.
+
 ## val-generic-unchecked
 
 Generic events require review because the editor cannot fully interpret their semantics.

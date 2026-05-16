@@ -10,8 +10,11 @@ pub mod types;
 pub use audio::PyAudio;
 pub use builder::PyScriptBuilder;
 pub use editor::{
-    register_editor_classes, PyLintIssue, PyLintSeverity, PyNodeGraph, PyQuickFixCandidate,
-    PyStoryNode,
+    register_editor_classes, PyAuthoringValidationReport, PyComposerPreviewSession,
+    PyComposerSnapshot, PyDiagnosticTarget, PyEvidenceTrace, PyFieldPath, PyFragmentPort,
+    PyGraphFragment, PyLayeredSceneObject, PyLintIssue, PyLintSeverity, PyNodeGraph,
+    PyOperationLogEntry, PyQuickFixCandidate, PySemanticValue, PyStoryNode, PyTraceAtom,
+    PyTraceEdge, PyVerificationRun,
 };
 pub use engine::{PyEngine, StepResult};
 pub use graph::{PyGraphEdge, PyGraphNode, PyGraphStats, PyStoryGraph};

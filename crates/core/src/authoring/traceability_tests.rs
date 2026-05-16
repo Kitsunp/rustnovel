@@ -115,7 +115,7 @@ fn verification_run_tracks_resolved_and_introduced_diagnostics() {
 
     let run = VerificationRun::from_diagnostics("op-1", "contract", &fingerprint, &before, &after);
 
-    assert_eq!(run.schema, "vnengine.verification_run.v1");
+    assert_eq!(run.schema, "vnengine.verification_run.v2");
     assert_eq!(run.operation_id, "op-1");
     assert_eq!(run.semantic_fingerprint_sha256, fingerprint.semantic_sha256);
     assert_eq!(run.diagnostic_ids.len(), 1);
@@ -125,7 +125,7 @@ fn verification_run_tracks_resolved_and_introduced_diagnostics() {
     let log = OperationLogEntry::new("op-1", "quick_fix", "applied", "fixed")
         .with_diagnostic(&before[0])
         .with_fingerprint(&fingerprint);
-    assert_eq!(log.schema, "vnengine.operation_log.v1");
+    assert_eq!(log.schema, "vnengine.operation_log.v2");
     assert_eq!(log.diagnostic_id, Some(before[0].diagnostic_id()));
     assert_eq!(
         log.semantic_fingerprint_sha256.as_deref(),
@@ -224,6 +224,59 @@ fn fingerprints_split_story_layout_assets_and_document_hashes() {
 }
 
 #[test]
+fn document_fingerprint_tracks_composer_overrides_without_semantic_stale() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let scene = graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/room.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        },
+        pos(0.0, 90.0),
+    );
+    graph.connect(start, scene);
+
+    let script = graph.to_script_lossy_for_diagnostics();
+    let mut before_doc = AuthoringDocument::new(graph.clone());
+    let mut after_doc = AuthoringDocument::new(graph);
+    after_doc.composer_layer_overrides.insert(
+        "node:2:Background:0:graph_nodes_2_visual_background".to_string(),
+        composer::LayerOverride {
+            visible: false,
+            locked: true,
+        },
+    );
+
+    let before = build_authoring_document_report_fingerprint(&before_doc, &script);
+    let after = build_authoring_document_report_fingerprint(&after_doc, &script);
+
+    assert_eq!(
+        before.story_semantic_sha256, after.story_semantic_sha256,
+        "composer-only overrides must not stale semantic diagnostic reports"
+    );
+    assert_ne!(
+        before.layout_sha256, after.layout_sha256,
+        "composer layer overrides are visual layout state"
+    );
+    assert_ne!(
+        before.full_document_sha256, after.full_document_sha256,
+        "saved authoring document metadata must be fingerprinted"
+    );
+
+    before_doc.operation_log.push(OperationLogEntry::new_typed(
+        OperationKind::LayerVisibilityChanged,
+        "applied",
+        "layer visibility changed",
+    ));
+    let with_log = build_authoring_document_report_fingerprint(&before_doc, &script);
+    assert_eq!(before.story_semantic_sha256, with_log.story_semantic_sha256);
+    assert_eq!(before.layout_sha256, with_log.layout_sha256);
+    assert_ne!(before.full_document_sha256, with_log.full_document_sha256);
+}
+
+#[test]
 fn evidence_trace_explains_asset_jump_and_generic_failures() {
     let mut graph = NodeGraph::new();
     let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
@@ -272,6 +325,81 @@ fn evidence_trace_explains_asset_jump_and_generic_failures() {
             "{code:?} should include evidence"
         );
     }
+}
+
+#[test]
+fn evidence_trace_chain_is_connected_for_diagnostics_without_semantic_values() {
+    let graph = NodeGraph::new();
+    let issue = validate_authoring_graph_no_io(&graph)
+        .into_iter()
+        .find(|issue| issue.code == LintCode::MissingStart)
+        .expect("missing start diagnostic");
+    let trace = issue.evidence_trace.expect("evidence trace");
+    let atom_ids = trace
+        .atoms
+        .iter()
+        .map(|atom| atom.atom_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    for required in [
+        "operation_applied",
+        "field_changed",
+        "resolver_lookup",
+        "rule_evaluated",
+        "failure",
+        "runtime_consequence",
+        "fix_suggested",
+    ] {
+        assert!(atom_ids.contains(required), "missing atom {required}");
+    }
+    for (from, to) in [
+        ("operation_applied", "field_changed"),
+        ("field_changed", "resolver_lookup"),
+        ("resolver_lookup", "rule_evaluated"),
+        ("rule_evaluated", "failure"),
+        ("failure", "runtime_consequence"),
+        ("failure", "fix_suggested"),
+    ] {
+        assert!(
+            trace
+                .edges
+                .iter()
+                .any(|edge| edge.from == from && edge.to == to),
+            "missing trace edge {from} -> {to}"
+        );
+    }
+}
+
+#[test]
+fn validation_report_imports_legacy_v1_as_untrusted_v2() {
+    let payload = serde_json::json!({
+        "schema": "vneditor.diagnostic_report.v1",
+        "issues": [
+            {
+                "phase": "GRAPH",
+                "code": "VAL_ASSET_NOT_FOUND",
+                "severity": "error",
+                "asset_path": "bg/missing.png",
+                "message_es": "Asset faltante",
+                "message_en": "Missing asset"
+            }
+        ]
+    });
+
+    let report = AuthoringValidationReport::from_json(&payload.to_string())
+        .expect("legacy report should import");
+
+    assert_eq!(report.schema, "vnengine.authoring_validation_report.v2");
+    assert_eq!(report.error_count, 1);
+    assert_eq!(
+        report.fingerprints.story_semantic_sha256,
+        "legacy-untrusted"
+    );
+    assert_eq!(report.issues[0].code, "VAL_ASSET_NOT_FOUND");
+    assert_eq!(
+        report.issues[0].message_args["legacy_schema"],
+        "vneditor.diagnostic_report.v1"
+    );
 }
 
 #[test]
@@ -339,12 +467,133 @@ fn graph_fragments_are_stable_authoring_metadata() {
     assert_eq!(fragment.outputs[0].node_id, Some(choice));
 
     let script = graph.to_script();
-    assert!(script.labels.contains_key("fragment_intro_loop_node_1"));
-    assert!(script
-        .labels
-        .keys()
-        .any(|label| label.starts_with("fragment_intro_loop_port_out_")));
+    assert!(
+        !script
+            .labels
+            .keys()
+            .any(|label| label.contains("fragment_intro_loop")),
+        "fragment labels are metadata and should not become public runtime contract without a call"
+    );
     let flow = graph.flow_analysis(&[start]);
     assert!(flow.reachable.contains(&choice));
     assert!(flow.reachable_cycle_nodes.contains(&choice));
+}
+
+#[test]
+fn subgraph_call_strict_export_flattens_fragment_with_call_namespace() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let fragment_a = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "Inside fragment A".to_string(),
+        },
+        pos(300.0, 0.0),
+    );
+    let fragment_b = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "Inside fragment B".to_string(),
+        },
+        pos(300.0, 90.0),
+    );
+    graph.connect(fragment_a, fragment_b);
+    assert!(graph.create_fragment(
+        "intro_fragment",
+        "Intro Fragment",
+        vec![fragment_a, fragment_b]
+    ));
+
+    let call = graph.add_node(
+        StoryNode::SubgraphCall {
+            fragment_id: "intro_fragment".to_string(),
+            entry_port: None,
+            exit_port: None,
+        },
+        pos(0.0, 90.0),
+    );
+    let after = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "After fragment".to_string(),
+        },
+        pos(0.0, 180.0),
+    );
+    let end = graph.add_node(StoryNode::End, pos(0.0, 270.0));
+    graph.connect(start, call);
+    graph.connect(call, after);
+    graph.connect(after, end);
+
+    let script = graph
+        .to_script_strict()
+        .expect("strict export should flatten subgraph call");
+    assert!(script.labels.contains_key(&format!("node_{call}")));
+    assert!(script
+        .labels
+        .contains_key(&format!("__call_{call}_node_{fragment_a}")));
+    assert!(matches!(
+        script.events.first(),
+        Some(EventRaw::Dialogue(dialogue)) if dialogue.text == "Inside fragment A"
+    ));
+    assert!(
+        script
+            .compile()
+            .expect("flattened subgraph script compiles")
+            .events
+            .len()
+            >= 3
+    );
+}
+
+#[test]
+fn fragment_ownership_conflict_is_blocked_at_creation() {
+    let mut graph = NodeGraph::new();
+    let node = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "Shared".to_string(),
+        },
+        pos(0.0, 0.0),
+    );
+
+    assert!(graph.create_fragment("one", "One", vec![node]));
+    assert!(
+        !graph.create_fragment("two", "Two", vec![node]),
+        "a node must not belong to two fragments"
+    );
+}
+
+#[test]
+fn fragment_validation_detects_indirect_subgraph_recursion() {
+    let mut graph = NodeGraph::new();
+    let call_b = graph.add_node(
+        StoryNode::SubgraphCall {
+            fragment_id: "b".to_string(),
+            entry_port: None,
+            exit_port: None,
+        },
+        pos(0.0, 0.0),
+    );
+    let call_a = graph.add_node(
+        StoryNode::SubgraphCall {
+            fragment_id: "a".to_string(),
+            entry_port: None,
+            exit_port: None,
+        },
+        pos(300.0, 0.0),
+    );
+    assert!(graph.create_fragment("a", "A", vec![call_b]));
+    assert!(graph.create_fragment("b", "B", vec![call_a]));
+
+    let recursion = graph
+        .validate_fragments()
+        .into_iter()
+        .filter(|issue| issue.code == LintCode::FragmentRecursion)
+        .collect::<Vec<_>>();
+
+    assert_eq!(recursion.len(), 2);
+    assert!(recursion
+        .iter()
+        .any(|issue| issue.message.contains("a -> b -> a")));
+    assert!(recursion.iter().all(|issue| issue.evidence_trace.is_some()));
 }

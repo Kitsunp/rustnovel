@@ -16,6 +16,7 @@ use super::node_types::{
     node_visual_height, ContextMenu, StoryNode, StoryNodeVisualExt, NODE_WIDTH,
 };
 use super::undo::UndoStack;
+use visual_novel_engine::{CondRaw, EventRaw, ScenePatchRaw};
 
 // =============================================================================
 // NodeEditorPanel - UI Widget
@@ -75,7 +76,7 @@ impl<'a> NodeEditorPanel<'a> {
                 let pos = egui::pos2(100.0, 100.0) - self.graph.pan().to_pos2().to_vec2();
                 if ui.button("💬 Dialogue").clicked() {
                     let id = self.graph.add_node(StoryNode::default(), pos);
-                    self.graph.selected = Some(id);
+                    self.graph.set_single_selection(Some(id));
                     ui.close_menu();
                 }
                 if ui.button("🔀 Choice").clicked() {
@@ -86,7 +87,7 @@ impl<'a> NodeEditorPanel<'a> {
                         },
                         pos,
                     );
-                    self.graph.selected = Some(id);
+                    self.graph.set_single_selection(Some(id));
                     ui.close_menu();
                 }
                 if ui.button("🎬 Scene").clicked() {
@@ -99,7 +100,7 @@ impl<'a> NodeEditorPanel<'a> {
                         },
                         pos,
                     );
-                    self.graph.selected = Some(id);
+                    self.graph.set_single_selection(Some(id));
                     ui.close_menu();
                 }
                 if ui.button("↪ Jump").clicked() {
@@ -109,7 +110,7 @@ impl<'a> NodeEditorPanel<'a> {
                         },
                         pos,
                     );
-                    self.graph.selected = Some(id);
+                    self.graph.set_single_selection(Some(id));
                     ui.close_menu();
                 }
                 ui.separator();
@@ -117,15 +118,26 @@ impl<'a> NodeEditorPanel<'a> {
                     let id = self
                         .graph
                         .add_node(StoryNode::Start, egui::pos2(50.0, 30.0));
-                    self.graph.selected = Some(id);
+                    self.graph.set_single_selection(Some(id));
                     ui.close_menu();
                 }
                 if ui.button("⏹ End").clicked() {
                     let id = self
                         .graph
                         .add_node(StoryNode::End, egui::pos2(200.0, 300.0));
-                    self.graph.selected = Some(id);
+                    self.graph.set_single_selection(Some(id));
                     ui.close_menu();
+                }
+            });
+
+            ui.menu_button("More Nodes", |ui| {
+                let pos = egui::pos2(120.0, 120.0) - self.graph.pan().to_pos2().to_vec2();
+                for (label, node) in extended_node_palette_items() {
+                    if ui.button(label).clicked() {
+                        let id = self.graph.add_node(node, pos);
+                        self.graph.set_single_selection(Some(id));
+                        ui.close_menu();
+                    }
                 }
             });
 
@@ -146,17 +158,13 @@ impl<'a> NodeEditorPanel<'a> {
                 .add_enabled(self.undo_stack.can_undo(), egui::Button::new("↩"))
                 .clicked()
             {
-                if let Some(previous) = self.undo_stack.undo(self.graph.clone()) {
-                    *self.graph = previous;
-                }
+                self.apply_undo_shortcut();
             }
             if ui
                 .add_enabled(self.undo_stack.can_redo(), egui::Button::new("↪"))
                 .clicked()
             {
-                if let Some(next) = self.undo_stack.redo(self.graph.clone()) {
-                    *self.graph = next;
-                }
+                self.apply_redo_shortcut();
             }
 
             ui.separator();
@@ -216,41 +224,37 @@ impl<'a> NodeEditorPanel<'a> {
     }
 
     fn handle_input(&mut self, ui: &egui::Ui, response: &egui::Response) {
-        let mut is_panning = response.dragged_by(egui::PointerButton::Middle)
+        let is_panning = response.dragged_by(egui::PointerButton::Middle)
             || (response.dragged() && ui.input(|i| i.modifiers.ctrl));
-
-        if response.dragged_by(egui::PointerButton::Primary)
-            && !is_panning
-            && self.graph.dragging_node.is_none()
-        {
-            // Check if we started dragging on a node
-            if let Some(_pos) = response.interact_pointer_pos() {
-                // We need the START position of the drag, not current.
-                if let Some(start_pos) = ui.input(|i| i.pointer.press_origin()) {
-                    let mut started_on_node = false;
-                    for (_, node, n_pos) in self.graph.nodes() {
-                        let screen_pos = self.graph_to_screen(response.rect, n_pos);
-                        let size =
-                            egui::vec2(NODE_WIDTH, node_visual_height(&node)) * self.graph.zoom();
-                        let rect = egui::Rect::from_min_size(screen_pos, size);
-                        if rect.contains(start_pos) {
-                            started_on_node = true;
-                            break;
-                        }
-                    }
-
-                    if !started_on_node {
-                        is_panning = true;
-                    }
-                }
-            }
-        }
 
         if is_panning {
             let delta = ui.input(|i| i.pointer.delta()) / self.graph.zoom();
             if delta.length_sq() > 0.0 {
                 self.graph.pan_by(delta);
             }
+        }
+
+        // Zoom with scroll wheel only when pointer is over the graph canvas.
+        // This avoids stealing wheel input from dialogs/panels (e.g. save diff).
+        if response.hovered() {
+            let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll_delta.abs() > 0.0 {
+                self.graph.zoom_by(scroll_delta * 0.002);
+            }
+        }
+
+        // Escape to cancel modes
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.graph.clear_transient_interaction();
+        }
+
+        // Click outside to close menu
+        if response.clicked() && self.graph.context_menu.is_some() {
+            self.graph.context_menu = None;
+        }
+
+        if !graph_shortcuts_enabled(ui, response, self.graph) {
+            return;
         }
 
         // Pan with Arrow Keys
@@ -272,24 +276,14 @@ impl<'a> NodeEditorPanel<'a> {
                 .pan_by(egui::vec2(-pan_speed, 0.0) / self.graph.zoom());
         }
 
-        // Zoom with scroll wheel only when pointer is over the graph canvas.
-        // This avoids stealing wheel input from dialogs/panels (e.g. save diff).
-        if response.hovered() {
-            let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll_delta.abs() > 0.0 {
-                self.graph.zoom_by(scroll_delta * 0.002);
-            }
+        // === Undo/Redo Keyboard Shortcuts ===
+        if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z)) {
+            self.apply_undo_shortcut();
+            return;
         }
-
-        // Escape to cancel modes
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.graph.connecting_from = None;
-            self.graph.context_menu = None;
-        }
-
-        // Click outside to close menu
-        if response.clicked() && self.graph.context_menu.is_some() {
-            self.graph.context_menu = None;
+        if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Y)) {
+            self.apply_redo_shortcut();
+            return;
         }
 
         // === Zoom Keyboard Shortcuts ===
@@ -308,9 +302,13 @@ impl<'a> NodeEditorPanel<'a> {
 
         // === Node Action Shortcuts ===
         if ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
-            if let Some(id) = self.graph.selected {
-                self.graph.remove_node(id);
+            let ids = self.graph.selected_node_ids();
+            if !ids.is_empty() {
+                for id in ids {
+                    self.graph.remove_node(id);
+                }
                 self.graph.selected = None;
+                self.graph.selected_nodes.clear();
             }
         }
         if ui.input(|i| i.key_pressed(egui::Key::E)) {
@@ -319,9 +317,39 @@ impl<'a> NodeEditorPanel<'a> {
             }
         }
         if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::D)) {
-            if let Some(id) = self.graph.selected {
-                self.graph.duplicate_node(id);
-            }
+            self.graph.duplicate_selected_nodes();
+        }
+    }
+
+    fn apply_undo_shortcut(&mut self) -> bool {
+        if let Some(previous) = self.undo_stack.undo(self.graph.clone()) {
+            *self.graph = previous;
+            self.graph.queue_operation_hint(
+                "undo",
+                "Undo graph editor mutation",
+                Some("graph".to_string()),
+                false,
+            );
+            self.graph.mark_modified();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn apply_redo_shortcut(&mut self) -> bool {
+        if let Some(next) = self.undo_stack.redo(self.graph.clone()) {
+            *self.graph = next;
+            self.graph.queue_operation_hint(
+                "redo",
+                "Redo graph editor mutation",
+                Some("graph".to_string()),
+                false,
+            );
+            self.graph.mark_modified();
+            true
+        } else {
+            false
         }
     }
 
@@ -396,7 +424,93 @@ impl<'a> NodeEditorPanel<'a> {
     }
 }
 
+pub(crate) fn extended_node_palette_items() -> Vec<(&'static str, StoryNode)> {
+    vec![
+        (
+            "Scene Patch",
+            StoryNode::ScenePatch(ScenePatchRaw::default()),
+        ),
+        (
+            "Branch If",
+            StoryNode::JumpIf {
+                target: "label".to_string(),
+                cond: CondRaw::Flag {
+                    key: "flag".to_string(),
+                    is_set: true,
+                },
+            },
+        ),
+        (
+            "Set Variable",
+            StoryNode::SetVariable {
+                key: "variable".to_string(),
+                value: 0,
+            },
+        ),
+        (
+            "Set Flag",
+            StoryNode::SetFlag {
+                key: "flag".to_string(),
+                value: true,
+            },
+        ),
+        (
+            "Audio",
+            StoryNode::AudioAction {
+                channel: "bgm".to_string(),
+                action: "play".to_string(),
+                asset: None,
+                volume: Some(1.0),
+                fade_duration_ms: Some(0),
+                loop_playback: Some(true),
+            },
+        ),
+        (
+            "Transition",
+            StoryNode::Transition {
+                kind: "fade_black".to_string(),
+                duration_ms: 500,
+                color: Some("#000000".to_string()),
+            },
+        ),
+        (
+            "Character Placement",
+            StoryNode::CharacterPlacement {
+                name: "Character".to_string(),
+                x: 0,
+                y: 0,
+                scale: Some(1.0),
+            },
+        ),
+        (
+            "ExtCall",
+            StoryNode::Generic(EventRaw::ExtCall {
+                command: "command".to_string(),
+                args: Vec::new(),
+            }),
+        ),
+        (
+            "Subgraph Call",
+            StoryNode::SubgraphCall {
+                fragment_id: String::new(),
+                entry_port: None,
+                exit_port: None,
+            },
+        ),
+    ]
+}
+
+fn graph_shortcuts_enabled(ui: &egui::Ui, response: &egui::Response, graph: &NodeGraph) -> bool {
+    !ui.ctx().wants_keyboard_input()
+        && graph_shortcut_scope_active(response.hovered(), graph.has_active_interaction())
+}
+
+fn graph_shortcut_scope_active(response_hovered: bool, interaction_active: bool) -> bool {
+    response_hovered || interaction_active
+}
+
 mod render;
+mod render_helpers;
 #[cfg(test)]
 #[path = "tests/node_editor_tests.rs"]
 mod tests;

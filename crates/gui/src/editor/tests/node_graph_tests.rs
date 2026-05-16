@@ -46,6 +46,53 @@ fn test_node_graph_connect() {
 }
 
 #[test]
+fn diagnostic_focus_uses_granular_v2_target_when_node_id_is_missing() {
+    let mut graph = NodeGraph::new();
+    let choice = graph.add_node(
+        StoryNode::Choice {
+            prompt: "Route?".to_string(),
+            options: vec!["A".to_string()],
+        },
+        pos(0.0, 0.0),
+    );
+    let issue = visual_novel_engine::authoring::LintIssue::warning(
+        None,
+        visual_novel_engine::authoring::ValidationPhase::Graph,
+        visual_novel_engine::authoring::LintCode::ChoiceOptionUnlinked,
+        "option has no target",
+    )
+    .with_target(
+        visual_novel_engine::authoring::DiagnosticTarget::ChoiceOption {
+            node_id: choice,
+            option_index: 0,
+        },
+    );
+
+    assert_eq!(graph.focus_node_for_issue(&issue), Some(choice));
+}
+
+#[test]
+fn diagnostic_focus_falls_back_to_field_path_node_reference() {
+    let mut graph = NodeGraph::new();
+    let dialogue = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "Hello".to_string(),
+        },
+        pos(0.0, 0.0),
+    );
+    let issue = visual_novel_engine::authoring::LintIssue::warning(
+        None,
+        visual_novel_engine::authoring::ValidationPhase::Graph,
+        visual_novel_engine::authoring::LintCode::GenericEventUnchecked,
+        "field needs review",
+    )
+    .with_field_path(format!("graph.nodes[{dialogue}].text"));
+
+    assert_eq!(graph.focus_node_for_issue(&issue), Some(dialogue));
+}
+
+#[test]
 fn test_node_graph_self_loop_prevented() {
     let mut graph = NodeGraph::new();
     let a = graph.add_node(StoryNode::Start, pos(0.0, 0.0));

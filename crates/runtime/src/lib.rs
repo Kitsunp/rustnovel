@@ -23,7 +23,7 @@ use winit::{
 };
 
 pub use self::assets::{AssetStore, MemoryAssetStore};
-pub use self::audio::{Audio, AudioCapabilities, RodioBackend, SilentAudio};
+pub use self::audio::{audio_duration, Audio, AudioCapabilities, RodioBackend, SilentAudio};
 pub use self::input::{ConfigurableInput, Input, InputAction};
 use self::render::{BuiltinSoftwareDrawer, RenderBackend, SoftwareBackend, WgpuBackend};
 

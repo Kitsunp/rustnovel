@@ -36,6 +36,11 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Authoring workflows: reports, fragments, operations and repros.
+    Authoring {
+        #[command(subcommand)]
+        command: authoring::AuthoringCommand,
+    },
     /// Compile a script JSON file into binary form.
     Compile {
         script: PathBuf,
@@ -217,6 +222,7 @@ fn main() -> Result<()> {
             project_root.as_deref(),
             output.as_deref(),
         ),
+        Command::Authoring { command } => authoring::run_authoring_command(command),
         Command::Compile { script, output } => compile_script(&script, &output),
         Command::Trace {
             script,
@@ -481,6 +487,9 @@ fn package_project(spec: ExportBundleSpec) -> Result<()> {
     );
     if let Some(runtime) = report.runtime_artifact {
         println!("runtime_artifact={runtime}");
+    }
+    if let Some(executable) = report.executable {
+        println!("executable={executable}");
     }
     if let Some(signature) = report.bundle_hmac_sha256 {
         println!("bundle_hmac_sha256={signature}");

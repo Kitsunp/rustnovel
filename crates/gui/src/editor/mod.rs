@@ -16,6 +16,7 @@ mod diff_dialog;
 mod errors;
 pub mod execution_contract;
 mod graph_panel;
+mod image_asset_cache;
 mod inspector_panel;
 mod lint_panel;
 mod menu_bar;

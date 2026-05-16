@@ -100,10 +100,11 @@ impl EditorWorkbench {
             })
         });
         let report_script = self.node_graph.to_script();
-        let fingerprints = visual_novel_engine::authoring::build_authoring_report_fingerprint(
-            self.node_graph.authoring_graph(),
-            &report_script,
-        );
+        let fingerprints =
+            visual_novel_engine::authoring::build_authoring_document_report_fingerprint(
+                &self.current_authoring_document(),
+                &report_script,
+            );
         let verification_run = visual_novel_engine::authoring::VerificationRun::from_diagnostics(
             format!("diagnostic_report:{}", now_unix_ms()),
             "gui.current_report",
@@ -338,8 +339,30 @@ impl EditorWorkbench {
                     }
                 }
             }
-            if envelope.get("evidence_trace").is_some() && issue.evidence_trace.is_none() {
-                issue = issue.with_evidence_trace();
+            if let Some(blocked_by) = envelope
+                .get("blocked_by")
+                .or_else(|| location.get("blocked_by"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+            {
+                issue = issue.with_blocked_by(blocked_by);
+            }
+            if let Some(operation_id) = envelope
+                .get("operation_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+            {
+                issue = issue.with_operation_id(operation_id);
+            }
+            if let Some(trace) = envelope.get("evidence_trace") {
+                if let Ok(trace) = serde_json::from_value::<
+                    visual_novel_engine::authoring::EvidenceTrace,
+                >(trace.clone())
+                {
+                    issue.evidence_trace = Some(trace);
+                } else if issue.evidence_trace.is_none() {
+                    issue = issue.with_evidence_trace();
+                }
             }
             imported.push(issue);
         }
@@ -350,19 +373,7 @@ impl EditorWorkbench {
         if self.selected_node.is_none() {
             if let Some(issue_index) = self.selected_issue {
                 if let Some(issue) = self.validation_issues.get(issue_index) {
-                    self.selected_node = issue
-                        .node_id
-                        .or(issue.edge_from)
-                        .or_else(|| {
-                            issue
-                                .event_ip
-                                .and_then(|event_ip| self.node_graph.node_for_event_ip(event_ip))
-                        })
-                        .or_else(|| {
-                            issue.asset_path.as_ref().and_then(|asset| {
-                                self.node_graph.first_node_referencing_asset(asset)
-                            })
-                        });
+                    self.selected_node = self.node_graph.focus_node_for_issue(issue);
                 }
             }
         }
@@ -373,8 +384,8 @@ impl EditorWorkbench {
 
 fn current_fingerprints_value(workbench: &EditorWorkbench) -> Result<serde_json::Value, String> {
     let script = workbench.node_graph.to_script();
-    let fingerprints = visual_novel_engine::authoring::build_authoring_report_fingerprint(
-        workbench.node_graph.authoring_graph(),
+    let fingerprints = visual_novel_engine::authoring::build_authoring_document_report_fingerprint(
+        &workbench.current_authoring_document(),
         &script,
     );
     serde_json::to_value(fingerprints).map_err(|err| format!("fingerprint serialization: {err}"))

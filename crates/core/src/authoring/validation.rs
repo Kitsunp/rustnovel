@@ -87,11 +87,16 @@ where
             if let Some(from_id) = edge_from {
                 issue = issue.with_edge(Some(from_id), Some(*id));
             }
-            issues.push(issue.with_target(DiagnosticTarget::Node { node_id: *id }));
+            issues.push(
+                issue
+                    .with_target(DiagnosticTarget::Node { node_id: *id })
+                    .with_evidence_trace(),
+            );
         }
         validate_node(graph, *id, node, &script_labels, &asset_exists, &mut issues);
     }
     validate_scene_profiles(graph, &asset_exists, &mut issues);
+    issues.extend(graph.validate_fragments());
     for node_id in flow.reachable_cycle_nodes {
         issues.push(
             LintIssue::warning(
@@ -265,6 +270,7 @@ fn validate_node<F>(
         StoryNode::CharacterPlacement { name, scale, .. } => {
             validate_character(id, name, scale, issues)
         }
+        StoryNode::SubgraphCall { .. } => {}
         StoryNode::Generic(event) => {
             let mut issue = LintIssue::warning(
                 Some(id),

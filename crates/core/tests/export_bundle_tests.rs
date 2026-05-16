@@ -135,6 +135,42 @@ fn export_bundle_accepts_authoring_document_entry() {
 }
 
 #[test]
+fn export_bundle_windows_runtime_exe_creates_top_level_executable() {
+    let (_tmp, project_root) = build_project_fixture();
+    let runtime_dir = project_root.join("runtime");
+    fs::create_dir_all(&runtime_dir).expect("mkdir runtime");
+    fs::write(runtime_dir.join("vn-runtime.exe"), b"fake-exe").expect("write runtime");
+    let out = project_root.join("dist_exe");
+
+    let report = export_bundle(ExportBundleSpec {
+        project_root: project_root.clone(),
+        output_root: out.clone(),
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: Some(PathBuf::from("runtime/vn-runtime.exe")),
+        integrity: BundleIntegrity::None,
+        output_layout_version: 1,
+        hmac_key: None,
+    })
+    .expect("bundle export with runtime exe");
+
+    assert_eq!(
+        report.runtime_artifact.as_deref(),
+        Some("runtime/vn-runtime.exe")
+    );
+    assert_eq!(report.executable.as_deref(), Some("game.exe"));
+    assert_eq!(
+        fs::read(out.join("game.exe")).expect("game exe"),
+        b"fake-exe"
+    );
+    let launcher = fs::read_to_string(out.join("launch.bat")).expect("launcher");
+    assert!(
+        launcher.contains("\"%~dp0game.exe\""),
+        "launcher should execute the top-level exe: {launcher}"
+    );
+}
+
+#[test]
 fn export_bundle_rejects_entry_script_traversal() {
     let (_tmp, project_root) = build_project_fixture();
     let out = project_root.join("dist");

@@ -60,6 +60,7 @@ const AUDIO_ACTION: EventExecutionContract = runtime_real("AudioAction");
 const TRANSITION: EventExecutionContract = runtime_real("Transition");
 const CHARACTER_PLACEMENT: EventExecutionContract = runtime_real("SetCharacterPosition");
 const EXT_CALL: EventExecutionContract = runtime_real("ExtCall");
+const SUBGRAPH_CALL: EventExecutionContract = runtime_real("SubgraphCall");
 
 const GENERIC_EVENT: EventExecutionContract = EventExecutionContract {
     event_name: "Generic/EventRaw",
@@ -70,7 +71,7 @@ const GENERIC_EVENT: EventExecutionContract = EventExecutionContract {
     fidelity: FidelityClass::PreviewOnly,
 };
 
-const CONTRACT_MATRIX: [EventExecutionContract; 15] = [
+const CONTRACT_MATRIX: [EventExecutionContract; 16] = [
     DIALOGUE,
     CHOICE,
     SCENE,
@@ -83,6 +84,7 @@ const CONTRACT_MATRIX: [EventExecutionContract; 15] = [
     TRANSITION,
     CHARACTER_PLACEMENT,
     EXT_CALL,
+    SUBGRAPH_CALL,
     GENERIC_EVENT,
     START_MARKER,
     END_MARKER,
@@ -107,6 +109,7 @@ pub fn contract_for_authoring_node(node: &StoryNode) -> EventExecutionContract {
         StoryNode::AudioAction { .. } => AUDIO_ACTION,
         StoryNode::Transition { .. } => TRANSITION,
         StoryNode::CharacterPlacement { .. } => CHARACTER_PLACEMENT,
+        StoryNode::SubgraphCall { .. } => SUBGRAPH_CALL,
         StoryNode::Generic(EventRaw::ExtCall { .. }) => EXT_CALL,
         StoryNode::Generic(EventRaw::SetFlag { .. }) => SET_FLAG,
         StoryNode::Generic(_) => GENERIC_EVENT,

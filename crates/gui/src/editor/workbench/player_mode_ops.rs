@@ -2,6 +2,18 @@ use super::*;
 use std::collections::{BTreeMap, HashMap};
 impl EditorWorkbench {
     pub(super) fn prepare_player_mode(&mut self) -> bool {
+        if self.node_graph.is_empty() {
+            self.engine = None;
+            self.current_script = None;
+            self.scene.clear();
+            self.composer_entity_owners.clear();
+            self.selected_entity = None;
+            self.toast = Some(ToastState::warning(
+                "Abre o crea un proyecto antes de iniciar el modo Player",
+            ));
+            return false;
+        }
+
         if self.engine.is_none() && self.sync_graph_to_script().is_err() {
             self.toast = Some(ToastState::error(
                 "No se pudo preparar el Player: corrige errores del grafo/importacion",
@@ -51,7 +63,7 @@ impl EditorWorkbench {
         let snapshot = Self::scene_from_visual_state(
             &visual,
             script_hints.audio_hint,
-            &script_hints.owner_hints,
+            script_hints.owner_hints,
             &self.node_graph,
         );
         self.scene = snapshot.scene;
@@ -69,7 +81,16 @@ impl EditorWorkbench {
         engine: &Engine,
         target_ip: Option<u32>,
     ) -> visual_novel_engine::VisualState {
-        let mut preview = engine.clone();
+        let mut preview = if target_ip.is_some() {
+            Engine::from_compiled(
+                engine.script().clone(),
+                engine.policy().clone(),
+                visual_novel_engine::ResourceLimiter::default(),
+            )
+            .unwrap_or_else(|_| engine.clone())
+        } else {
+            engine.clone()
+        };
         let max_steps = target_ip
             .map(|ip| (ip as usize).saturating_add(64))
             .unwrap_or(256usize)
@@ -126,7 +147,7 @@ impl EditorWorkbench {
     fn scene_from_visual_state(
         visual: &visual_novel_engine::VisualState,
         audio_hint: AudioPreviewHint,
-        owner_hints: &PreviewOwnerHints,
+        mut owner_hints: PreviewOwnerHints,
         graph: &crate::editor::node_graph::NodeGraph,
     ) -> PreviewSceneSnapshot {
         let mut scene = visual_novel_engine::SceneState::new();
@@ -166,16 +187,17 @@ impl EditorWorkbench {
                     expression: character.expression.clone(),
                 }),
             ) {
-                let owner = owner_hints
-                    .character_owners
-                    .get(character.name.as_ref())
-                    .copied()
-                    .or_else(|| {
-                        character
-                            .expression
-                            .as_ref()
-                            .and_then(|expr| graph.first_node_referencing_asset(expr.as_ref()))
-                    });
+                let owner = pop_character_owner(
+                    &mut owner_hints,
+                    character.name.as_ref(),
+                    character.expression.as_deref(),
+                )
+                .or_else(|| {
+                    character
+                        .expression
+                        .as_ref()
+                        .and_then(|expr| graph.first_node_referencing_asset(expr.as_ref()))
+                });
                 if let Some(owner_id) = owner {
                     owners.insert(entity_id.raw(), owner_id);
                 }
@@ -234,9 +256,12 @@ impl EditorWorkbench {
                     }
                     if let Some(owner_id) = owner {
                         for character in &scene.characters {
-                            owner_hints
-                                .character_owners
-                                .insert(character.name.to_string(), owner_id);
+                            push_character_owner(
+                                &mut owner_hints,
+                                character.name.as_ref(),
+                                character.expression.as_deref(),
+                                owner_id,
+                            );
                         }
                     }
                 }
@@ -251,18 +276,24 @@ impl EditorWorkbench {
                     }
                     if let Some(owner_id) = owner {
                         for character in &patch.add {
-                            owner_hints
-                                .character_owners
-                                .insert(character.name.to_string(), owner_id);
+                            push_character_owner(
+                                &mut owner_hints,
+                                character.name.as_ref(),
+                                character.expression.as_deref(),
+                                owner_id,
+                            );
                         }
                         for character in &patch.update {
-                            owner_hints
-                                .character_owners
-                                .insert(character.name.to_string(), owner_id);
+                            push_character_owner(
+                                &mut owner_hints,
+                                character.name.as_ref(),
+                                character.expression.as_deref(),
+                                owner_id,
+                            );
                         }
                     }
                     for removed_name in &patch.remove {
-                        owner_hints.character_owners.remove(removed_name.as_ref());
+                        remove_character_owner_name(&mut owner_hints, removed_name.as_ref());
                     }
                 }
                 visual_novel_engine::EventCompiled::AudioAction(action) if action.channel == 0 => {
@@ -280,9 +311,7 @@ impl EditorWorkbench {
                 }
                 visual_novel_engine::EventCompiled::SetCharacterPosition(pos) => {
                     if let Some(owner_id) = owner {
-                        owner_hints
-                            .character_owners
-                            .insert(pos.name.to_string(), owner_id);
+                        push_character_owner(&mut owner_hints, pos.name.as_ref(), None, owner_id);
                     }
                 }
                 visual_novel_engine::EventCompiled::Dialogue(_) => {}
@@ -310,7 +339,7 @@ struct PreviewSceneSnapshot {
 struct PreviewOwnerHints {
     background_owner: Option<u32>,
     music_owner: Option<u32>,
-    character_owners: BTreeMap<String, u32>,
+    character_owners: BTreeMap<String, std::collections::VecDeque<u32>>,
 }
 
 struct PreviewScriptHints {
@@ -321,4 +350,47 @@ struct PreviewScriptHints {
 enum AudioPreviewHint {
     Unknown,
     Resolved(Option<visual_novel_engine::SharedStr>),
+}
+
+fn preview_character_key(name: &str, expression: Option<&str>) -> String {
+    format!("{}|{}", name.trim(), expression.unwrap_or("").trim())
+}
+
+fn push_character_owner(
+    hints: &mut PreviewOwnerHints,
+    name: &str,
+    expression: Option<&str>,
+    owner_id: u32,
+) {
+    hints
+        .character_owners
+        .entry(preview_character_key(name, expression))
+        .or_default()
+        .push_back(owner_id);
+}
+
+fn pop_character_owner(
+    hints: &mut PreviewOwnerHints,
+    name: &str,
+    expression: Option<&str>,
+) -> Option<u32> {
+    let key = preview_character_key(name, expression);
+    if let Some(queue) = hints.character_owners.get_mut(&key) {
+        if let Some(owner) = queue.pop_front() {
+            return Some(owner);
+        }
+    }
+
+    let fallback_key = preview_character_key(name, None);
+    hints
+        .character_owners
+        .get_mut(&fallback_key)
+        .and_then(std::collections::VecDeque::pop_front)
+}
+
+fn remove_character_owner_name(hints: &mut PreviewOwnerHints, name: &str) {
+    let prefix = format!("{}|", name.trim());
+    hints
+        .character_owners
+        .retain(|key, _| !key.starts_with(&prefix));
 }

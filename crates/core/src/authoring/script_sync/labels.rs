@@ -8,14 +8,13 @@ pub(super) fn append_fragment_labels(
     labels: &mut BTreeMap<String, usize>,
 ) {
     for (fragment_id, fragment) in graph.fragments() {
-        let fragment_token = stable_label_token(fragment_id);
         for node_id in &fragment.node_ids {
             let Some(event_idx) = node_event_indices.get(node_id).copied() else {
                 continue;
             };
             insert_unique_label(
                 labels,
-                format!("fragment_{fragment_token}_node_{node_id}"),
+                internal_fragment_node_label(fragment_id, *node_id),
                 event_idx,
             );
         }
@@ -26,14 +25,24 @@ pub(super) fn append_fragment_labels(
             let Some(event_idx) = node_event_indices.get(&node_id).copied() else {
                 continue;
             };
-            let port_token = stable_label_token(&port.port_id);
             insert_unique_label(
                 labels,
-                format!("fragment_{fragment_token}_port_{port_token}"),
+                internal_fragment_port_label(fragment_id, &port.port_id),
                 event_idx,
             );
         }
     }
+}
+
+pub(super) fn internal_fragment_node_label(fragment_id: &str, node_id: u32) -> String {
+    let fragment_token = stable_label_token(fragment_id);
+    format!("__fragment_{fragment_token}_node_{node_id}")
+}
+
+pub(super) fn internal_fragment_port_label(fragment_id: &str, port_id: &str) -> String {
+    let fragment_token = stable_label_token(fragment_id);
+    let port_token = stable_label_token(port_id);
+    format!("__fragment_{fragment_token}_port_{port_token}")
 }
 
 fn insert_unique_label(labels: &mut BTreeMap<String, usize>, label: String, event_idx: usize) {

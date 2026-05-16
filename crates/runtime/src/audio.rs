@@ -42,6 +42,16 @@ pub trait Audio {
         let _ = (loop_playback, volume);
         self.play_music(id);
     }
+    fn play_music_with_options_at(
+        &mut self,
+        id: &str,
+        loop_playback: bool,
+        volume: Option<f32>,
+        start_at: Duration,
+    ) {
+        let _ = start_at;
+        self.play_music_with_options(id, loop_playback, volume);
+    }
     fn play_music_with_transition(
         &mut self,
         id: &str,
@@ -78,6 +88,15 @@ impl<T: Audio + ?Sized> Audio for Box<T> {
     }
     fn play_music_with_options(&mut self, id: &str, loop_playback: bool, volume: Option<f32>) {
         (**self).play_music_with_options(id, loop_playback, volume);
+    }
+    fn play_music_with_options_at(
+        &mut self,
+        id: &str,
+        loop_playback: bool,
+        volume: Option<f32>,
+        start_at: Duration,
+    ) {
+        (**self).play_music_with_options_at(id, loop_playback, volume, start_at);
     }
     fn play_music_with_transition(
         &mut self,
@@ -212,6 +231,23 @@ impl RodioBackend {
         }
     }
 
+    fn decode_audio_source(
+        &mut self,
+        id: &str,
+        start_at: Duration,
+    ) -> Result<Box<dyn Source<Item = f32> + Send>, String> {
+        let data = self.load_audio_bytes_cached(id)?;
+        let cursor = Cursor::new(data);
+        let decoder =
+            Decoder::new(cursor).map_err(|e| format!("Failed to decode audio '{id}': {e}"))?;
+        let source = decoder.convert_samples::<f32>();
+        if start_at.is_zero() {
+            Ok(Box::new(source))
+        } else {
+            Ok(Box::new(source.skip_duration(start_at)))
+        }
+    }
+
     fn play_voice_internal(
         &mut self,
         source: Box<dyn Source<Item = f32> + Send>,
@@ -250,6 +286,26 @@ impl Audio for RodioBackend {
         self.play_music_with_transition(id, loop_playback, volume, None);
     }
 
+    fn play_music_with_options_at(
+        &mut self,
+        id: &str,
+        loop_playback: bool,
+        volume: Option<f32>,
+        start_at: Duration,
+    ) {
+        if self.current_bgm.as_deref() == Some(id) && !self.bgm_sink.empty() && start_at.is_zero() {
+            return;
+        }
+
+        match self.decode_audio_source(id, start_at) {
+            Ok(source) => {
+                self.play_source(source, true, loop_playback, volume, None);
+                self.current_bgm = Some(id.to_string());
+            }
+            Err(e) => eprintln!("Audio Error: {}", e),
+        }
+    }
+
     fn play_music_with_transition(
         &mut self,
         id: &str,
@@ -261,22 +317,12 @@ impl Audio for RodioBackend {
             return;
         }
 
-        let data = match self.load_audio_bytes_cached(id) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Audio Error: {}", e);
-                return;
-            }
-        };
-
-        let cursor = Cursor::new(data);
-        match Decoder::new(cursor) {
-            Ok(decoder) => {
-                let source = decoder.convert_samples::<f32>();
-                self.play_source(Box::new(source), true, loop_playback, volume, fade_in);
+        match self.decode_audio_source(id, Duration::ZERO) {
+            Ok(source) => {
+                self.play_source(source, true, loop_playback, volume, fade_in);
                 self.current_bgm = Some(id.to_string());
             }
-            Err(e) => eprintln!("Failed to decode music '{}': {}", id, e),
+            Err(e) => eprintln!("Audio Error: {}", e),
         }
     }
 
@@ -295,40 +341,16 @@ impl Audio for RodioBackend {
     }
 
     fn play_sfx_with_volume(&mut self, id: &str, volume: Option<f32>) {
-        let data = match self.load_audio_bytes_cached(id) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Audio Error: {}", e);
-                return;
-            }
-        };
-
-        let cursor = Cursor::new(data);
-        match Decoder::new(cursor) {
-            Ok(decoder) => {
-                let source = decoder.convert_samples::<f32>();
-                self.play_source(Box::new(source), false, false, volume, None);
-            }
-            Err(e) => eprintln!("Failed to decode sfx '{}': {}", id, e),
+        match self.decode_audio_source(id, Duration::ZERO) {
+            Ok(source) => self.play_source(source, false, false, volume, None),
+            Err(e) => eprintln!("Audio Error: {}", e),
         }
     }
 
     fn play_voice_with_volume(&mut self, id: &str, volume: Option<f32>) {
-        let data = match self.load_audio_bytes_cached(id) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Audio Error: {}", e);
-                return;
-            }
-        };
-
-        let cursor = Cursor::new(data);
-        match Decoder::new(cursor) {
-            Ok(decoder) => {
-                let source = decoder.convert_samples::<f32>();
-                self.play_voice_internal(Box::new(source), volume);
-            }
-            Err(e) => eprintln!("Failed to decode voice '{}': {}", id, e),
+        match self.decode_audio_source(id, Duration::ZERO) {
+            Ok(source) => self.play_voice_internal(source, volume),
+            Err(e) => eprintln!("Audio Error: {}", e),
         }
     }
 
@@ -393,4 +415,64 @@ impl Audio for SilentAudio {
     fn stop_music(&mut self) {}
 
     fn play_sfx(&mut self, _id: &str) {}
+}
+
+pub fn audio_duration(assets: &dyn AssetStore, id: &str) -> Result<Option<Duration>, String> {
+    let data = assets.load_bytes(id)?;
+    let cursor = Cursor::new(data);
+    let decoder =
+        Decoder::new(cursor).map_err(|e| format!("Failed to decode audio '{id}': {e}"))?;
+    Ok(decoder.total_duration())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::f32::consts::PI;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::MemoryAssetStore;
+
+    #[test]
+    fn audio_duration_reports_decodable_wav_and_fails_for_invalid_audio() {
+        let mut store = MemoryAssetStore::default();
+        let wav = tiny_wav(Duration::from_millis(250), 8_000);
+        store.insert("tone.wav", wav);
+        store.insert("broken.ogg", b"not audio".to_vec());
+
+        let duration = audio_duration(&store, "tone.wav")
+            .expect("valid wav duration")
+            .expect("wav should report duration");
+        assert!(
+            (duration.as_secs_f32() - 0.25).abs() < 0.02,
+            "duration should be close to 250ms, got {duration:?}"
+        );
+
+        let err = audio_duration(&store, "broken.ogg").expect_err("invalid audio should fail");
+        assert!(err.contains("Failed to decode audio"));
+    }
+
+    fn tiny_wav(duration: Duration, sample_rate: u32) -> Vec<u8> {
+        let samples = (duration.as_secs_f32() * sample_rate as f32).round() as u32;
+        let data_bytes = samples * 2;
+        let mut out = Vec::with_capacity(44 + data_bytes as usize);
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+        out.extend_from_slice(b"WAVEfmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&sample_rate.to_le_bytes());
+        out.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+        out.extend_from_slice(&2u16.to_le_bytes());
+        out.extend_from_slice(&16u16.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&data_bytes.to_le_bytes());
+        for i in 0..samples {
+            let t = i as f32 / sample_rate as f32;
+            let sample = (t * 440.0 * 2.0 * PI).sin() * i16::MAX as f32 * 0.1;
+            out.extend_from_slice(&(sample as i16).to_le_bytes());
+        }
+        out
+    }
 }

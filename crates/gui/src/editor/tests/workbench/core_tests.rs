@@ -35,6 +35,42 @@ fn test_workbench_initialization() {
 }
 
 #[test]
+fn play_mode_refuses_empty_workbench_without_stale_preview_state() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+    workbench.current_script = Some(visual_novel_engine::ScriptRaw::new(
+        Vec::new(),
+        std::collections::BTreeMap::new(),
+    ));
+    workbench
+        .scene
+        .spawn(visual_novel_engine::EntityKind::Image(
+            visual_novel_engine::ImageData {
+                path: visual_novel_engine::SharedStr::from("bg/stale.png"),
+                tint: None,
+            },
+        ));
+    workbench.composer_entity_owners.insert(1, 42);
+
+    assert!(!workbench.prepare_player_mode());
+
+    assert!(workbench.engine.is_none());
+    assert!(workbench.current_script.is_none());
+    assert!(workbench.scene.is_empty());
+    assert!(workbench.composer_entity_owners.is_empty());
+    assert!(workbench.selected_entity.is_none());
+    let message = workbench
+        .toast
+        .as_ref()
+        .map(|toast| toast.message.as_str())
+        .unwrap_or_default();
+    assert!(
+        message.contains("Abre o crea un proyecto"),
+        "unexpected toast: {message}"
+    );
+}
+
+#[test]
 fn workbench_reuses_compilation_cache_until_graph_changes() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);

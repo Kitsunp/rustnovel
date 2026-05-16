@@ -77,6 +77,16 @@ impl<'a> GraphPanel<'a> {
                     } => {
                         format!("Placement: {} ({}, {})", name, x, y)
                     }
+                    StoryNode::SubgraphCall {
+                        fragment_id,
+                        entry_port,
+                        exit_port,
+                    } => format!(
+                        "Subgraph {} {} -> {}",
+                        fragment_id,
+                        entry_port.as_deref().unwrap_or("<entry>"),
+                        exit_port.as_deref().unwrap_or("<exit>")
+                    ),
                 };
                 (id, info, node.color())
             })
@@ -100,7 +110,7 @@ impl<'a> GraphPanel<'a> {
         });
 
         if let Some(id) = new_selection {
-            self.graph.selected = Some(id);
+            self.graph.set_single_selection(Some(id));
         }
     }
 }

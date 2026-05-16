@@ -57,6 +57,15 @@ pub(super) fn searchable_text(node: &StoryNode) -> String {
             fields.extend(color.iter().map(|value| value.to_ascii_lowercase()));
         }
         StoryNode::CharacterPlacement { name, .. } => fields.push(name.to_ascii_lowercase()),
+        StoryNode::SubgraphCall {
+            fragment_id,
+            entry_port,
+            exit_port,
+        } => {
+            fields.push(fragment_id.to_ascii_lowercase());
+            fields.extend(entry_port.iter().map(|value| value.to_ascii_lowercase()));
+            fields.extend(exit_port.iter().map(|value| value.to_ascii_lowercase()));
+        }
         StoryNode::Generic(event) => fields.push(event.to_json_string().to_ascii_lowercase()),
         StoryNode::ScenePatch(_) | StoryNode::Start | StoryNode::End => {}
     }

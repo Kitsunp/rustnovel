@@ -69,6 +69,139 @@ fn test_context_menu_no_panic_when_no_menu() {
 }
 
 #[test]
+fn context_menu_connect_to_choice_targets_new_option_port() {
+    let choice = StoryNode::Choice {
+        prompt: "Route?".to_string(),
+        options: vec!["A".to_string(), "B".to_string()],
+    };
+    let dialogue = StoryNode::Dialogue {
+        speaker: "N".to_string(),
+        text: "Line".to_string(),
+    };
+
+    assert_eq!(default_context_connect_port(&choice), 2);
+    assert_eq!(default_context_connect_port(&dialogue), 0);
+}
+
+#[test]
+fn canvas_context_palette_matches_extended_authoring_nodes() {
+    let labels = canvas_node_palette_items()
+        .into_iter()
+        .map(|(label, _)| label)
+        .collect::<Vec<_>>();
+
+    for required in [
+        "Dialogue",
+        "Choice",
+        "Scene",
+        "Jump",
+        "Start",
+        "End",
+        "Scene Patch",
+        "Branch If",
+        "Set Variable",
+        "Set Flag",
+        "Audio",
+        "Transition",
+        "Character Placement",
+        "ExtCall",
+        "Subgraph Call",
+    ] {
+        assert!(
+            labels.contains(&required),
+            "canvas context menu is missing node type {required}"
+        );
+    }
+}
+
+#[test]
+fn canvas_palette_creation_finishes_pending_connection_to_new_node() {
+    let mut graph = NodeGraph::new();
+    let source = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "Before".to_string(),
+        },
+        egui::pos2(0.0, 0.0),
+    );
+    graph.start_connection_pick(source, 0);
+    graph.take_operation_hint();
+
+    let inserted = add_canvas_node_from_palette(
+        &mut graph,
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "Created from canvas menu".to_string(),
+        },
+        egui::pos2(180.0, 120.0),
+    );
+
+    assert_eq!(graph.connecting_from, None);
+    assert!(!graph.connecting_sticky);
+    assert_eq!(graph.get_node_pos(inserted), Some(egui::pos2(180.0, 120.0)));
+    assert!(graph
+        .connections()
+        .any(|conn| conn.from == source && conn.from_port == 0 && conn.to == inserted));
+    let hint = graph
+        .take_operation_hint()
+        .expect("create-and-connect should leave a traceable operation");
+    assert_eq!(hint.kind, "node_connected");
+    let expected_field_path = format!("graph.edges[{source}:0]");
+    assert_eq!(
+        hint.field_path.as_deref(),
+        Some(expected_field_path.as_str())
+    );
+}
+
+#[test]
+fn canvas_palette_creation_from_occupied_output_creates_branch_to_new_node() {
+    let mut graph = NodeGraph::new();
+    let source = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "Before".to_string(),
+        },
+        egui::pos2(0.0, 0.0),
+    );
+    let existing = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "Existing continuation".to_string(),
+        },
+        egui::pos2(-140.0, 120.0),
+    );
+    graph.connect(source, existing);
+    graph.start_connection_pick(source, 0);
+
+    let inserted = add_canvas_node_from_palette(
+        &mut graph,
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "New branch".to_string(),
+        },
+        egui::pos2(180.0, 120.0),
+    );
+
+    assert_eq!(graph.connecting_from, None);
+    assert!(!graph.connecting_sticky);
+    let hub = graph
+        .connections()
+        .find(|conn| conn.from == source && conn.from_port == 0)
+        .map(|conn| conn.to)
+        .expect("source should be rerouted through a branch hub");
+    assert!(matches!(
+        graph.get_node(hub),
+        Some(StoryNode::Choice { .. })
+    ));
+    assert!(graph
+        .connections()
+        .any(|conn| conn.from == hub && conn.to == existing));
+    assert!(graph
+        .connections()
+        .any(|conn| conn.from == hub && conn.to == inserted));
+}
+
+#[test]
 fn test_inline_editor_no_panic_when_not_editing() {
     let mut graph = NodeGraph::new();
     graph.editing = None;
