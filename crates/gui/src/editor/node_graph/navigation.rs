@@ -51,12 +51,7 @@ impl NodeGraph {
     ) -> Option<u32> {
         issue
             .node_id
-            .or_else(|| {
-                issue
-                    .target
-                    .as_ref()
-                    .and_then(target_focus_node)
-            })
+            .or_else(|| issue.target.as_ref().and_then(target_focus_node))
             .or(issue.edge_from)
             .or_else(|| {
                 issue
