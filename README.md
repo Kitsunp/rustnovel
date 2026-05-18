@@ -1,7 +1,7 @@
 # Visual Novel Engine (Rust)
 
 Motor completo para novelas visuales basado en eventos. Permite interpretar un guion en JSON, avanzar por los eventos, tomar decisiones, guardar/cargar partidas y visualizar la historia con una interfaz gráfica nativa.
-
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Kitsunp/rustnovel)
 ## Contenido
 
 - [Características](#características)
