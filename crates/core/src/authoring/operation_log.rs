@@ -66,6 +66,45 @@ impl OperationKind {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationStatus {
+    Applied,
+    AppliedWithWarnings,
+    Rejected,
+    Failed,
+    NoOp,
+    Stale,
+    Legacy(String),
+}
+
+impl OperationStatus {
+    pub fn label(&self) -> String {
+        match self {
+            Self::Applied => "applied",
+            Self::AppliedWithWarnings => "applied_with_warnings",
+            Self::Rejected => "rejected",
+            Self::Failed => "failed",
+            Self::NoOp => "no_op",
+            Self::Stale => "stale",
+            Self::Legacy(value) => value.as_str(),
+        }
+        .to_string()
+    }
+
+    pub fn from_label(value: &str) -> Self {
+        match value {
+            "applied" => Self::Applied,
+            "applied_with_warnings" => Self::AppliedWithWarnings,
+            "rejected" => Self::Rejected,
+            "failed" => Self::Failed,
+            "no_op" => Self::NoOp,
+            "stale" => Self::Stale,
+            other => Self::Legacy(other.to_string()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OperationLogEntry {
     pub schema: String,
     pub operation_id: String,
@@ -96,6 +135,8 @@ pub struct OperationLogEntry {
     #[serde(default)]
     pub after_value: Option<String>,
     pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_v2: Option<OperationStatus>,
     pub details: String,
 }
 
@@ -165,6 +206,7 @@ impl OperationLogEntry {
         details: impl Into<String>,
     ) -> Self {
         let label = operation_kind.label();
+        let status = status.into();
         Self {
             schema: OPERATION_LOG_SCHEMA_V2.to_string(),
             operation_id: new_operation_id(),
@@ -183,7 +225,8 @@ impl OperationLogEntry {
             diagnostic_target: None,
             before_value: None,
             after_value: None,
-            status: status.into(),
+            status_v2: Some(OperationStatus::from_label(&status)),
+            status,
             details: details.into(),
         }
     }
@@ -194,6 +237,7 @@ impl OperationLogEntry {
         status: impl Into<String>,
         details: impl Into<String>,
     ) -> Self {
+        let status = status.into();
         Self {
             schema: OPERATION_LOG_SCHEMA_V2.to_string(),
             operation_id: operation_id.into(),
@@ -212,7 +256,8 @@ impl OperationLogEntry {
             diagnostic_target: None,
             before_value: None,
             after_value: None,
-            status: status.into(),
+            status_v2: Some(OperationStatus::from_label(&status)),
+            status,
             details: details.into(),
         }
     }
@@ -274,6 +319,12 @@ impl OperationLogEntry {
     pub fn with_values(mut self, before: impl Into<String>, after: impl Into<String>) -> Self {
         self.before_value = Some(before.into());
         self.after_value = Some(after.into());
+        self
+    }
+
+    pub fn with_status(mut self, status: OperationStatus) -> Self {
+        self.status = status.label();
+        self.status_v2 = Some(status);
         self
     }
 }

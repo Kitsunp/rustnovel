@@ -44,6 +44,12 @@ struct LayoutPreferences {
     composer_preview_quality: crate::editor::PreviewQuality,
     #[serde(default)]
     composer_stage_fit: crate::editor::StageFit,
+    #[serde(default)]
+    composer_preview_mode: crate::editor::ComposerPreviewMode,
+    #[serde(default)]
+    composer_default_background_fit: crate::editor::BackgroundFit,
+    #[serde(default)]
+    workspace_layout: layout::WorkspaceLayout,
 }
 
 #[derive(Clone, Debug)]
@@ -125,6 +131,10 @@ pub struct EditorWorkbench {
     pub audio_duration_cache: std::collections::HashMap<String, Option<f32>>,
     pub composer_preview_quality: crate::editor::PreviewQuality,
     pub composer_stage_fit: crate::editor::StageFit,
+    pub composer_preview_mode: crate::editor::ComposerPreviewMode,
+    pub composer_default_background_fit: crate::editor::BackgroundFit,
+    pub composer_background_fit_overrides:
+        std::collections::HashMap<String, crate::editor::BackgroundFit>,
     pub composer_layer_overrides:
         std::collections::HashMap<String, crate::editor::visual_composer::LayerOverride>,
 
@@ -170,6 +180,7 @@ pub struct EditorWorkbench {
     // New layout flags
     pub node_editor_window_open: bool,
     pub layout_overrides: LayoutOverrides,
+    workspace_layout: layout::WorkspaceLayout,
     layout_generation: u64,
     layout_prefs_path: std::path::PathBuf,
     last_layout_prefs: LayoutPreferences,
@@ -253,6 +264,9 @@ impl EditorWorkbench {
             audio_duration_cache: std::collections::HashMap::new(),
             composer_preview_quality: crate::editor::PreviewQuality::default(),
             composer_stage_fit: crate::editor::StageFit::default(),
+            composer_preview_mode: crate::editor::ComposerPreviewMode::default(),
+            composer_default_background_fit: crate::editor::BackgroundFit::default(),
+            composer_background_fit_overrides: std::collections::HashMap::new(),
             composer_layer_overrides: std::collections::HashMap::new(),
             timeline: visual_novel_engine::Timeline::new(60), // 60 ticks per second
             current_time: 0.0,
@@ -286,6 +300,7 @@ impl EditorWorkbench {
             diff_dialog: None,
             node_editor_window_open: false,
             layout_overrides: LayoutOverrides::default(),
+            workspace_layout: layout::WorkspaceLayout::default(),
             layout_generation: 0,
             layout_prefs_path,
             last_layout_prefs: LayoutPreferences {
@@ -297,6 +312,9 @@ impl EditorWorkbench {
                 layout_overrides: LayoutOverrides::default(),
                 composer_preview_quality: crate::editor::PreviewQuality::default(),
                 composer_stage_fit: crate::editor::StageFit::default(),
+                composer_preview_mode: crate::editor::ComposerPreviewMode::default(),
+                composer_default_background_fit: crate::editor::BackgroundFit::default(),
+                workspace_layout: layout::WorkspaceLayout::default(),
             },
         };
 
@@ -341,6 +359,11 @@ impl EditorWorkbench {
         self.layout_overrides = prefs.layout_overrides.clone();
         self.composer_preview_quality = prefs.composer_preview_quality;
         self.composer_stage_fit = prefs.composer_stage_fit;
+        self.composer_preview_mode = prefs.composer_preview_mode;
+        self.composer_default_background_fit = prefs.composer_default_background_fit;
+        self.workspace_layout = prefs.workspace_layout.clone();
+        self.workspace_layout.normalize();
+        self.apply_workspace_layout_flags();
     }
 
     fn collect_layout_prefs(&self) -> LayoutPreferences {
@@ -353,6 +376,9 @@ impl EditorWorkbench {
             layout_overrides: self.layout_overrides.clone(),
             composer_preview_quality: self.composer_preview_quality,
             composer_stage_fit: self.composer_stage_fit,
+            composer_preview_mode: self.composer_preview_mode,
+            composer_default_background_fit: self.composer_default_background_fit,
+            workspace_layout: self.workspace_layout_from_current_flags(),
         }
     }
 
@@ -390,8 +416,12 @@ impl EditorWorkbench {
         self.layout_overrides = LayoutOverrides::default();
         self.composer_preview_quality = crate::editor::PreviewQuality::default();
         self.composer_stage_fit = crate::editor::StageFit::default();
+        self.composer_preview_mode = crate::editor::ComposerPreviewMode::default();
+        self.composer_default_background_fit = crate::editor::BackgroundFit::default();
+        self.composer_background_fit_overrides.clear();
         self.composer_layer_overrides.clear();
         self.selected_entity = None;
+        self.sync_workspace_layout_from_flags();
         self.layout_generation = self.layout_generation.wrapping_add(1);
         ctx.memory_mut(|memory| memory.reset_areas());
         self.toast = Some(ToastState::success("Layout restablecido"));
@@ -403,6 +433,7 @@ mod asset_import_ops;
 mod audio_preview_store;
 mod compile_cache;
 mod compile_ops;
+mod composer_mutations;
 mod composer_ops;
 mod fragments_ui;
 mod import_ops;
@@ -411,7 +442,9 @@ mod operation_ops;
 mod player_audio_ops;
 mod player_audio_path;
 mod player_mode_ops;
+mod player_render_ops;
 mod preview_fallback_ops;
+mod preview_policy_ops;
 mod project_ops;
 mod quick_fix_ops;
 mod report_ops;
@@ -420,3 +453,5 @@ mod repro_ops;
 #[path = "tests/workbench_tests.rs"]
 mod tests;
 mod ui;
+mod ui_actions;
+mod workspace_layout_ops;

@@ -66,6 +66,15 @@ impl NodeGraph {
             return false;
         }
 
+        if matches!(
+            self.get_node(existing_target),
+            Some(StoryNode::Choice { .. })
+        ) {
+            return self
+                .connect_new_choice_option(existing_target, to, "New route")
+                .is_some();
+        }
+
         if matches!(to_node, StoryNode::Choice { .. }) {
             self.connect_port(from, 0, to);
             let already_routes_to_previous = self
@@ -75,15 +84,6 @@ impl NodeGraph {
                 self.connect_new_choice_option(to, existing_target, "Continue");
             }
             return true;
-        }
-
-        if matches!(
-            self.get_node(existing_target),
-            Some(StoryNode::Choice { .. })
-        ) {
-            return self
-                .connect_new_choice_option(existing_target, to, "New route")
-                .is_some();
         }
 
         let choice_id = self.add_node(

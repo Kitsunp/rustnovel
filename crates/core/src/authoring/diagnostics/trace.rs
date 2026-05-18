@@ -1,4 +1,10 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+
+#[path = "trace/metadata.rs"]
+mod metadata;
+use metadata::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct FieldPath {
@@ -253,6 +259,8 @@ pub struct TraceAtom {
     pub target: Option<DiagnosticTarget>,
     pub field_path: Option<FieldPath>,
     pub semantic_value: Option<SemanticValue>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -303,8 +311,11 @@ impl EvidenceTrace {
                 .map(FieldPath::stable_key)
                 .unwrap_or_else(|| "na".to_string())
         );
+        let failure_summary = failure_summary.into();
         let mut atoms = Vec::new();
         let mut edges = Vec::new();
+        let resolver_metadata = resolver_metadata(code, semantic_values);
+        let rule_metadata = rule_metadata(code, semantic_values, &failure_summary);
         let operation_id = "operation_applied".to_string();
         let field_changed_id = "field_changed".to_string();
         let resolver_id = "resolver_lookup".to_string();
@@ -319,6 +330,7 @@ impl EvidenceTrace {
             target: target.clone(),
             field_path: field_path.clone(),
             semantic_value: None,
+            metadata: BTreeMap::new(),
         });
         atoms.push(TraceAtom {
             atom_id: field_changed_id.clone(),
@@ -327,6 +339,7 @@ impl EvidenceTrace {
             target: target.clone(),
             field_path: field_path.clone(),
             semantic_value: None,
+            metadata: field_path_metadata(field_path.as_ref()),
         });
         edges.push(TraceEdge {
             from: operation_id.clone(),
@@ -342,6 +355,7 @@ impl EvidenceTrace {
                 target: target.clone(),
                 field_path: Some(value.owner_path.clone()),
                 semantic_value: Some(value.clone()),
+                metadata: semantic_value_metadata(value),
             });
             edges.push(TraceEdge {
                 from: field_changed_id.clone(),
@@ -368,6 +382,7 @@ impl EvidenceTrace {
             target: target.clone(),
             field_path: field_path.clone(),
             semantic_value: None,
+            metadata: resolver_metadata,
         });
         atoms.push(TraceAtom {
             atom_id: rule_id.clone(),
@@ -379,6 +394,7 @@ impl EvidenceTrace {
             target: target.clone(),
             field_path: field_path.clone(),
             semantic_value: None,
+            metadata: rule_metadata,
         });
         edges.push(TraceEdge {
             from: resolver_id,
@@ -388,10 +404,11 @@ impl EvidenceTrace {
         atoms.push(TraceAtom {
             atom_id: failure_id.clone(),
             kind: TraceAtomKind::Failure,
-            summary: failure_summary.into(),
+            summary: failure_summary.clone(),
             target: target.clone(),
             field_path: field_path.clone(),
             semantic_value: None,
+            metadata: failure_metadata(&failure_summary),
         });
         edges.push(TraceEdge {
             from: rule_id,
@@ -406,6 +423,7 @@ impl EvidenceTrace {
             target: target.clone(),
             field_path: field_path.clone(),
             semantic_value: None,
+            metadata: consequence_metadata(code),
         });
         edges.push(TraceEdge {
             from: failure_id.clone(),
@@ -419,6 +437,7 @@ impl EvidenceTrace {
             target,
             field_path,
             semantic_value: None,
+            metadata: fix_metadata(code),
         });
         edges.push(TraceEdge {
             from: failure_id,

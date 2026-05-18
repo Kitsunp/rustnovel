@@ -132,6 +132,7 @@ pub fn authoring_document_layout_sha256(document: &AuthoringDocument) -> String 
     sha256_json(&serde_json::json!({
         "graph": graph_layout_payload(&document.graph),
         "composer_layer_overrides": document.composer_layer_overrides,
+        "composer_background_fit_overrides": document.composer_background_fit_overrides,
     }))
 }
 

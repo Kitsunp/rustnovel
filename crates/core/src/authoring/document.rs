@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::{composer::LayerOverride, NodeGraph, OperationLogEntry, VerificationRun};
+use super::{
+    composer::{BackgroundFit, LayerOverride},
+    NodeGraph, OperationLogEntry, VerificationRun,
+};
 
 pub const AUTHORING_DOCUMENT_SCHEMA_VERSION: &str = "1.1";
 pub const AUTHORING_DOCUMENT_LEGACY_SCHEMA_VERSION: &str = "1.0";
@@ -30,6 +33,8 @@ pub struct AuthoringDocument {
     #[serde(default)]
     pub composer_layer_overrides: BTreeMap<String, LayerOverride>,
     #[serde(default)]
+    pub composer_background_fit_overrides: BTreeMap<String, BackgroundFit>,
+    #[serde(default)]
     pub operation_log: Vec<OperationLogEntry>,
     #[serde(default)]
     pub verification_runs: Vec<VerificationRun>,
@@ -44,6 +49,8 @@ struct AuthoringDocumentEnvelope {
     #[serde(default)]
     composer_layer_overrides: BTreeMap<String, LayerOverride>,
     #[serde(default)]
+    composer_background_fit_overrides: BTreeMap<String, BackgroundFit>,
+    #[serde(default)]
     operation_log: Vec<OperationLogEntry>,
     #[serde(default)]
     verification_runs: Vec<VerificationRun>,
@@ -55,6 +62,7 @@ impl AuthoringDocument {
             authoring_schema_version: AUTHORING_DOCUMENT_SCHEMA_VERSION.to_string(),
             graph,
             composer_layer_overrides: BTreeMap::new(),
+            composer_background_fit_overrides: BTreeMap::new(),
             operation_log: Vec::new(),
             verification_runs: Vec::new(),
         }
@@ -78,6 +86,7 @@ impl AuthoringDocument {
             authoring_schema_version: AUTHORING_DOCUMENT_SCHEMA_VERSION.to_string(),
             graph,
             composer_layer_overrides: envelope.composer_layer_overrides,
+            composer_background_fit_overrides: envelope.composer_background_fit_overrides,
             operation_log: envelope.operation_log,
             verification_runs: envelope.verification_runs,
         })

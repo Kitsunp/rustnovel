@@ -37,7 +37,10 @@ pub use graph::{
     NodeGraph, PortalNode, SceneLayer, SceneProfile,
 };
 pub use lint::{LintCode, LintIssue, LintSeverity, ValidationPhase};
-pub use operation_log::{OperationKind, OperationLogEntry, VerificationRun};
+pub use operation_log::{
+    OperationKind, OperationLogEntry, OperationStatus, VerificationRun, OPERATION_LOG_SCHEMA_V2,
+    VERIFICATION_RUN_SCHEMA_V2,
+};
 pub use quick_fix::{QuickFixCandidate, QuickFixRisk};
 pub use report_fingerprint::{
     authoring_document_layout_sha256, authoring_document_sha256,

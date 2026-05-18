@@ -95,13 +95,26 @@ pub fn render_menu_bar(ui: &mut egui::Ui, workbench: &mut EditorWorkbench) {
             }
         });
         ui.menu_button("View", |ui| {
-            ui.checkbox(&mut workbench.show_graph, "Graph Panel");
-            ui.checkbox(&mut workbench.show_inspector, "Inspector");
-            ui.checkbox(&mut workbench.show_timeline, "Timeline");
-            ui.checkbox(&mut workbench.show_asset_browser, "Asset Browser");
-            ui.checkbox(&mut workbench.show_validation, "Validation Report");
+            let mut workspace_changed = false;
+            workspace_changed |= ui
+                .checkbox(&mut workbench.show_graph, "Graph Panel")
+                .changed();
+            workspace_changed |= ui
+                .checkbox(&mut workbench.show_inspector, "Inspector")
+                .changed();
+            workspace_changed |= ui
+                .checkbox(&mut workbench.show_timeline, "Timeline")
+                .changed();
+            workspace_changed |= ui
+                .checkbox(&mut workbench.show_asset_browser, "Asset Browser")
+                .changed();
+            workspace_changed |= ui
+                .checkbox(&mut workbench.show_validation, "Validation Report")
+                .changed();
             if workbench.show_validation {
-                ui.checkbox(&mut workbench.validation_collapsed, "Validation Minimizado");
+                workspace_changed |= ui
+                    .checkbox(&mut workbench.validation_collapsed, "Validation Minimizado")
+                    .changed();
             }
             ui.separator();
             ui.collapsing("Layout Sizes", |ui| {
@@ -149,10 +162,15 @@ pub fn render_menu_bar(ui: &mut egui::Ui, workbench: &mut EditorWorkbench) {
                 });
             });
             ui.separator();
-            ui.checkbox(
-                &mut workbench.node_editor_window_open,
-                "Floating Node Editor",
-            );
+            workspace_changed |= ui
+                .checkbox(
+                    &mut workbench.node_editor_window_open,
+                    "Floating Node Editor",
+                )
+                .changed();
+            if workspace_changed {
+                workbench.sync_workspace_layout_from_flags();
+            }
         });
     });
 }

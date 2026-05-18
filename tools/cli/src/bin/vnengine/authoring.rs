@@ -11,6 +11,9 @@ use visual_novel_engine::authoring::{
 };
 use visual_novel_engine::{run_repro_case, ReproCase};
 
+#[path = "authoring/report.rs"]
+mod report;
+
 #[derive(Subcommand)]
 pub enum AuthoringCommand {
     /// Validate an authoring document or runtime script and emit report V2.
@@ -297,7 +300,7 @@ fn run_report_command(command: ReportCommand) -> Result<()> {
         }
         ReportCommand::Sarif { report, output } => {
             let report = read_report(&report)?;
-            let sarif = sarif_from_report(&report);
+            let sarif = report::sarif_from_report(&report);
             write_json(&output, &sarif)
         }
     }
@@ -456,50 +459,4 @@ struct ReportCompareSummary {
     semantic_changed: bool,
     layout_changed: bool,
     assets_changed: bool,
-}
-
-fn sarif_from_report(report: &AuthoringValidationReport) -> serde_json::Value {
-    let results = report
-        .issues
-        .iter()
-        .map(|issue| {
-            serde_json::json!({
-                "ruleId": issue.code,
-                "level": sarif_level(&issue.severity),
-                "message": { "text": issue.text_en.actual },
-                "partialFingerprints": {
-                    "diagnosticId": issue.diagnostic_id,
-                    "traceId": issue.trace_id,
-                    "storySemanticSha256": report.fingerprints.story_semantic_sha256,
-                },
-                "properties": {
-                    "target": issue.target,
-                    "fieldPath": issue.field_path,
-                    "typedMessageArgs": issue.typed_message_args,
-                    "evidenceTrace": issue.evidence_trace,
-                }
-            })
-        })
-        .collect::<Vec<_>>();
-    serde_json::json!({
-        "version": "2.1.0",
-        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
-        "runs": [{
-            "tool": {
-                "driver": {
-                    "name": "vnengine authoring",
-                    "informationUri": "https://github.com/Kitsunp/rustnovel"
-                }
-            },
-            "results": results
-        }]
-    })
-}
-
-fn sarif_level(severity: &str) -> &'static str {
-    match severity.to_ascii_lowercase().as_str() {
-        "error" => "error",
-        "warning" => "warning",
-        _ => "note",
-    }
 }

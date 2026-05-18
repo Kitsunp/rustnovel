@@ -25,6 +25,7 @@ mod node_graph;
 mod node_rendering;
 mod node_types;
 mod player_ui;
+mod preview_policy;
 pub mod project_io;
 pub mod quick_fix;
 mod scene_stage;
@@ -48,6 +49,7 @@ pub use lint_panel::LintPanel;
 pub use node_editor::NodeEditorPanel;
 pub use node_graph::NodeGraph;
 pub use node_types::{ContextMenu, StoryNode, StoryNodeVisualExt, ToastKind, ToastState};
+pub use preview_policy::{BackgroundFit, ComposerPreviewMode};
 pub use timeline_panel::TimelinePanel;
 pub use undo::UndoStack;
 pub use validator::{
@@ -57,6 +59,12 @@ pub use viewport_panel::ViewportPanel;
 pub use visual_composer::VisualComposerPanel;
 pub use visual_composer_preview::{PreviewQuality, StageFit};
 pub use workbench::EditorWorkbench;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PlayerVisualPreferences {
+    pub preview_quality: PreviewQuality,
+    pub stage_fit: StageFit,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorMode {

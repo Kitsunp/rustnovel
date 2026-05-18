@@ -42,15 +42,54 @@ fn background_images_fill_stage_rect() {
     );
     let mut transform = Transform::at(400, 300);
     transform.z_order = -100;
-    let rect = entity_rect(
+    let rect = entity_rect_with_background_fit(
         &EntityKind::Image(visual_novel_engine::ImageData {
             path: SharedStr::from("bg.png"),
             tint: None,
         }),
         &transform,
         &geometry,
+        crate::editor::BackgroundFit::Cover,
     );
     assert_eq!(rect, geometry.stage_rect);
+}
+
+#[test]
+fn background_fit_modes_change_background_rect_without_moving_stage() {
+    let geometry = stage_geometry(
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 720.0)),
+        (1280.0, 720.0),
+        StageFit::Fill,
+    );
+    let mut transform = Transform::at(20, 30);
+    transform.z_order = -100;
+    let kind = EntityKind::Image(visual_novel_engine::ImageData {
+        path: SharedStr::from("bg.png"),
+        tint: None,
+    });
+
+    let cover = entity_rect_with_background_fit(
+        &kind,
+        &transform,
+        &geometry,
+        crate::editor::BackgroundFit::Cover,
+    );
+    let original = entity_rect_with_background_fit(
+        &kind,
+        &transform,
+        &geometry,
+        crate::editor::BackgroundFit::Original,
+    );
+    let contain = entity_rect_with_background_fit(
+        &kind,
+        &transform,
+        &geometry,
+        crate::editor::BackgroundFit::Contain,
+    );
+
+    assert_eq!(cover, geometry.stage_rect);
+    assert_ne!(original, geometry.stage_rect);
+    assert!(geometry.stage_rect.contains_rect(contain));
 }
 
 #[test]

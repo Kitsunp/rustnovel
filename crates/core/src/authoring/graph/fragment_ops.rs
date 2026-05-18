@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 
-use super::{FragmentPort, GraphFragment};
+use super::{FragmentPort, GraphConnection, GraphFragment};
 use crate::authoring::{
     DiagnosticTarget, LintCode, LintIssue, NodeGraph, StoryNode, ValidationPhase,
 };
@@ -77,6 +77,41 @@ impl NodeGraph {
 
     pub fn active_fragment(&self) -> Option<&str> {
         self.graph_stack.active_fragment.as_deref()
+    }
+
+    pub fn node_fragment(&self, node_id: u32) -> Option<&str> {
+        self.fragment_for_node(node_id)
+    }
+
+    pub fn visible_node_ids(&self) -> Vec<u32> {
+        let mut visible = if let Some(active_fragment) = self.active_fragment() {
+            self.fragments
+                .get(active_fragment)
+                .map(|fragment| fragment.node_ids.clone())
+                .unwrap_or_default()
+        } else {
+            self.nodes
+                .iter()
+                .filter_map(|(node_id, _, _)| {
+                    self.fragment_for_node(*node_id)
+                        .is_none()
+                        .then_some(*node_id)
+                })
+                .collect()
+        };
+        visible.sort_unstable();
+        visible
+    }
+
+    pub fn visible_connections(&self) -> Vec<GraphConnection> {
+        let visible = self.visible_node_ids().into_iter().collect::<HashSet<_>>();
+        self.connections
+            .iter()
+            .filter(|connection| {
+                visible.contains(&connection.from) && visible.contains(&connection.to)
+            })
+            .cloned()
+            .collect()
     }
 
     pub fn fragment_ports(

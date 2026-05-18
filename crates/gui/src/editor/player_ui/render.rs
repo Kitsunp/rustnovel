@@ -21,6 +21,7 @@ pub(crate) struct PlayerVisualContext<'a> {
     pub stage_resolution: Option<(u32, u32)>,
     pub preview_quality: crate::editor::PreviewQuality,
     pub stage_fit: crate::editor::StageFit,
+    pub background_fit: crate::editor::BackgroundFit,
     pub image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     pub image_failures: &'a mut HashMap<String, String>,
 }
@@ -236,26 +237,32 @@ fn render_visual_state_for_event(
     }
 
     let available = ui.available_size();
-    let aspect_height = available.x * 9.0 / 16.0;
-    let max_height = (available.y * 0.62).max(180.0);
-    let desired_height = aspect_height.clamp(160.0, max_height);
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(available.x.max(220.0), desired_height),
-        egui::Sense::hover(),
-    );
     let stage_size = visual
         .stage_resolution
         .map(|(w, h)| (w.max(1) as f32, h.max(1) as f32))
         .unwrap_or((1280.0, 720.0));
+    let viewport_size = player_stage_viewport_size(available, stage_size);
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(viewport_size.x, viewport_size.y),
+        egui::Sense::hover(),
+    );
     let geometry = crate::editor::scene_stage::stage_geometry(rect, stage_size, visual.stage_fit);
     let mut painter = crate::editor::scene_stage::SceneStagePainter::new(
         visual.project_root,
         visual.preview_quality,
         visual.image_cache,
         visual.image_failures,
-    );
+    )
+    .with_background_fit(visual.background_fit);
     painter.paint_read_only(ui, &scene, geometry);
     ui.add_space(12.0);
+}
+
+pub(crate) fn player_stage_viewport_size(
+    available: egui::Vec2,
+    stage_size: (f32, f32),
+) -> egui::Vec2 {
+    crate::editor::visual_composer_preview::stage_viewport_size(available, stage_size, 0.0, 0.62)
 }
 
 fn localize_inline_value(

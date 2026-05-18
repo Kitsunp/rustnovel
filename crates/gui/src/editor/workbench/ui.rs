@@ -1,32 +1,6 @@
 use super::*;
 
 impl EditorWorkbench {
-    pub(super) fn render_player_mode(&mut self, ctx: &egui::Context) {
-        self.ensure_player_audio_backend();
-        let stage_resolution = self
-            .manifest
-            .as_ref()
-            .map(|manifest| manifest.settings.resolution);
-        let mut visual_context = crate::editor::player_ui::PlayerVisualContext {
-            project_root: self.project_root.as_deref(),
-            stage_resolution,
-            preview_quality: self.composer_preview_quality,
-            stage_fit: crate::editor::StageFit::Fill,
-            image_cache: &mut self.composer_image_cache,
-            image_failures: &mut self.composer_image_failures,
-        };
-        let audio_commands = crate::editor::player_ui::render_player_ui(
-            &mut self.engine,
-            &mut self.toast,
-            &mut self.player_state,
-            &mut self.player_locale,
-            &self.localization_catalog,
-            ctx,
-            &mut visual_context,
-        );
-        self.apply_player_audio_commands(audio_commands);
-    }
-
     pub(super) fn render_editor_mode(&mut self, ctx: &egui::Context) {
         self.handle_global_editor_shortcuts(ctx);
         let selected_before = self.selected_node;
@@ -46,7 +20,10 @@ impl EditorWorkbench {
                 self.validation_collapsed,
                 &self.layout_overrides,
             );
-            egui::TopBottomPanel::bottom(format!("validation_panel_{}", self.layout_generation))
+            let validation_response = egui::TopBottomPanel::bottom(format!(
+                "validation_panel_{}",
+                self.layout_generation
+            ))
                 .resizable(true)
                 .default_height(validation_layout.default)
                 .min_height(validation_layout.min)
@@ -191,6 +168,13 @@ impl EditorWorkbench {
                         }
                     }
                 });
+            self.layout_overrides.validation_height = super::layout::dragged_panel_override(
+                self.layout_overrides.validation_height,
+                validation_response.response.rect.height(),
+                validation_layout.min,
+                validation_layout.max,
+                validation_response.response.dragged(),
+            );
             if toggle_validation_collapse {
                 self.validation_collapsed = !self.validation_collapsed;
             }
@@ -200,28 +184,42 @@ impl EditorWorkbench {
             }
         }
 
-        if self.show_timeline && !self.show_validation {
-            egui::TopBottomPanel::bottom(format!("timeline_panel_{}", self.layout_generation))
-                .resizable(true)
-                .default_height(layout.timeline.default)
-                .min_height(layout.timeline.min)
-                .max_height(layout.timeline.max)
-                .show(ctx, |ui| {
-                    let mut current_time_u32 = self.current_time as u32;
-                    let mut is_playing = self.is_playing;
+        if self.show_timeline {
+            let timeline_layout =
+                super::layout::timeline_panel_layout(layout.timeline, self.show_validation);
+            let timeline_response =
+                egui::TopBottomPanel::bottom(format!("timeline_panel_{}", self.layout_generation))
+                    .resizable(true)
+                    .default_height(timeline_layout.default)
+                    .min_height(timeline_layout.min)
+                    .max_height(timeline_layout.max)
+                    .show(ctx, |ui| {
+                        let mut current_time_u32 = self.current_time as u32;
+                        let mut is_playing = self.is_playing;
 
-                    TimelinePanel::new(&mut self.timeline, &mut current_time_u32, &mut is_playing)
+                        TimelinePanel::new(
+                            &mut self.timeline,
+                            &mut current_time_u32,
+                            &mut is_playing,
+                        )
                         .ui(ui);
 
-                    self.current_time = current_time_u32 as f32;
-                    self.is_playing = is_playing;
-                });
+                        self.current_time = current_time_u32 as f32;
+                        self.is_playing = is_playing;
+                    });
+            self.layout_overrides.timeline_height = super::layout::dragged_panel_override(
+                self.layout_overrides.timeline_height,
+                timeline_response.response.rect.height(),
+                timeline_layout.min,
+                timeline_layout.max,
+                timeline_response.response.dragged(),
+            );
         }
 
         // 2. Left Panel (Asset Browser)
         let mut asset_browser_actions = Vec::new();
         if self.show_asset_browser {
-            egui::SidePanel::left(format!(
+            let asset_response = egui::SidePanel::left(format!(
                 "asset_browser_panel_{}_{}",
                 self.layout_generation, layout.id_suffix
             ))
@@ -254,48 +252,22 @@ impl EditorWorkbench {
                     }
                 }
             });
+            self.layout_overrides.asset_width = super::layout::dragged_panel_override(
+                self.layout_overrides.asset_width,
+                asset_response.response.rect.width(),
+                layout.asset_browser.min,
+                layout.asset_browser.max,
+                asset_response.response.dragged(),
+            );
         }
 
         let mut inspector_actions = Vec::new();
 
-        for action in asset_browser_actions {
-            match action {
-                crate::editor::AssetBrowserAction::Import(kind) => self.import_asset_dialog(kind),
-                crate::editor::AssetBrowserAction::Remove { kind, name } => {
-                    match self.remove_asset_from_manifest(kind, &name) {
-                        Ok(()) => {
-                            self.toast = Some(ToastState::success(format!(
-                                "{} removed from manifest: {}",
-                                kind.label(),
-                                name
-                            )));
-                        }
-                        Err(err) => {
-                            self.toast = Some(ToastState::error(format!(
-                                "{} removal failed: {err}",
-                                kind.label()
-                            )));
-                        }
-                    }
-                }
-                crate::editor::AssetBrowserAction::PreviewAudio { path, offset_ms } => {
-                    self.play_editor_audio_preview_from_offset(
-                        "bgm",
-                        &path,
-                        None,
-                        true,
-                        std::time::Duration::from_millis(offset_ms),
-                    );
-                }
-                crate::editor::AssetBrowserAction::StopAudio => {
-                    self.stop_editor_audio_preview("bgm")
-                }
-            }
-        }
+        self.handle_asset_browser_actions(asset_browser_actions);
 
         // 3. Docked Graph/Inspector Panels (context-level to avoid nested layout clipping)
         if self.show_inspector {
-            egui::SidePanel::right(format!(
+            let inspector_response = egui::SidePanel::right(format!(
                 "inspector_docked_panel_{}_{}",
                 self.layout_generation, layout.id_suffix
             ))
@@ -316,11 +288,18 @@ impl EditorWorkbench {
                     inspector_actions.push(action);
                 }
             });
+            self.layout_overrides.inspector_width = super::layout::dragged_panel_override(
+                self.layout_overrides.inspector_width,
+                inspector_response.response.rect.width(),
+                layout.inspector.min,
+                layout.inspector.max,
+                inspector_response.response.dragged(),
+            );
         }
 
         if !self.node_editor_window_open && self.show_graph {
             {
-                egui::SidePanel::left(format!(
+                let graph_response = egui::SidePanel::left(format!(
                     "logic_graph_docked_panel_{}_{}",
                     self.layout_generation, layout.id_suffix
                 ))
@@ -334,6 +313,13 @@ impl EditorWorkbench {
                         NodeEditorPanel::new(&mut self.node_graph, &mut self.undo_stack);
                     panel.ui(ui);
                 });
+                self.layout_overrides.graph_width = super::layout::dragged_panel_override(
+                    self.layout_overrides.graph_width,
+                    graph_response.response.rect.width(),
+                    layout.graph.min,
+                    layout.graph.max,
+                    graph_response.response.dragged(),
+                );
             }
         }
 
@@ -353,6 +339,9 @@ impl EditorWorkbench {
         let composer_selected_node = self.node_graph.selected.or(self.selected_node);
         let selected_authoring_node =
             composer_selected_node.and_then(|node_id| self.node_graph.get_node(node_id).cloned());
+        let mut composer_background_fit =
+            self.composer_background_fit_for_node(composer_selected_node);
+        let mut composer_preview_mode = self.composer_preview_mode;
         let mut composer_actions = Vec::new();
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -370,6 +359,8 @@ impl EditorWorkbench {
                     stage_resolution,
                     preview_quality: &mut self.composer_preview_quality,
                     stage_fit: &mut self.composer_stage_fit,
+                    background_fit: &mut composer_background_fit,
+                    preview_mode: &mut composer_preview_mode,
                     image_cache: &mut self.composer_image_cache,
                     image_failures: &mut self.composer_image_failures,
                     selected_entity_id: &mut self.selected_entity,
@@ -385,138 +376,11 @@ impl EditorWorkbench {
 
             crate::editor::node_rendering::render_toast(ui, &mut self.toast);
         });
+        self.composer_preview_mode = composer_preview_mode;
 
         // 5. Apply Deferred Actions
-        for action in composer_actions {
-            match action {
-                crate::editor::visual_composer::VisualComposerAction::SelectNode(nid) => {
-                    self.node_graph.set_single_selection(Some(nid));
-                    self.selected_node = Some(nid);
-                    self.selected_entity = None;
-                }
-                crate::editor::visual_composer::VisualComposerAction::CreateNode { node, pos } => {
-                    self.add_composer_created_node(node, pos);
-                    self.queue_editor_operation(
-                        "composer_create_node",
-                        "Created node from Visual Composer drag/drop",
-                        Some("graph.nodes[]".to_string()),
-                    );
-                }
-                crate::editor::visual_composer::VisualComposerAction::MutateNode {
-                    node_id,
-                    mutation,
-                } => {
-                    if self.apply_composer_node_mutation(node_id, mutation) {
-                        self.node_graph.set_single_selection(Some(node_id));
-                        self.selected_node = Some(node_id);
-                        self.node_graph.mark_modified();
-                    }
-                }
-                crate::editor::visual_composer::VisualComposerAction::AssignAssetToNode {
-                    node_id,
-                    target,
-                    asset,
-                } => match self.apply_imported_asset_to_node(node_id, target, asset.clone()) {
-                    Ok(()) => {
-                        self.node_graph.set_single_selection(Some(node_id));
-                        self.selected_node = Some(node_id);
-                        self.toast = Some(ToastState::success(format!(
-                            "Assigned asset to selected node: {asset}"
-                        )));
-                    }
-                    Err(err) => {
-                        self.toast =
-                            Some(ToastState::error(format!("Asset assignment failed: {err}")));
-                    }
-                },
-                crate::editor::visual_composer::VisualComposerAction::AddCharacterToNode {
-                    node_id,
-                    name,
-                    asset,
-                    x,
-                    y,
-                } => match self.add_character_asset_to_node(node_id, name, asset.clone(), x, y) {
-                    Ok(()) => {
-                        self.node_graph.set_single_selection(Some(node_id));
-                        self.selected_node = Some(node_id);
-                        self.toast = Some(ToastState::success(format!(
-                            "Added character asset to selected scene: {asset}"
-                        )));
-                    }
-                    Err(err) => {
-                        self.toast = Some(ToastState::error(format!(
-                            "Character assignment failed: {err}"
-                        )));
-                    }
-                },
-                crate::editor::visual_composer::VisualComposerAction::LayerVisibilityChanged {
-                    object_id,
-                    visible,
-                } => {
-                    self.node_graph.mark_modified();
-                    self.queue_editor_operation_with_values(
-                        "layer_visibility_changed",
-                        format!("Set layer {object_id} visible={visible}"),
-                        Some(format!("composer.layers[{object_id}].visible")),
-                        Some((!visible).to_string()),
-                        Some(visible.to_string()),
-                    );
-                }
-                crate::editor::visual_composer::VisualComposerAction::LayerLockChanged {
-                    object_id,
-                    locked,
-                } => {
-                    self.node_graph.mark_modified();
-                    self.queue_editor_operation_with_values(
-                        "layer_lock_changed",
-                        format!("Set layer {object_id} locked={locked}"),
-                        Some(format!("composer.layers[{object_id}].locked")),
-                        Some((!locked).to_string()),
-                        Some(locked.to_string()),
-                    );
-                }
-                crate::editor::visual_composer::VisualComposerAction::TestFromSelection => {
-                    self.start_composer_runtime_preview_from_node(composer_selected_node);
-                }
-                crate::editor::visual_composer::VisualComposerAction::TestRestart => {
-                    self.restart_composer_runtime_preview();
-                }
-                crate::editor::visual_composer::VisualComposerAction::TestAdvance => {
-                    self.advance_composer_runtime_preview(None);
-                }
-                crate::editor::visual_composer::VisualComposerAction::TestChoose(index) => {
-                    if composer_selected_node
-                        .and_then(|node_id| self.node_graph.get_node(node_id))
-                        .is_some_and(|node| matches!(node, crate::editor::StoryNode::Choice { .. }))
-                    {
-                        self.start_composer_runtime_preview_from_node(composer_selected_node);
-                    }
-                    self.advance_composer_runtime_preview(Some(index));
-                }
-            }
-        }
-        for action in inspector_actions {
-            match action {
-                crate::editor::InspectorAction::PreviewAudio {
-                    channel,
-                    path,
-                    volume,
-                    loop_playback,
-                } => {
-                    self.play_editor_audio_preview(&channel, &path, volume, loop_playback);
-                }
-                crate::editor::InspectorAction::StopAudio { channel } => {
-                    self.stop_editor_audio_preview(&channel);
-                }
-                crate::editor::InspectorAction::ImportAssetForNode {
-                    node_id,
-                    kind,
-                    target,
-                } => {
-                    self.import_asset_for_node_dialog(node_id, kind, target);
-                }
-            }
-        }
+        self.handle_composer_actions(composer_actions, composer_selected_node);
+        self.handle_inspector_actions(inspector_actions);
 
         // Common Sync
         // External panels may set selected_node directly (lint, diagnostics).
@@ -556,11 +420,18 @@ impl EditorWorkbench {
             let graph_before_detached_interaction = self.node_graph.clone();
             let mut embedded_open = self.node_editor_window_open;
             let mut detached_closed = false;
+            let floating_rect = self
+                .workspace_layout_from_current_flags()
+                .panel(super::layout::WorkspacePanelId::NodeEditor)
+                .floating_rect;
+            let floating_size = floating_rect
+                .map(|rect| [rect.w, rect.h])
+                .unwrap_or([1000.0, 700.0]);
             ctx.show_viewport_immediate(
                 egui::ViewportId::from_hash_of("node_editor_detached"),
                 egui::ViewportBuilder::default()
                     .with_title("Node Editor")
-                    .with_inner_size([1000.0, 700.0]),
+                    .with_inner_size(floating_size),
                 |viewport_ctx, class| match class {
                     egui::ViewportClass::Embedded => {
                         egui::Window::new("Node Editor")

@@ -20,7 +20,8 @@ mod support;
 pub use api_v2::{
     PyAuthoringValidationReport, PyComposerPreviewSession, PyComposerSnapshot, PyDiagnosticTarget,
     PyEvidenceTrace, PyFieldPath, PyFragmentPort, PyGraphFragment, PyLayeredSceneObject,
-    PyOperationLogEntry, PySemanticValue, PyTraceAtom, PyTraceEdge, PyVerificationRun,
+    PyOperationLogEntry, PyOperationStatus, PySemanticValue, PyTraceAtom, PyTraceEdge,
+    PyVerificationRun,
 };
 pub use diagnostics::{PyLintIssue, PyLintSeverity, PyQuickFixCandidate};
 pub use node_graph::PyNodeGraph;
@@ -53,6 +54,7 @@ pub fn register_editor_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTraceAtom>()?;
     m.add_class::<PyTraceEdge>()?;
     m.add_class::<PyAuthoringValidationReport>()?;
+    m.add_class::<PyOperationStatus>()?;
     m.add_class::<PyOperationLogEntry>()?;
     m.add_class::<PyVerificationRun>()?;
     m.add_class::<PyGraphFragment>()?;

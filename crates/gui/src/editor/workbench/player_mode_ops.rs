@@ -42,6 +42,10 @@ impl EditorWorkbench {
         true
     }
     pub(crate) fn refresh_scene_from_engine_preview(&mut self) {
+        if self.composer_preview_mode == crate::editor::ComposerPreviewMode::IsolatedNode {
+            self.refresh_scene_from_selected_node();
+            return;
+        }
         let Some(engine) = self.engine.as_ref() else {
             self.refresh_scene_from_selected_node();
             return;

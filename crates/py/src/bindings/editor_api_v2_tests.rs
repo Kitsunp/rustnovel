@@ -1,6 +1,7 @@
 use visual_novel_engine::authoring::composer::compose_scene_snapshot;
 use visual_novel_engine::authoring::{
-    validate_authoring_graph_no_io, AuthoringPosition, StoryNode,
+    validate_authoring_graph_no_io, AuthoringPosition, OperationKind, OperationLogEntry,
+    OperationStatus, StoryNode,
 };
 
 use super::*;
@@ -90,4 +91,30 @@ fn python_fragment_and_composer_wrappers_expose_stable_json() {
         .to_json()
         .expect("snapshot json")
         .contains("bg/room.png"));
+}
+
+#[test]
+fn python_operation_status_wrapper_roundtrips_typed_status() {
+    let entry = OperationLogEntry::new_typed(
+        OperationKind::ComposerObjectMoved,
+        "applied_with_warnings",
+        "moved object and revalidated",
+    )
+    .with_status(OperationStatus::AppliedWithWarnings);
+
+    let py_entry = PyOperationLogEntry::from(entry);
+    let json = py_entry.to_json().expect("operation json");
+    assert!(json.contains("\"status_v2\": \"applied_with_warnings\""));
+
+    let parsed = PyOperationLogEntry::from_json(&json).expect("parse operation json");
+    assert!(parsed
+        .to_json()
+        .expect("operation json roundtrip")
+        .contains("\"status_v2\": \"applied_with_warnings\""));
+
+    let status = PyOperationStatus::from(OperationStatus::Rejected);
+    assert!(status
+        .to_json()
+        .expect("status json")
+        .contains("\"rejected\""));
 }

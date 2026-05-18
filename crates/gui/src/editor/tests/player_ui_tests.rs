@@ -92,3 +92,20 @@ fn end_ui_uses_typed_end_of_script_error() {
         ),
     ));
 }
+
+#[test]
+fn player_stage_viewport_never_forces_wider_than_window() {
+    let tiny = super::render::player_stage_viewport_size(
+        eframe::egui::vec2(112.0, 320.0),
+        (1280.0, 720.0),
+    );
+    assert_eq!(tiny.x, 112.0);
+    assert!(tiny.y <= 320.0);
+
+    let normal = super::render::player_stage_viewport_size(
+        eframe::egui::vec2(900.0, 1000.0),
+        (1280.0, 720.0),
+    );
+    assert_eq!(normal.x, 900.0);
+    assert!(normal.y < 640.0);
+}

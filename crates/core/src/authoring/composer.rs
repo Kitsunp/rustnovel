@@ -21,6 +21,37 @@ pub enum StageLayerKind {
     DebugTrace,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundFit {
+    #[default]
+    Cover,
+    Contain,
+    Stretch,
+    Tile,
+    Original,
+}
+
+impl BackgroundFit {
+    pub const ALL: &'static [Self] = &[
+        Self::Cover,
+        Self::Contain,
+        Self::Stretch,
+        Self::Tile,
+        Self::Original,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Cover => "Cover",
+            Self::Contain => "Contain",
+            Self::Stretch => "Stretch",
+            Self::Tile => "Tile",
+            Self::Original => "Original",
+        }
+    }
+}
+
 impl StageLayerKind {
     pub fn label(self) -> &'static str {
         match self {

@@ -26,6 +26,7 @@ impl EditorWorkbench {
                 self.composer_image_failures.clear();
                 self.audio_duration_cache.clear();
                 self.composer_layer_overrides.clear();
+                self.composer_background_fit_overrides.clear();
                 self.player_audio_backend = None;
                 self.player_audio_root = None;
                 self.localization_catalog =
@@ -97,6 +98,7 @@ impl EditorWorkbench {
         self.operation_log = loaded_script.operation_log;
         self.verification_runs = loaded_script.verification_runs;
         self.composer_layer_overrides = loaded_script.composer_layer_overrides;
+        self.composer_background_fit_overrides = loaded_script.composer_background_fit_overrides;
         let mut stack = UndoStack::new();
         stack.push(self.node_graph.clone());
         self.undo_stack = stack;
@@ -205,6 +207,7 @@ impl EditorWorkbench {
             path,
             &self.node_graph,
             &self.composer_layer_overrides,
+            &self.composer_background_fit_overrides,
             &self.operation_log,
             &self.verification_runs,
         ) {

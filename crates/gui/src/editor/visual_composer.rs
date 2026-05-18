@@ -4,17 +4,47 @@ use std::collections::HashMap;
 use std::path::Path;
 use visual_novel_engine::{Engine, EntityId, SceneState};
 
-use crate::editor::{AssetFieldTarget, PreviewQuality, StageFit};
+use crate::editor::{
+    AssetFieldTarget, BackgroundFit, ComposerPreviewMode, PreviewQuality, StageFit,
+};
 
+mod drop_target;
 mod layers;
+mod overlay_editor;
 mod overlays;
+mod preview_badge;
+mod viewport;
+pub(crate) use drop_target::{
+    assignment_for_dropped_asset, character_drop_target_node, DraggedAsset,
+};
 pub(crate) use layers::scene_entity_object_id;
 pub use layers::{
     layered_scene_objects, layered_scene_objects_with_authoring_overlay, LayerOverride,
     LayeredSceneObject, StageLayerKind,
 };
+pub(crate) use preview_badge::preview_source_label;
+use preview_badge::short_event_label;
 
 pub enum ComposerNodeMutation {
+    DialogueText {
+        speaker: String,
+        text: String,
+    },
+    ChoicePrompt {
+        prompt: String,
+    },
+    ChoiceOptionText {
+        option_index: usize,
+        text: String,
+    },
+    ChoiceOptionOrder {
+        from_index: usize,
+        to_index: usize,
+    },
+    ChoiceOptionTarget {
+        option_index: usize,
+        target_node_id: Option<u32>,
+    },
     CharacterPosition {
         name: String,
         expression: Option<String>,
@@ -55,6 +85,11 @@ pub enum VisualComposerAction {
         object_id: String,
         locked: bool,
     },
+    BackgroundFitChanged {
+        node_id: Option<u32>,
+        fit: BackgroundFit,
+    },
+    PreviewModeChanged(ComposerPreviewMode),
     TestFromSelection,
     TestRestart,
     TestAdvance,
@@ -69,6 +104,8 @@ pub struct VisualComposerPanel<'a> {
     stage_resolution: Option<(u32, u32)>,
     preview_quality: &'a mut PreviewQuality,
     stage_fit: &'a mut StageFit,
+    background_fit: &'a mut BackgroundFit,
+    preview_mode: &'a mut ComposerPreviewMode,
     image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     image_failures: &'a mut HashMap<String, String>,
     selected_entity_id: &'a mut Option<u32>,
@@ -85,6 +122,8 @@ pub struct VisualComposerPanelParams<'a> {
     pub stage_resolution: Option<(u32, u32)>,
     pub preview_quality: &'a mut PreviewQuality,
     pub stage_fit: &'a mut StageFit,
+    pub background_fit: &'a mut BackgroundFit,
+    pub preview_mode: &'a mut ComposerPreviewMode,
     pub image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     pub image_failures: &'a mut HashMap<String, String>,
     pub selected_entity_id: &'a mut Option<u32>,
@@ -103,6 +142,8 @@ impl<'a> VisualComposerPanel<'a> {
             stage_resolution: params.stage_resolution,
             preview_quality: params.preview_quality,
             stage_fit: params.stage_fit,
+            background_fit: params.background_fit,
+            preview_mode: params.preview_mode,
             image_cache: params.image_cache,
             image_failures: params.image_failures,
             selected_entity_id: params.selected_entity_id,
@@ -126,6 +167,15 @@ impl<'a> VisualComposerPanel<'a> {
             ui.separator();
             ui.label(format!("Entities: {}", self.scene.len()));
             ui.separator();
+            ui.label(preview_source_label(
+                self.scene,
+                self.engine,
+                *self.preview_mode,
+                self.selected_authoring_node_id,
+                self.selected_authoring_node,
+                entity_owners,
+            ));
+            ui.separator();
             ui.label("Pixels:");
             egui::ComboBox::from_id_source("composer_preview_quality")
                 .selected_text(self.preview_quality.label())
@@ -143,6 +193,35 @@ impl<'a> VisualComposerPanel<'a> {
                         ui.selectable_value(self.stage_fit, *fit, fit.label());
                     }
                 });
+            ui.separator();
+            let old_background_fit = *self.background_fit;
+            ui.label("BG:");
+            egui::ComboBox::from_id_source("composer_background_fit")
+                .selected_text(self.background_fit.label())
+                .show_ui(ui, |ui| {
+                    for fit in BackgroundFit::ALL {
+                        ui.selectable_value(self.background_fit, *fit, fit.label());
+                    }
+                });
+            if old_background_fit != *self.background_fit {
+                action = Some(VisualComposerAction::BackgroundFitChanged {
+                    node_id: self.selected_authoring_node_id,
+                    fit: *self.background_fit,
+                });
+            }
+            ui.separator();
+            let old_preview_mode = *self.preview_mode;
+            ui.label("Preview:");
+            egui::ComboBox::from_id_source("composer_preview_mode")
+                .selected_text(self.preview_mode.label())
+                .show_ui(ui, |ui| {
+                    for mode in ComposerPreviewMode::ALL {
+                        ui.selectable_value(self.preview_mode, *mode, mode.label());
+                    }
+                });
+            if old_preview_mode != *self.preview_mode {
+                action = Some(VisualComposerAction::PreviewModeChanged(*self.preview_mode));
+            }
             ui.separator();
             if ui.small_button("Test here").clicked() {
                 action = Some(VisualComposerAction::TestFromSelection);
@@ -163,14 +242,17 @@ impl<'a> VisualComposerPanel<'a> {
         if let Some(layer_action) = self.render_layer_panel(ui, &objects) {
             action = Some(layer_action);
         }
+        if let Some(edit_action) = overlay_editor::render_overlay_editor(
+            ui,
+            self.selected_authoring_node_id,
+            self.selected_authoring_node,
+        ) {
+            action = Some(edit_action);
+        }
 
-        let available_size = ui.available_size();
-        let status_height = 28.0;
-        let viewport_height = (available_size.y - status_height).max(80.0);
-        let viewport_rect = egui::Rect::from_min_size(
-            ui.cursor().min,
-            egui::vec2(available_size.x, viewport_height),
-        );
+        let viewport_size =
+            viewport::composer_viewport_size(ui.available_size(), self.stage_size());
+        let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, viewport_size);
         let geometry = crate::editor::scene_stage::stage_geometry(
             viewport_rect,
             self.stage_size(),
@@ -256,13 +338,14 @@ impl<'a> VisualComposerPanel<'a> {
             *self.selected_entity_id = None;
         }
 
-        let mut painter = crate::editor::scene_stage::SceneStagePainter::new(
+        let painter = crate::editor::scene_stage::SceneStagePainter::new(
             self.project_root,
             *self.preview_quality,
             self.image_cache,
             self.image_failures,
         )
         .with_layer_overrides(self.layer_overrides.clone());
+        let mut painter = painter.with_background_fit(*self.background_fit);
         let stage_action = painter.paint_interactive(
             ui,
             self.scene,
@@ -292,6 +375,7 @@ impl<'a> VisualComposerPanel<'a> {
             geometry,
             self.engine,
             self.selected_authoring_node,
+            *self.preview_mode,
             self.layer_overrides,
             &mut action,
         );
@@ -382,210 +466,6 @@ impl<'a> VisualComposerPanel<'a> {
     }
 }
 
-struct DraggedAsset<'a> {
-    kind: &'a str,
-    name: &'a str,
-    path: &'a str,
-}
-
-impl<'a> DraggedAsset<'a> {
-    fn parse(payload: &'a str) -> Option<Self> {
-        let payload = payload.strip_prefix("asset://")?;
-        let mut lines = payload.lines();
-        let header = lines.next()?;
-        let path_override = lines.next();
-        let (kind, name) = header.split_once('/')?;
-        Some(Self {
-            kind,
-            name,
-            path: path_override.unwrap_or(name),
-        })
-    }
-}
-
-fn short_event_label(event: &visual_novel_engine::EventCompiled) -> String {
-    match event {
-        visual_novel_engine::EventCompiled::Scene(scene) => {
-            let background = scene.background.as_deref().unwrap_or("<none>");
-            format!("Event: Scene bg={background}")
-        }
-        visual_novel_engine::EventCompiled::Patch(patch) => {
-            let background = patch.background.as_deref().unwrap_or("<none>");
-            format!("Event: Patch bg={background}")
-        }
-        visual_novel_engine::EventCompiled::Dialogue(dialogue) => {
-            format!("Event: Dialogue {}", dialogue.speaker.as_ref())
-        }
-        visual_novel_engine::EventCompiled::Choice(choice) => {
-            format!("Event: Choice {} option(s)", choice.options.len())
-        }
-        visual_novel_engine::EventCompiled::AudioAction(action) => {
-            format!("Event: Audio {}", audio_channel_label(action.channel))
-        }
-        _ => format!("Event: {:?}", event),
-    }
-}
-
-fn audio_channel_label(channel: u8) -> &'static str {
-    match channel {
-        0 => "bgm",
-        1 => "sfx",
-        2 => "voice",
-        _ => "unknown",
-    }
-}
-
-pub(crate) fn assignment_for_dropped_asset(
-    kind: &str,
-    asset_path: &str,
-    selected_node_id: Option<u32>,
-    selected_node: Option<&StoryNode>,
-) -> Option<(u32, AssetFieldTarget, String)> {
-    let node_id = selected_node_id?;
-    let node = selected_node?;
-    let target = match (kind, node) {
-        ("bg", StoryNode::Scene { .. }) => AssetFieldTarget::SceneBackground,
-        ("bg", StoryNode::ScenePatch(_)) => AssetFieldTarget::ScenePatchBackground,
-        ("audio", StoryNode::Scene { .. }) => AssetFieldTarget::SceneMusic,
-        ("audio", StoryNode::ScenePatch(_)) => AssetFieldTarget::ScenePatchMusic,
-        ("audio", StoryNode::AudioAction { .. }) => AssetFieldTarget::AudioActionAsset,
-        _ => return None,
-    };
-    Some((node_id, target, asset_path.to_string()))
-}
-
-pub(crate) fn character_drop_target_node(
-    kind: &str,
-    selected_node_id: Option<u32>,
-    selected_node: Option<&StoryNode>,
-) -> Option<u32> {
-    let node_id = selected_node_id?;
-    let node = selected_node?;
-    (kind == "char" && matches!(node, StoryNode::Scene { .. } | StoryNode::ScenePatch(_)))
-        .then_some(node_id)
-}
-
 #[cfg(test)]
-mod tests {
-    use crate::editor::{AssetFieldTarget, StoryNode};
-
-    #[test]
-    fn low_z_order_image_is_background_layer() {
-        let image = visual_novel_engine::EntityKind::Image(visual_novel_engine::ImageData {
-            path: visual_novel_engine::SharedStr::from("bg/room.png"),
-            tint: None,
-        });
-        assert!(crate::editor::scene_stage::is_background_image(
-            &image, -100
-        ));
-        assert!(!crate::editor::scene_stage::is_background_image(&image, 0));
-    }
-
-    #[test]
-    fn dragged_character_payload_preserves_name_and_image_path() {
-        let payload = "asset://char/furina\nassets/characters/furina.png";
-        let parsed = super::DraggedAsset::parse(payload).expect("payload should parse");
-        assert_eq!(parsed.kind, "char");
-        assert_eq!(parsed.name, "furina");
-        assert_eq!(parsed.path, "assets/characters/furina.png");
-    }
-
-    #[test]
-    fn dropped_background_assigns_to_selected_scene_instead_of_creating_duplicate_scene() {
-        let scene = StoryNode::Scene {
-            profile: None,
-            background: None,
-            music: None,
-            characters: Vec::new(),
-        };
-
-        let assignment = super::assignment_for_dropped_asset(
-            "bg",
-            "assets/backgrounds/room.png",
-            Some(9),
-            Some(&scene),
-        )
-        .expect("selected scene should accept background drop");
-
-        assert_eq!(
-            assignment,
-            (
-                9,
-                AssetFieldTarget::SceneBackground,
-                "assets/backgrounds/room.png".to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn dropped_audio_can_target_scene_music_patch_music_or_audio_node() {
-        let scene = StoryNode::Scene {
-            profile: None,
-            background: None,
-            music: None,
-            characters: Vec::new(),
-        };
-        let patch = StoryNode::ScenePatch(Default::default());
-        let audio = StoryNode::AudioAction {
-            channel: "bgm".to_string(),
-            action: "play".to_string(),
-            asset: None,
-            volume: None,
-            fade_duration_ms: None,
-            loop_playback: Some(true),
-        };
-
-        assert_eq!(
-            super::assignment_for_dropped_asset(
-                "audio",
-                "assets/audio/theme.ogg",
-                Some(1),
-                Some(&scene)
-            )
-            .map(|(_, target, _)| target),
-            Some(AssetFieldTarget::SceneMusic)
-        );
-        assert_eq!(
-            super::assignment_for_dropped_asset(
-                "audio",
-                "assets/audio/theme.ogg",
-                Some(2),
-                Some(&patch)
-            )
-            .map(|(_, target, _)| target),
-            Some(AssetFieldTarget::ScenePatchMusic)
-        );
-        assert_eq!(
-            super::assignment_for_dropped_asset(
-                "audio",
-                "assets/audio/theme.ogg",
-                Some(3),
-                Some(&audio)
-            )
-            .map(|(_, target, _)| target),
-            Some(AssetFieldTarget::AudioActionAsset)
-        );
-    }
-
-    #[test]
-    fn dropped_character_targets_selected_scene_instead_of_creating_duplicate_patch() {
-        let scene = StoryNode::Scene {
-            profile: None,
-            background: None,
-            music: None,
-            characters: Vec::new(),
-        };
-
-        assert!(super::assignment_for_dropped_asset(
-            "char",
-            "assets/characters/ava.png",
-            Some(1),
-            Some(&scene)
-        )
-        .is_none());
-        assert_eq!(
-            super::character_drop_target_node("char", Some(1), Some(&scene)),
-            Some(1)
-        );
-    }
-}
+#[path = "visual_composer/tests.rs"]
+mod tests;

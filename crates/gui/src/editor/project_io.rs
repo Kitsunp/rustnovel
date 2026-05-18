@@ -4,8 +4,9 @@ use crate::editor::node_graph::NodeGraph;
 use std::path::{Component, Path, PathBuf};
 use visual_novel_engine::{
     authoring::{
-        composer::LayerOverride, export_runtime_script_from_authoring,
-        parse_authoring_document_or_script, AuthoringDocument, OperationLogEntry, VerificationRun,
+        composer::{BackgroundFit, LayerOverride},
+        export_runtime_script_from_authoring, parse_authoring_document_or_script,
+        AuthoringDocument, OperationLogEntry, VerificationRun,
     },
     manifest::{ManifestMigrationReport, ProjectManifest},
 };
@@ -20,6 +21,7 @@ pub struct LoadedScript {
     pub graph: NodeGraph,
     pub was_imported: bool,
     pub composer_layer_overrides: std::collections::HashMap<String, LayerOverride>,
+    pub composer_background_fit_overrides: std::collections::HashMap<String, BackgroundFit>,
     pub operation_log: Vec<OperationLogEntry>,
     pub verification_runs: Vec<VerificationRun>,
 }
@@ -107,6 +109,10 @@ pub fn load_script(path: PathBuf) -> Result<LoadedScript, EditorError> {
             graph: from_authoring_graph(&document.graph),
             was_imported: false,
             composer_layer_overrides: document.composer_layer_overrides.into_iter().collect(),
+            composer_background_fit_overrides: document
+                .composer_background_fit_overrides
+                .into_iter()
+                .collect(),
             operation_log: document.operation_log,
             verification_runs: document.verification_runs,
         });
@@ -117,6 +123,7 @@ pub fn load_script(path: PathBuf) -> Result<LoadedScript, EditorError> {
         graph: from_authoring_graph(&graph),
         was_imported: false,
         composer_layer_overrides: std::collections::HashMap::new(),
+        composer_background_fit_overrides: std::collections::HashMap::new(),
         operation_log: Vec::new(),
         verification_runs: Vec::new(),
     })
@@ -130,18 +137,30 @@ pub fn save_authoring_document(
     path: &std::path::Path,
     graph: &NodeGraph,
 ) -> Result<(), EditorError> {
-    save_authoring_document_with_metadata(path, graph, &std::collections::HashMap::new(), &[], &[])
+    save_authoring_document_with_metadata(
+        path,
+        graph,
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
+        &[],
+        &[],
+    )
 }
 
 pub fn save_authoring_document_with_metadata(
     path: &std::path::Path,
     graph: &NodeGraph,
     composer_layer_overrides: &std::collections::HashMap<String, LayerOverride>,
+    composer_background_fit_overrides: &std::collections::HashMap<String, BackgroundFit>,
     operation_log: &[OperationLogEntry],
     verification_runs: &[VerificationRun],
 ) -> Result<(), EditorError> {
     let mut document = AuthoringDocument::new(to_authoring_graph(graph));
     document.composer_layer_overrides = composer_layer_overrides
+        .iter()
+        .map(|(key, value)| (key.clone(), *value))
+        .collect();
+    document.composer_background_fit_overrides = composer_background_fit_overrides
         .iter()
         .map(|(key, value)| (key.clone(), *value))
         .collect();
@@ -325,6 +344,7 @@ entry_point = "../outside.json"
             &path,
             &graph,
             &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
             std::slice::from_ref(&operation),
             std::slice::from_ref(&verification),
         )
@@ -354,10 +374,40 @@ entry_point = "../outside.json"
             },
         );
 
-        save_authoring_document_with_metadata(&path, &graph, &overrides, &[], &[])
-            .expect("save layer overrides");
+        save_authoring_document_with_metadata(
+            &path,
+            &graph,
+            &overrides,
+            &std::collections::HashMap::new(),
+            &[],
+            &[],
+        )
+        .expect("save layer overrides");
         let loaded = load_script(path).expect("load layer overrides");
 
         assert_eq!(loaded.composer_layer_overrides, overrides);
+    }
+
+    #[test]
+    fn authoring_save_load_preserves_background_fit_overrides() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("background-fit.vnauthoring");
+        let mut graph = NodeGraph::new();
+        graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+        let mut overrides = std::collections::HashMap::new();
+        overrides.insert("1".to_string(), crate::editor::BackgroundFit::Contain);
+
+        save_authoring_document_with_metadata(
+            &path,
+            &graph,
+            &std::collections::HashMap::new(),
+            &overrides,
+            &[],
+            &[],
+        )
+        .expect("save background fit overrides");
+        let loaded = load_script(path).expect("load background fit overrides");
+
+        assert_eq!(loaded.composer_background_fit_overrides, overrides);
     }
 }

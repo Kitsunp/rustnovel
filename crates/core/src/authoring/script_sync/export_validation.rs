@@ -40,6 +40,7 @@ pub(super) fn validate_strict_graph_export(graph: &NodeGraph) -> VnResult<()> {
     }
 
     validate_fragment_issues(graph)?;
+    validate_fragment_internal_reachability(graph)?;
     validate_connections_exist(graph, &node_lookup)
 }
 
@@ -80,6 +81,57 @@ fn validate_connections_exist(
                 "connection {}:{} -> {} references a missing node",
                 connection.from, connection.from_port, connection.to
             )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_fragment_internal_reachability(graph: &NodeGraph) -> VnResult<()> {
+    for (fragment_id, fragment) in graph.fragments() {
+        if fragment.node_ids.is_empty() {
+            continue;
+        }
+        let allowed = fragment.node_ids.iter().copied().collect::<BTreeSet<_>>();
+        let starts = fragment
+            .inputs
+            .iter()
+            .filter_map(|port| port.node_id)
+            .filter(|node_id| allowed.contains(node_id))
+            .collect::<BTreeSet<_>>();
+        let starts = if starts.is_empty() {
+            fragment
+                .node_ids
+                .first()
+                .copied()
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        } else {
+            starts
+        };
+        let mut reachable = BTreeSet::new();
+        let mut queue = starts
+            .into_iter()
+            .collect::<std::collections::VecDeque<_>>();
+        while let Some(node_id) = queue.pop_front() {
+            if !allowed.contains(&node_id) || !reachable.insert(node_id) {
+                continue;
+            }
+            let mut outgoing = graph
+                .connections()
+                .filter(|connection| connection.from == node_id && allowed.contains(&connection.to))
+                .map(|connection| connection.to)
+                .collect::<Vec<_>>();
+            outgoing.sort_unstable();
+            for to in outgoing {
+                queue.push_back(to);
+            }
+        }
+        for node_id in &fragment.node_ids {
+            if !reachable.contains(node_id) {
+                return Err(VnError::invalid_script(format!(
+                    "fragment '{fragment_id}' contains unreachable/draft node {node_id}"
+                )));
+            }
         }
     }
     Ok(())
@@ -200,6 +252,22 @@ fn validate_subgraph_call(
         return Err(VnError::invalid_script(format!(
             "subgraph call node {node_id} references missing exit port"
         )));
+    }
+    let allowed_output_ports = if exit_port.is_some() {
+        1
+    } else {
+        fragment.outputs.len().max(1)
+    };
+    for connection in graph
+        .connections()
+        .filter(|connection| connection.from == node_id)
+    {
+        if connection.from_port >= allowed_output_ports {
+            return Err(VnError::invalid_script(format!(
+                "subgraph call node {node_id} output port {} has no fragment output binding",
+                connection.from_port
+            )));
+        }
     }
     Ok(())
 }

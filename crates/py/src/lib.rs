@@ -7,9 +7,9 @@ pub use bindings::{
     PyComposerPreviewSession, PyComposerSnapshot, PyDiagnosticTarget, PyEngine, PyEvidenceTrace,
     PyFieldPath, PyFragmentPort, PyGraphEdge, PyGraphFragment, PyGraphNode, PyGraphStats,
     PyKeyframe, PyLayeredSceneObject, PyLintIssue, PyLintSeverity, PyNodeGraph,
-    PyOperationLogEntry, PyQuickFixCandidate, PyResourceConfig, PyScriptBuilder, PySemanticValue,
-    PyStoryGraph, PyStoryNode, PyTimeline, PyTraceAtom, PyTraceEdge, PyTrack, PyVerificationRun,
-    PyVnConfig, StepResult,
+    PyOperationLogEntry, PyOperationStatus, PyQuickFixCandidate, PyResourceConfig, PyScriptBuilder,
+    PySemanticValue, PyStoryGraph, PyStoryNode, PyTimeline, PyTraceAtom, PyTraceEdge, PyTrack,
+    PyVerificationRun, PyVnConfig, StepResult,
 };
 
 #[pymodule]

@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use visual_novel_engine::{
     authoring::{AuthoringDocument, AuthoringPosition, NodeGraph, StoryNode},
-    export_bundle, BundleIntegrity, DialogueRaw, EventRaw, ExportBundleSpec, ExportTargetPlatform,
-    ProjectManifest, ScriptRaw,
+    export_bundle, AudioActionRaw, BundleIntegrity, DialogueRaw, EventRaw, ExportBundleSpec,
+    ExportTargetPlatform, ProjectManifest, SceneTransitionRaw, ScriptRaw,
 };
 
 fn create_escape_symlink(link: &Path, target: &Path) -> bool {
@@ -39,10 +39,20 @@ fn build_project_fixture() -> (TempDir, std::path::PathBuf) {
         .expect("manifest save");
 
     let script = ScriptRaw::new(
-        vec![EventRaw::Dialogue(DialogueRaw {
-            speaker: "Narrator".to_string(),
-            text: "hello".to_string(),
-        })],
+        vec![
+            EventRaw::Dialogue(DialogueRaw {
+                speaker: "Narrator".to_string(),
+                text: "hello".to_string(),
+            }),
+            EventRaw::AudioAction(AudioActionRaw {
+                channel: "bgm".to_string(),
+                action: "play".to_string(),
+                asset: Some("assets/bgm/theme.ogg".to_string()),
+                volume: Some(0.8),
+                fade_duration_ms: None,
+                loop_playback: Some(true),
+            }),
+        ],
         BTreeMap::from([("start".to_string(), 0)]),
     );
     fs::write(
@@ -51,6 +61,7 @@ fn build_project_fixture() -> (TempDir, std::path::PathBuf) {
     )
     .expect("script");
     fs::write(root.join("assets/bgm/theme.ogg"), [1u8, 2, 3, 4]).expect("asset");
+    fs::write(root.join("assets/bgm/unused.ogg"), [5u8, 6, 7, 8]).expect("unused asset");
 
     (tmp, root)
 }
@@ -74,10 +85,23 @@ fn export_bundle_builds_expected_layout_and_manifest() {
 
     assert_eq!(report.target_platform, "windows");
     assert_eq!(report.integrity, "none");
+    assert_eq!(report.script_source, "scripts/compiled.vnscript.json");
+    assert_eq!(report.script_binary, "scripts/compiled.vnc");
     assert_eq!(report.assets_copied, 1);
-    assert!(Path::new(&out.join("scripts/main.vnc")).is_file());
-    assert!(Path::new(&out.join("scripts/main.json")).is_file());
+    assert_eq!(
+        report.capabilities.audio_actions,
+        vec!["bgm:play".to_string()]
+    );
+    assert!(report
+        .capabilities
+        .warnings
+        .contains(&"audio_requires_runtime_audio_backend".to_string()));
+    assert!(!Path::new(&out.join("scripts/main.vnc")).exists());
+    assert!(Path::new(&out.join("scripts/compiled.vnc")).is_file());
+    assert!(Path::new(&out.join("scripts/compiled.vnscript.json")).is_file());
+    assert!(!Path::new(&out.join("scripts/main.json")).exists());
     assert!(Path::new(&out.join("assets/bgm/theme.ogg")).is_file());
+    assert!(!Path::new(&out.join("assets/bgm/unused.ogg")).exists());
     assert!(Path::new(&out.join("meta/assets_manifest.json")).is_file());
     assert!(Path::new(&out.join("meta/package_report.json")).is_file());
     assert!(Path::new(&out.join("launch.bat")).is_file());
@@ -86,7 +110,73 @@ fn export_bundle_builds_expected_layout_and_manifest() {
         fs::read_to_string(out.join("meta/assets_manifest.json")).expect("assets manifest");
     let manifest: serde_json::Value =
         serde_json::from_str(&manifest_raw).expect("assets manifest json");
-    assert!(manifest.get("bgm/theme.ogg").is_some());
+    assert!(manifest.get("assets/bgm/theme.ogg").is_some());
+    assert!(manifest.get("assets/bgm/unused.ogg").is_none());
+}
+
+#[test]
+fn export_bundle_reports_extcall_audio_transition_capabilities() {
+    let (_tmp, project_root) = build_project_fixture();
+    let script = ScriptRaw::new(
+        vec![
+            EventRaw::AudioAction(AudioActionRaw {
+                channel: "sfx".to_string(),
+                action: "play".to_string(),
+                asset: Some("assets/bgm/theme.ogg".to_string()),
+                volume: None,
+                fade_duration_ms: None,
+                loop_playback: None,
+            }),
+            EventRaw::Transition(SceneTransitionRaw {
+                kind: "dissolve".to_string(),
+                duration_ms: 250,
+                color: None,
+            }),
+            EventRaw::ExtCall {
+                command: "plugin.unlock".to_string(),
+                args: Vec::new(),
+            },
+        ],
+        BTreeMap::from([("start".to_string(), 0)]),
+    );
+    fs::write(
+        project_root.join("main.json"),
+        script.to_json().expect("script json"),
+    )
+    .expect("script");
+
+    let report = export_bundle(ExportBundleSpec {
+        project_root: project_root.clone(),
+        output_root: project_root.join("dist_caps"),
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: None,
+        integrity: BundleIntegrity::None,
+        output_layout_version: 1,
+        hmac_key: None,
+    })
+    .expect("bundle export");
+
+    assert_eq!(
+        report.capabilities.ext_call_commands,
+        vec!["plugin.unlock".to_string()]
+    );
+    assert_eq!(
+        report.capabilities.audio_actions,
+        vec!["sfx:play".to_string()]
+    );
+    assert_eq!(
+        report.capabilities.transitions,
+        vec!["dissolve".to_string()]
+    );
+    assert!(report
+        .capabilities
+        .warnings
+        .contains(&"ext_call_requires_runtime_handler".to_string()));
+    assert!(report
+        .capabilities
+        .warnings
+        .contains(&"transitions_require_visual_runtime_support".to_string()));
 }
 
 #[test]
@@ -130,8 +220,9 @@ fn export_bundle_accepts_authoring_document_entry() {
     })
     .expect("bundle export from authoring");
 
-    assert_eq!(report.script_source, "scripts/main.vnauthoring");
-    assert!(Path::new(&out.join("scripts/main.vnc")).is_file());
+    assert_eq!(report.script_source, "scripts/compiled.vnscript.json");
+    assert!(Path::new(&out.join("scripts/compiled.vnc")).is_file());
+    assert!(!Path::new(&out.join("scripts/main.vnauthoring")).exists());
 }
 
 #[test]
@@ -232,7 +323,8 @@ fn export_bundle_rejects_asset_symlink_escape() {
     let (tmp, project_root) = build_project_fixture();
     let escaped = tmp.path().join("escape.ogg");
     fs::write(&escaped, [9u8, 9, 9]).expect("write escaped asset");
-    let symlink_path = project_root.join("assets").join("bgm").join("escape.ogg");
+    let symlink_path = project_root.join("assets").join("bgm").join("theme.ogg");
+    fs::remove_file(&symlink_path).expect("remove normal referenced asset");
     if !create_escape_symlink(&symlink_path, &escaped) {
         eprintln!("symlink creation not supported on this platform");
         return;

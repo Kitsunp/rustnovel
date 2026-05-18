@@ -13,8 +13,8 @@ pub use editor::{
     register_editor_classes, PyAuthoringValidationReport, PyComposerPreviewSession,
     PyComposerSnapshot, PyDiagnosticTarget, PyEvidenceTrace, PyFieldPath, PyFragmentPort,
     PyGraphFragment, PyLayeredSceneObject, PyLintIssue, PyLintSeverity, PyNodeGraph,
-    PyOperationLogEntry, PyQuickFixCandidate, PySemanticValue, PyStoryNode, PyTraceAtom,
-    PyTraceEdge, PyVerificationRun,
+    PyOperationLogEntry, PyOperationStatus, PyQuickFixCandidate, PySemanticValue, PyStoryNode,
+    PyTraceAtom, PyTraceEdge, PyVerificationRun,
 };
 pub use engine::{PyEngine, StepResult};
 pub use graph::{PyGraphEdge, PyGraphNode, PyGraphStats, PyStoryGraph};

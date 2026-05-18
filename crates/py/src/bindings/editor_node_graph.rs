@@ -1,26 +1,21 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::collections::BTreeMap;
-use visual_novel_engine::authoring::composer::{
-    apply_layer_overrides, compose_scene_snapshot, list_layered_objects, move_scene_object,
-    set_layer_locked, set_layer_visible, LayerOverride,
-};
-use visual_novel_engine::authoring::quick_fix::{apply_fix, suggest_fixes};
+use visual_novel_engine::authoring::composer::LayerOverride;
 use visual_novel_engine::authoring::{
-    build_authoring_document_report_fingerprint, load_authoring_document_or_script,
     parse_authoring_document_or_script, validate_authoring_graph, validate_authoring_graph_no_io,
     validate_authoring_graph_with_project_root, AuthoringDocument, AuthoringPosition,
-    AuthoringReportFingerprint, AuthoringValidationReport, LintIssue, NodeGraph, OperationKind,
-    OperationLogEntry, VerificationRun, NODE_VERTICAL_SPACING,
+    AuthoringValidationReport, NodeGraph, OperationKind, OperationLogEntry, VerificationRun,
+    NODE_VERTICAL_SPACING,
 };
 
 use super::api_v2::{
-    stage_layer_names, PyAuthoringValidationReport, PyComposerPreviewSession, PyComposerSnapshot,
-    PyFragmentPort, PyGraphFragment, PyLayeredSceneObject, PyOperationLogEntry, PyVerificationRun,
+    PyAuthoringValidationReport, PyComposerPreviewSession, PyComposerSnapshot, PyFragmentPort,
+    PyGraphFragment, PyLayeredSceneObject, PyOperationLogEntry, PyVerificationRun,
 };
 use super::diagnostics::{PyLintIssue, PyQuickFixCandidate};
 use super::story_node::PyStoryNode;
-use super::support::{apply_autofix_pass, select_fix_candidate};
+use operation_trace::{PythonOperation, PythonOperationTrace};
 
 /// A graph of story nodes with connections.
 #[pyclass(name = "NodeGraph")]
@@ -31,102 +26,16 @@ pub struct PyNodeGraph {
     verification_runs: Vec<VerificationRun>,
 }
 
-struct PythonOperationTrace {
-    fingerprint: AuthoringReportFingerprint,
-    issues: Vec<LintIssue>,
-}
-
-struct PythonOperation {
-    kind: OperationKind,
-    details: String,
-    field_path: Option<String>,
-    before_value: Option<String>,
-    after_value: Option<String>,
-}
-
-impl PythonOperation {
-    fn new(kind: OperationKind, details: impl Into<String>) -> Self {
-        Self {
-            kind,
-            details: details.into(),
-            field_path: None,
-            before_value: None,
-            after_value: None,
-        }
-    }
-
-    fn with_field_path(mut self, field_path: impl Into<String>) -> Self {
-        self.field_path = Some(field_path.into());
-        self
-    }
-
-    fn with_values(mut self, before_value: Option<String>, after_value: Option<String>) -> Self {
-        self.before_value = before_value;
-        self.after_value = after_value;
-        self
-    }
-}
-
-impl PyNodeGraph {
-    pub(super) fn inner(&self) -> &NodeGraph {
-        &self.inner
-    }
-
-    fn to_authoring_document(&self) -> AuthoringDocument {
-        let mut document = AuthoringDocument::new(self.inner.clone());
-        document.composer_layer_overrides = self.layer_overrides.clone();
-        document.operation_log = self.operation_log.clone();
-        document.verification_runs = self.verification_runs.clone();
-        document
-    }
-
-    fn current_fingerprint(&self) -> AuthoringReportFingerprint {
-        let script = self.inner.to_script_lossy_for_diagnostics();
-        build_authoring_document_report_fingerprint(&self.to_authoring_document(), &script)
-    }
-
-    fn layered_object_json(&self, object_id: &str) -> Option<String> {
-        let mut objects = list_layered_objects(&self.inner, None);
-        apply_layer_overrides(&mut objects, &self.layer_overrides);
-        objects
-            .into_iter()
-            .find(|object| object.object_id == object_id)
-            .and_then(|object| serde_json::to_string(&object).ok())
-    }
-
-    fn trace_before_mutation(&self) -> PythonOperationTrace {
-        PythonOperationTrace {
-            fingerprint: self.current_fingerprint(),
-            issues: validate_authoring_graph_no_io(&self.inner),
-        }
-    }
-
-    fn record_python_operation(
-        &mut self,
-        operation: PythonOperation,
-        before: PythonOperationTrace,
-    ) {
-        let after_fingerprint = self.current_fingerprint();
-        let after_issues = validate_authoring_graph_no_io(&self.inner);
-        let mut entry = OperationLogEntry::new_typed(operation.kind, "applied", operation.details)
-            .with_before_after_fingerprints(&before.fingerprint, &after_fingerprint);
-        if let Some(field_path) = operation.field_path {
-            entry = entry.with_field_path(field_path);
-        }
-        entry.before_value = operation.before_value;
-        entry.after_value = operation.after_value;
-        let operation_id = entry.operation_id.clone();
-        self.operation_log.push(entry);
-        self.verification_runs
-            .push(VerificationRun::from_diagnostics(
-                operation_id,
-                "python-api",
-                &after_fingerprint,
-                &before.issues,
-                &after_issues,
-            ));
-    }
-}
+#[path = "editor_node_graph/composer.rs"]
+mod composer;
+#[path = "editor_node_graph/fragments.rs"]
+mod fragments;
+#[path = "editor_node_graph/internal.rs"]
+mod internal;
+#[path = "editor_node_graph/misc.rs"]
+mod misc;
+#[path = "editor_node_graph/operation_trace.rs"]
+mod operation_trace;
 
 #[pymethods]
 impl PyNodeGraph {
@@ -411,167 +320,48 @@ impl PyNodeGraph {
     }
 
     fn create_fragment(&mut self, fragment_id: String, title: String, node_ids: Vec<u32>) -> bool {
-        let before = self.trace_before_mutation();
-        let changed = self
-            .inner
-            .create_fragment(fragment_id.clone(), title, node_ids.clone());
-        if changed {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::FragmentCreated,
-                    format!("Created fragment {fragment_id} from Python"),
-                )
-                .with_field_path(format!("graph.fragments[{fragment_id}]"))
-                .with_values(None, serde_json::to_string(&node_ids).ok()),
-                before,
-            );
-        }
-        changed
+        self.py_create_fragment(fragment_id, title, node_ids)
     }
-
     fn remove_fragment(&mut self, fragment_id: &str) -> bool {
-        let before_value = self
-            .inner
-            .get_fragment(fragment_id)
-            .and_then(|fragment| serde_json::to_string(fragment).ok());
-        let before = self.trace_before_mutation();
-        let changed = self.inner.remove_fragment(fragment_id).is_some();
-        if changed {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::FragmentRemoved,
-                    format!("Removed fragment {fragment_id} from Python"),
-                )
-                .with_field_path(format!("graph.fragments[{fragment_id}]"))
-                .with_values(before_value, None),
-                before,
-            );
-        }
-        changed
+        self.py_remove_fragment(fragment_id)
     }
-
     fn list_fragments(&self) -> Vec<PyGraphFragment> {
-        self.inner
-            .list_fragments()
-            .into_iter()
-            .map(Into::into)
-            .collect()
+        self.py_list_fragments()
     }
-
     fn get_fragment(&self, fragment_id: &str) -> Option<PyGraphFragment> {
-        self.inner
-            .get_fragment(fragment_id)
-            .cloned()
-            .map(Into::into)
+        self.py_get_fragment(fragment_id)
     }
-
     fn enter_fragment(&mut self, fragment_id: &str) -> bool {
-        let before_value = self.inner.active_fragment().map(str::to_string);
-        let before = self.trace_before_mutation();
-        let changed = self.inner.enter_fragment(fragment_id);
-        if changed {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::FragmentEntered,
-                    format!("Entered fragment {fragment_id} from Python"),
-                )
-                .with_field_path("graph.active_fragment")
-                .with_values(
-                    before_value,
-                    self.inner.active_fragment().map(str::to_string),
-                ),
-                before,
-            );
-        }
-        changed
+        self.py_enter_fragment(fragment_id)
     }
-
     fn leave_fragment(&mut self) -> bool {
-        let before_value = self.inner.active_fragment().map(str::to_string);
-        let before = self.trace_before_mutation();
-        let changed = self.inner.leave_fragment();
-        if changed {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::FragmentLeft,
-                    "Left active fragment from Python",
-                )
-                .with_field_path("graph.active_fragment")
-                .with_values(
-                    before_value,
-                    self.inner.active_fragment().map(str::to_string),
-                ),
-                before,
-            );
-        }
-        changed
+        self.py_leave_fragment()
     }
-
     fn active_fragment(&self) -> Option<String> {
-        self.inner.active_fragment().map(str::to_string)
+        self.py_active_fragment()
     }
 
     fn fragment_ports(
         &self,
         fragment_id: &str,
     ) -> Option<(Vec<PyFragmentPort>, Vec<PyFragmentPort>)> {
-        self.inner
-            .fragment_ports(fragment_id)
-            .map(|(inputs, outputs)| {
-                (
-                    inputs.into_iter().map(Into::into).collect(),
-                    outputs.into_iter().map(Into::into).collect(),
-                )
-            })
+        self.py_fragment_ports(fragment_id)
     }
 
     fn refresh_fragment_ports(&mut self, fragment_id: &str) -> bool {
-        let before_value = self
-            .inner
-            .get_fragment(fragment_id)
-            .and_then(|fragment| serde_json::to_string(fragment).ok());
-        let before = self.trace_before_mutation();
-        let changed = self.inner.refresh_fragment_ports(fragment_id);
-        if changed {
-            let after_value = self
-                .inner
-                .get_fragment(fragment_id)
-                .and_then(|fragment| serde_json::to_string(fragment).ok());
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::FieldEdited,
-                    format!("Refreshed fragment {fragment_id} ports from Python"),
-                )
-                .with_field_path(format!("graph.fragments[{fragment_id}].ports"))
-                .with_values(before_value, after_value),
-                before,
-            );
-        }
-        changed
+        self.py_refresh_fragment_ports(fragment_id)
     }
 
     fn validate_fragments(&self) -> Vec<PyLintIssue> {
-        self.inner
-            .validate_fragments()
-            .into_iter()
-            .map(PyLintIssue::from)
-            .collect()
+        self.py_validate_fragments()
     }
 
     fn operation_log(&self) -> Vec<PyOperationLogEntry> {
-        self.operation_log
-            .clone()
-            .into_iter()
-            .map(Into::into)
-            .collect()
+        self.py_operation_log()
     }
 
     fn verification_runs(&self) -> Vec<PyVerificationRun> {
-        self.verification_runs
-            .clone()
-            .into_iter()
-            .map(Into::into)
-            .collect()
+        self.py_verification_runs()
     }
 
     #[pyo3(signature = (selected_node_id=None, stage_width=None, stage_height=None, locale=None))]
@@ -582,118 +372,58 @@ impl PyNodeGraph {
         stage_height: Option<u32>,
         locale: Option<&str>,
     ) -> PyComposerSnapshot {
-        let resolution = stage_width.zip(stage_height);
-        let mut snapshot = compose_scene_snapshot(
-            &self.inner,
-            selected_node_id,
-            resolution,
-            None,
-            locale,
-            None,
-        );
-        apply_layer_overrides(&mut snapshot.objects, &self.layer_overrides);
-        snapshot.into()
+        self.py_compose_scene_snapshot(selected_node_id, stage_width, stage_height, locale)
     }
 
     #[pyo3(signature = (selected_node_id=None))]
     fn list_layered_objects(&self, selected_node_id: Option<u32>) -> Vec<PyLayeredSceneObject> {
-        let mut objects = list_layered_objects(&self.inner, selected_node_id);
-        apply_layer_overrides(&mut objects, &self.layer_overrides);
-        objects.into_iter().map(Into::into).collect()
+        self.py_list_layered_objects(selected_node_id)
     }
 
     fn list_stage_layers(&self) -> Vec<String> {
-        stage_layer_names()
+        self.py_list_stage_layers()
     }
 
     fn set_layer_visible(&mut self, object_id: &str, visible: bool) {
-        let before_value = self
-            .layer_overrides
-            .get(object_id)
-            .and_then(|override_| serde_json::to_string(override_).ok());
-        let before = self.trace_before_mutation();
-        set_layer_visible(&mut self.layer_overrides, object_id, visible);
-        let after_value = self
-            .layer_overrides
-            .get(object_id)
-            .and_then(|override_| serde_json::to_string(override_).ok());
-        if before_value != after_value {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::LayerVisibilityChanged,
-                    format!("Set layer {object_id} visible={visible} from Python"),
-                )
-                .with_field_path(format!("composer.objects[{object_id}].visible"))
-                .with_values(before_value, after_value),
-                before,
-            );
-        }
+        self.py_set_layer_visible(object_id, visible);
     }
 
     fn set_layer_locked(&mut self, object_id: &str, locked: bool) {
-        let before_value = self
-            .layer_overrides
-            .get(object_id)
-            .and_then(|override_| serde_json::to_string(override_).ok());
-        let before = self.trace_before_mutation();
-        set_layer_locked(&mut self.layer_overrides, object_id, locked);
-        let after_value = self
-            .layer_overrides
-            .get(object_id)
-            .and_then(|override_| serde_json::to_string(override_).ok());
-        if before_value != after_value {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::LayerLockChanged,
-                    format!("Set layer {object_id} locked={locked} from Python"),
-                )
-                .with_field_path(format!("composer.objects[{object_id}].locked"))
-                .with_values(before_value, after_value),
-                before,
-            );
-        }
+        self.py_set_layer_locked(object_id, locked);
     }
 
     #[pyo3(signature = (object_id, x, y, scale=None))]
     fn move_scene_object(&mut self, object_id: &str, x: i32, y: i32, scale: Option<f32>) -> bool {
-        if self
-            .layer_overrides
-            .get(object_id)
-            .is_some_and(|override_| override_.locked || !override_.visible)
-        {
-            return false;
-        }
-        let before_value = self.layered_object_json(object_id);
-        let before = self.trace_before_mutation();
-        let changed = move_scene_object(&mut self.inner, object_id, x, y, scale);
-        if changed {
-            let after_value = self.layered_object_json(object_id);
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::ComposerObjectMoved,
-                    format!("Moved composer object {object_id} from Python"),
-                )
-                .with_field_path(format!("composer.objects[{object_id}].position"))
-                .with_values(before_value, after_value),
-                before,
-            );
-        }
-        changed
+        self.py_move_scene_object(object_id, x, y, scale)
+    }
+    fn edit_dialogue(&mut self, node_id: u32, speaker: &str, text: &str) -> bool {
+        self.py_edit_dialogue(node_id, speaker, text)
+    }
+    fn edit_choice_prompt(&mut self, node_id: u32, prompt: &str) -> bool {
+        self.py_edit_choice_prompt(node_id, prompt)
+    }
+    fn edit_choice_option_text(&mut self, node_id: u32, option_index: usize, text: &str) -> bool {
+        self.py_edit_choice_option_text(node_id, option_index, text)
+    }
+    fn reorder_choice_option(&mut self, node_id: u32, from_index: usize, to_index: usize) -> bool {
+        self.py_reorder_choice_option(node_id, from_index, to_index)
+    }
+    #[pyo3(signature = (node_id, option_index, target_node_id=None))]
+    fn set_choice_option_target(
+        &mut self,
+        node_id: u32,
+        option_index: usize,
+        target_node_id: Option<u32>,
+    ) -> bool {
+        self.py_set_choice_option_target(node_id, option_index, target_node_id)
     }
 
     fn preview_start_from_node(&self, node_id: u32) -> PyResult<PyComposerPreviewSession> {
-        PyComposerPreviewSession::start(&self.inner, node_id)
+        self.py_preview_start_from_node(node_id)
     }
 
     fn fix_candidates(&self, issue_index: usize) -> PyResult<Vec<PyQuickFixCandidate>> {
-        let issues = validate_authoring_graph(&self.inner);
-        let issue = issues
-            .get(issue_index)
-            .ok_or_else(|| PyValueError::new_err(format!("invalid issue index {issue_index}")))?;
-        Ok(suggest_fixes(issue, &self.inner)
-            .into_iter()
-            .map(PyQuickFixCandidate::from)
-            .collect())
+        self.py_fix_candidates(issue_index)
     }
 
     #[pyo3(signature = (issue_index, include_review=false))]
@@ -702,83 +432,43 @@ impl PyNodeGraph {
         issue_index: usize,
         include_review: bool,
     ) -> PyResult<Option<String>> {
-        let issues = validate_authoring_graph(&self.inner);
-        let issue = issues
-            .get(issue_index)
-            .ok_or_else(|| PyValueError::new_err(format!("invalid issue index {issue_index}")))?;
-        let candidate = select_fix_candidate(issue, &self.inner, include_review)
-            .ok_or_else(|| PyValueError::new_err("no fix candidate available for issue"))?;
-        let changed =
-            apply_fix(&mut self.inner, issue, candidate.fix_id).map_err(PyValueError::new_err)?;
-        if changed {
-            Ok(Some(candidate.fix_id.to_string()))
-        } else {
-            Ok(None)
-        }
+        self.py_autofix_issue(issue_index, include_review)
     }
 
     fn autofix_safe(&mut self) -> PyResult<usize> {
-        apply_autofix_pass(&mut self.inner, false).map_err(PyValueError::new_err)
+        self.py_autofix_safe()
     }
 
     fn autofix_full(&mut self) -> PyResult<usize> {
-        apply_autofix_pass(&mut self.inner, true).map_err(PyValueError::new_err)
+        self.py_autofix_full()
     }
 
     fn set_bookmark(&mut self, name: String, node_id: u32) -> bool {
-        self.inner.set_bookmark(name, node_id)
+        self.py_set_bookmark(name, node_id)
     }
 
     fn remove_bookmark(&mut self, name: &str) -> bool {
-        self.inner.remove_bookmark(name)
+        self.py_remove_bookmark(name)
     }
 
     fn bookmark_target(&self, name: &str) -> Option<u32> {
-        self.inner.bookmarked_node(name)
+        self.py_bookmark_target(name)
     }
 
     fn list_bookmarks(&self) -> Vec<(String, u32)> {
-        self.inner
-            .bookmarks()
-            .map(|(name, node_id)| (name.clone(), *node_id))
-            .collect()
+        self.py_list_bookmarks()
     }
 
     fn save(&self, path: &str) -> PyResult<()> {
-        let json = self
-            .to_authoring_document()
-            .to_json()
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        std::fs::write(path, json).map_err(|e| PyValueError::new_err(e.to_string()))
+        self.py_save(path)
     }
 
     #[staticmethod]
     fn load(path: &str) -> PyResult<Self> {
-        let source =
-            std::fs::read_to_string(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        if let Ok(document) = AuthoringDocument::from_json(&source) {
-            return Ok(Self {
-                inner: document.graph,
-                layer_overrides: document.composer_layer_overrides,
-                operation_log: document.operation_log,
-                verification_runs: document.verification_runs,
-            });
-        }
-        let inner = load_authoring_document_or_script(path)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(Self {
-            inner,
-            layer_overrides: BTreeMap::new(),
-            operation_log: Vec::new(),
-            verification_runs: Vec::new(),
-        })
+        Self::py_load(path)
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "NodeGraph(nodes={}, connections={})",
-            self.inner.len(),
-            self.inner.connection_count()
-        )
+        self.py_repr()
     }
 }

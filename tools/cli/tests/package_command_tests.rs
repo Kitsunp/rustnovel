@@ -5,7 +5,7 @@ use std::process::Command;
 use tempfile::TempDir;
 use visual_novel_engine::{
     authoring::{AuthoringDocument, AuthoringPosition, NodeGraph, StoryNode},
-    DialogueRaw, EventRaw, ProjectManifest, ScriptRaw,
+    AudioActionRaw, DialogueRaw, EventRaw, ProjectManifest, ScriptRaw,
 };
 
 fn build_project_fixture() -> (TempDir, std::path::PathBuf) {
@@ -19,10 +19,20 @@ fn build_project_fixture() -> (TempDir, std::path::PathBuf) {
         .expect("manifest save");
 
     let script = ScriptRaw::new(
-        vec![EventRaw::Dialogue(DialogueRaw {
-            speaker: "Narrator".to_string(),
-            text: "pack me".to_string(),
-        })],
+        vec![
+            EventRaw::Dialogue(DialogueRaw {
+                speaker: "Narrator".to_string(),
+                text: "pack me".to_string(),
+            }),
+            EventRaw::AudioAction(AudioActionRaw {
+                channel: "sfx".to_string(),
+                action: "play".to_string(),
+                asset: Some("assets/sfx/click.ogg".to_string()),
+                volume: None,
+                fade_duration_ms: None,
+                loop_playback: None,
+            }),
+        ],
         BTreeMap::from([("start".to_string(), 0)]),
     );
     fs::write(
@@ -31,6 +41,7 @@ fn build_project_fixture() -> (TempDir, std::path::PathBuf) {
     )
     .expect("script");
     fs::write(root.join("assets/sfx/click.ogg"), [0u8, 1, 2, 3]).expect("asset");
+    fs::write(root.join("assets/sfx/unused.ogg"), [4u8, 5, 6, 7]).expect("unused asset");
     (tmp, root)
 }
 
@@ -55,9 +66,12 @@ fn package_command_creates_bundle_layout() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output_root.join("scripts/main.vnc").is_file());
-    assert!(output_root.join("scripts/main.json").is_file());
+    assert!(output_root.join("scripts/compiled.vnc").is_file());
+    assert!(output_root.join("scripts/compiled.vnscript.json").is_file());
+    assert!(!output_root.join("scripts/main.vnc").exists());
+    assert!(!output_root.join("scripts/main.json").exists());
     assert!(output_root.join("assets/sfx/click.ogg").is_file());
+    assert!(!output_root.join("assets/sfx/unused.ogg").exists());
     assert!(output_root.join("meta/package_report.json").is_file());
     assert!(output_root.join("launch.bat").is_file());
 }
@@ -133,6 +147,7 @@ fn package_command_accepts_authoring_entry_script() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output_root.join("scripts/main.vnc").is_file());
-    assert!(output_root.join("scripts/main.vnauthoring").is_file());
+    assert!(output_root.join("scripts/compiled.vnc").is_file());
+    assert!(output_root.join("scripts/compiled.vnscript.json").is_file());
+    assert!(!output_root.join("scripts/main.vnauthoring").exists());
 }

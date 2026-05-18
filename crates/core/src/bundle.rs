@@ -1,21 +1,26 @@
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-use hmac::{Hmac, Mac};
-use serde::{Deserialize, Serialize};
-use sha2::Sha256;
-use walkdir::WalkDir;
 
 use crate::error::VnResult;
 use crate::load_runtime_script_from_entry;
 use crate::manifest::ProjectManifest;
+use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
 
+#[path = "bundle/assets.rs"]
+mod assets;
+#[path = "bundle/capabilities.rs"]
+mod capabilities;
 #[path = "bundle/helpers.rs"]
 mod helpers;
+use assets::copy_referenced_assets;
+use capabilities::build_capability_report;
 use helpers::*;
+
+pub use capabilities::ExportCapabilityReport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -86,6 +91,8 @@ pub struct ExportBundleReport {
     pub launcher: String,
     pub integrity: String,
     pub bundle_hmac_sha256: Option<String>,
+    #[serde(default)]
+    pub capabilities: ExportCapabilityReport,
 }
 
 pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
@@ -137,6 +144,7 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
     let compiled_bytes = compiled
         .to_binary()
         .map_err(|e| invalid_bundle(format!("serialize compiled script: {e}")))?;
+    let capability_report = build_capability_report(&script, spec.runtime_artifact.is_some());
 
     let scripts_dir = output_root.join("scripts");
     let assets_dir = output_root.join("assets");
@@ -160,7 +168,8 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
     fs::create_dir_all(&meta_dir)
         .map_err(|e| invalid_bundle(format!("create meta dir '{}': {e}", meta_dir.display())))?;
 
-    let script_source_out = scripts_dir.join(&entry_script);
+    let runtime_script_rel = PathBuf::from("compiled.vnscript.json");
+    let script_source_out = scripts_dir.join(&runtime_script_rel);
     if let Some(parent) = script_source_out.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             invalid_bundle(format!(
@@ -169,16 +178,18 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
             ))
         })?;
     }
-    fs::copy(&script_source_path, &script_source_out).map_err(|e| {
+    let runtime_script_json = script
+        .to_json()
+        .map_err(|e| invalid_bundle(format!("serialize runtime script: {e}")))?;
+    fs::write(&script_source_out, runtime_script_json.as_bytes()).map_err(|e| {
         invalid_bundle(format!(
-            "copy script source '{}' -> '{}': {e}",
+            "write runtime script '{}' -> '{}': {e}",
             script_source_path.display(),
             script_source_out.display()
         ))
     })?;
 
-    let mut script_binary_rel = entry_script.clone();
-    script_binary_rel.set_extension("vnc");
+    let script_binary_rel = PathBuf::from("compiled.vnc");
     let script_binary_out = scripts_dir.join(&script_binary_rel);
     if let Some(parent) = script_binary_out.parent() {
         fs::create_dir_all(parent).map_err(|e| {
@@ -203,7 +214,7 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
         ))
     })?;
 
-    let assets_manifest_entries = copy_assets_tree(&project_root.join("assets"), &assets_dir)?;
+    let assets_manifest_entries = copy_referenced_assets(&project_root, &assets_dir, &script)?;
     let assets_manifest_json = serde_json::to_string_pretty(&assets_manifest_entries)
         .map_err(|e| invalid_bundle(format!("serialize assets manifest: {e}")))?;
     let assets_manifest_out = meta_dir.join("assets_manifest.json");
@@ -270,7 +281,9 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
         output_layout_version: spec.output_layout_version,
         project_root: normalize_path_display(&project_root),
         output_root: normalize_path_display(&output_root),
-        script_source: normalize_path_display(Path::new("scripts").join(&entry_script).as_path()),
+        script_source: normalize_path_display(
+            Path::new("scripts").join(&runtime_script_rel).as_path(),
+        ),
         script_binary: normalize_path_display(
             Path::new("scripts").join(&script_binary_rel).as_path(),
         ),
@@ -281,6 +294,7 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
         launcher: launcher_rel,
         integrity: spec.integrity.as_str().to_string(),
         bundle_hmac_sha256,
+        capabilities: capability_report,
     };
 
     let report_path = meta_dir.join("package_report.json");
@@ -294,61 +308,6 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
     })?;
 
     Ok(report)
-}
-
-fn copy_assets_tree(
-    assets_source_root: &Path,
-    assets_output_root: &Path,
-) -> VnResult<BTreeMap<String, BundleAssetEntry>> {
-    let mut manifest = BTreeMap::new();
-    if !assets_source_root.exists() {
-        return Ok(manifest);
-    }
-
-    for entry in WalkDir::new(assets_source_root).follow_links(true) {
-        let entry = entry.map_err(|e| invalid_bundle(format!("walk assets tree: {e}")))?;
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let source = entry.path();
-        let rel_raw = source.strip_prefix(assets_source_root).map_err(|e| {
-            invalid_bundle(format!(
-                "strip assets prefix '{}' from '{}': {e}",
-                assets_source_root.display(),
-                source.display()
-            ))
-        })?;
-        let rel = sanitize_relative_path(rel_raw, "assets path")?;
-        let destination = assets_output_root.join(&rel);
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                invalid_bundle(format!("create asset parent '{}': {e}", parent.display()))
-            })?;
-        }
-        let canonical_source = canonicalize_within_root(assets_source_root, source, "asset")?;
-        fs::copy(&canonical_source, &destination).map_err(|e| {
-            invalid_bundle(format!(
-                "copy asset '{}' -> '{}': {e}",
-                canonical_source.display(),
-                destination.display()
-            ))
-        })?;
-        let bytes = fs::read(&canonical_source).map_err(|e| {
-            invalid_bundle(format!(
-                "read copied asset '{}': {e}",
-                canonical_source.display()
-            ))
-        })?;
-        manifest.insert(
-            normalize_path_display(&rel),
-            BundleAssetEntry {
-                sha256: sha256_hex(&bytes),
-                size: bytes.len() as u64,
-            },
-        );
-    }
-
-    Ok(manifest)
 }
 
 #[derive(Debug, Clone)]

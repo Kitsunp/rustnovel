@@ -16,7 +16,6 @@ use super::node_types::{
     node_visual_height, ContextMenu, StoryNode, StoryNodeVisualExt, NODE_WIDTH,
 };
 use super::undo::UndoStack;
-use visual_novel_engine::{CondRaw, EventRaw, ScenePatchRaw};
 
 // =============================================================================
 // NodeEditorPanel - UI Widget
@@ -354,17 +353,16 @@ impl<'a> NodeEditorPanel<'a> {
     }
 
     fn render_connections(&self, painter: &egui::Painter, rect: egui::Rect) {
-        for conn in self.graph.connections() {
-            let from_pos = self
-                .graph
-                .nodes()
+        let nodes = self.graph.visible_nodes().collect::<Vec<_>>();
+        for conn in self.graph.visible_connections() {
+            let from_pos = nodes
+                .iter()
                 .find(|(id, _, _)| *id == conn.from)
-                .map(|(_, node, p)| (p, node));
-            let to_pos = self
-                .graph
-                .nodes()
+                .map(|(_, node, p)| (*p, node.clone()));
+            let to_pos = nodes
+                .iter()
                 .find(|(id, _, _)| *id == conn.to)
-                .map(|(_, node, p)| (p, node));
+                .map(|(_, node, p)| (*p, node.clone()));
 
             if let (Some((from_base, from_node)), Some((to_base, to_node))) = (from_pos, to_pos) {
                 // Determine source port position
@@ -424,82 +422,6 @@ impl<'a> NodeEditorPanel<'a> {
     }
 }
 
-pub(crate) fn extended_node_palette_items() -> Vec<(&'static str, StoryNode)> {
-    vec![
-        (
-            "Scene Patch",
-            StoryNode::ScenePatch(ScenePatchRaw::default()),
-        ),
-        (
-            "Branch If",
-            StoryNode::JumpIf {
-                target: "label".to_string(),
-                cond: CondRaw::Flag {
-                    key: "flag".to_string(),
-                    is_set: true,
-                },
-            },
-        ),
-        (
-            "Set Variable",
-            StoryNode::SetVariable {
-                key: "variable".to_string(),
-                value: 0,
-            },
-        ),
-        (
-            "Set Flag",
-            StoryNode::SetFlag {
-                key: "flag".to_string(),
-                value: true,
-            },
-        ),
-        (
-            "Audio",
-            StoryNode::AudioAction {
-                channel: "bgm".to_string(),
-                action: "play".to_string(),
-                asset: None,
-                volume: Some(1.0),
-                fade_duration_ms: Some(0),
-                loop_playback: Some(true),
-            },
-        ),
-        (
-            "Transition",
-            StoryNode::Transition {
-                kind: "fade_black".to_string(),
-                duration_ms: 500,
-                color: Some("#000000".to_string()),
-            },
-        ),
-        (
-            "Character Placement",
-            StoryNode::CharacterPlacement {
-                name: "Character".to_string(),
-                x: 0,
-                y: 0,
-                scale: Some(1.0),
-            },
-        ),
-        (
-            "ExtCall",
-            StoryNode::Generic(EventRaw::ExtCall {
-                command: "command".to_string(),
-                args: Vec::new(),
-            }),
-        ),
-        (
-            "Subgraph Call",
-            StoryNode::SubgraphCall {
-                fragment_id: String::new(),
-                entry_port: None,
-                exit_port: None,
-            },
-        ),
-    ]
-}
-
 fn graph_shortcuts_enabled(ui: &egui::Ui, response: &egui::Response, graph: &NodeGraph) -> bool {
     !ui.ctx().wants_keyboard_input()
         && graph_shortcut_scope_active(response.hovered(), graph.has_active_interaction())
@@ -509,6 +431,8 @@ fn graph_shortcut_scope_active(response_hovered: bool, interaction_active: bool)
     response_hovered || interaction_active
 }
 
+mod palette;
+pub(crate) use palette::extended_node_palette_items;
 mod render;
 mod render_helpers;
 #[cfg(test)]

@@ -1,7 +1,7 @@
 use eframe::egui;
 use visual_novel_engine::{EntityKind, EventCompiled, SceneState, Transform, VisualState};
 
-use crate::editor::StageFit;
+use crate::editor::{BackgroundFit, StageFit};
 
 #[derive(Clone, Copy)]
 pub(crate) struct StageGeometry {
@@ -100,13 +100,14 @@ pub(crate) fn clamp_transform_to_stage(
     transform.y = transform.y.clamp(0, max_y);
 }
 
-pub(crate) fn entity_rect(
+pub(crate) fn entity_rect_with_background_fit(
     kind: &EntityKind,
     transform: &Transform,
     geometry: &StageGeometry,
+    background_fit: BackgroundFit,
 ) -> egui::Rect {
     if is_background_image(kind, transform.z_order) {
-        return geometry.stage_rect;
+        return background_rect(kind, transform, geometry, background_fit);
     }
     let position = geometry.stage_rect.min
         + egui::vec2(
@@ -117,6 +118,35 @@ pub(crate) fn entity_rect(
         position,
         entity_logical_size(kind, transform) * geometry.scale,
     )
+}
+
+fn background_rect(
+    kind: &EntityKind,
+    transform: &Transform,
+    geometry: &StageGeometry,
+    background_fit: BackgroundFit,
+) -> egui::Rect {
+    match background_fit {
+        BackgroundFit::Cover | BackgroundFit::Stretch | BackgroundFit::Tile => geometry.stage_rect,
+        BackgroundFit::Original => {
+            let position = geometry.stage_rect.min
+                + egui::vec2(
+                    transform.x as f32 * geometry.scale,
+                    transform.y as f32 * geometry.scale,
+                );
+            egui::Rect::from_min_size(
+                position,
+                entity_logical_size(kind, transform) * geometry.scale,
+            )
+        }
+        BackgroundFit::Contain => {
+            let logical = entity_logical_size(kind, transform);
+            let stage = geometry.stage_rect.size();
+            let scale = (stage.x / logical.x).min(stage.y / logical.y);
+            let size = logical * scale;
+            egui::Rect::from_center_size(geometry.stage_rect.center(), size)
+        }
+    }
 }
 
 fn entity_logical_size(kind: &EntityKind, transform: &Transform) -> egui::Vec2 {

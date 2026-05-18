@@ -39,6 +39,7 @@ pub fn to_script(graph: &NodeGraph) -> ScriptRaw {
         if let StoryNode::SubgraphCall {
             fragment_id,
             entry_port,
+            exit_port,
             ..
         } = node
         {
@@ -47,6 +48,7 @@ pub fn to_script(graph: &NodeGraph) -> ScriptRaw {
                 id,
                 fragment_id,
                 entry_port.as_deref(),
+                exit_port.as_deref(),
                 &mut ExportBuildContext {
                     node_lookup: &node_lookup,
                     choice_targets: &choice_targets,
@@ -185,7 +187,7 @@ fn event_from_node(
 struct ExportLabelContext<'a> {
     namespace: Option<&'a str>,
     fragment_nodes: Option<&'a BTreeSet<u32>>,
-    continuation_label: Option<&'a str>,
+    fragment_output_labels: Option<&'a BTreeMap<(u32, usize), String>>,
 }
 
 impl<'a> ExportLabelContext<'a> {
@@ -193,20 +195,32 @@ impl<'a> ExportLabelContext<'a> {
         Self {
             namespace: None,
             fragment_nodes: None,
-            continuation_label: None,
+            fragment_output_labels: None,
         }
     }
 
     fn fragment(
         namespace: &'a str,
         fragment_nodes: &'a BTreeSet<u32>,
-        continuation_label: Option<&'a str>,
+        fragment_output_labels: &'a BTreeMap<(u32, usize), String>,
     ) -> Self {
         Self {
             namespace: Some(namespace),
             fragment_nodes: Some(fragment_nodes),
-            continuation_label,
+            fragment_output_labels: Some(fragment_output_labels),
         }
+    }
+
+    fn target_inside_fragment(&self, target_id: u32) -> bool {
+        self.fragment_nodes
+            .is_some_and(|nodes| nodes.contains(&target_id))
+    }
+
+    fn external_output_label(&self, node_id: u32, port: usize) -> Option<String> {
+        self.fragment_output_labels
+            .and_then(|labels| labels.get(&(node_id, port)))
+            .cloned()
+            .or_else(|| self.namespace.map(|_| "__end".to_string()))
     }
 }
 
@@ -222,6 +236,7 @@ fn emit_subgraph_call(
     call_node_id: u32,
     fragment_id: &str,
     entry_port: Option<&str>,
+    exit_port: Option<&str>,
     build: &mut ExportBuildContext<'_>,
 ) {
     let Some(fragment) = graph.fragment(fragment_id) else {
@@ -231,10 +246,13 @@ fn emit_subgraph_call(
         return;
     };
     let namespace = format!("__call_{call_node_id}");
-    let continuation_label = build
-        .choice_targets
-        .get(&(call_node_id, 0))
-        .map(|target| format!("node_{target}"));
+    let output_labels = fragment_output_labels(
+        fragment,
+        call_node_id,
+        exit_port,
+        build.node_lookup,
+        build.choice_targets,
+    );
     let ordered_ids = fragment_order_node_ids(graph, &fragment.node_ids, entry_node_id);
     let fragment_nodes = fragment.node_ids.iter().copied().collect::<BTreeSet<_>>();
     build
@@ -265,11 +283,7 @@ fn emit_subgraph_call(
         if node.is_marker() {
             continue;
         }
-        let context = ExportLabelContext::fragment(
-            &namespace,
-            &fragment_nodes,
-            continuation_label.as_deref(),
-        );
+        let context = ExportLabelContext::fragment(&namespace, &fragment_nodes, &output_labels);
         if let Some(event) = event_from_node(
             *node_id,
             node,
@@ -280,6 +294,42 @@ fn emit_subgraph_call(
             build.events.push(event);
         }
     }
+}
+
+fn fragment_output_labels(
+    fragment: &GraphFragment,
+    call_node_id: u32,
+    exit_port: Option<&str>,
+    node_lookup: &BTreeMap<u32, &StoryNode>,
+    choice_targets: &BTreeMap<(u32, usize), u32>,
+) -> BTreeMap<(u32, usize), String> {
+    let selected_exit = exit_port.filter(|value| !value.trim().is_empty());
+    let mut labels = BTreeMap::new();
+    for (index, output) in fragment.outputs.iter().enumerate() {
+        if selected_exit.is_some_and(|port| port != output.port_id) {
+            continue;
+        }
+        let Some(source) = fragment_output_source(&output.port_id) else {
+            continue;
+        };
+        let call_port = if selected_exit.is_some() { 0 } else { index };
+        let label = choice_targets
+            .get(&(call_node_id, call_port))
+            .and_then(|target_id| {
+                node_lookup
+                    .get(target_id)
+                    .map(|node| node_target_label(*target_id, node, ExportLabelContext::top()))
+            })
+            .unwrap_or_else(|| "__end".to_string());
+        labels.insert(source, label);
+    }
+    labels
+}
+
+fn fragment_output_source(port_id: &str) -> Option<(u32, usize)> {
+    let rest = port_id.strip_prefix("out_")?;
+    let (node, port) = rest.rsplit_once('_')?;
+    Some((node.parse().ok()?, port.parse().ok()?))
 }
 
 fn fragment_entry_node(fragment: &GraphFragment, entry_port: Option<&str>) -> Option<u32> {
@@ -320,11 +370,6 @@ fn fragment_order_node_ids(
             queue.push_back(connection.to);
         }
     }
-    for node_id in fragment_node_ids {
-        if !visited.contains(node_id) {
-            ordered.push(*node_id);
-        }
-    }
     ordered
 }
 
@@ -347,14 +392,11 @@ fn jump_if_target_label(
     choice_targets: &BTreeMap<(u32, usize), u32>,
     label_context: ExportLabelContext<'_>,
 ) -> String {
-    choice_targets
-        .get(&(node_id, 0))
-        .and_then(|target_id| {
-            node_lookup
-                .get(target_id)
-                .map(|node| node_target_label(*target_id, node, label_context))
-        })
-        .unwrap_or_else(|| fallback_target.to_string())
+    if choice_targets.contains_key(&(node_id, 0)) {
+        target_label(node_id, 0, node_lookup, choice_targets, label_context)
+    } else {
+        fallback_target.to_string()
+    }
 }
 
 fn target_label(
@@ -367,9 +409,13 @@ fn target_label(
     choice_targets
         .get(&(node_id, port))
         .and_then(|target_id| {
-            node_lookup
-                .get(target_id)
-                .map(|node| node_target_label(*target_id, node, label_context))
+            let node = node_lookup.get(target_id)?;
+            if label_context.namespace.is_some()
+                && !label_context.target_inside_fragment(*target_id)
+            {
+                return label_context.external_output_label(node_id, port);
+            }
+            Some(node_target_label(*target_id, node, label_context))
         })
         .unwrap_or_else(|| format!("__unlinked_node_{node_id}_option_{port}"))
 }
@@ -380,14 +426,8 @@ fn node_target_label(
     label_context: ExportLabelContext<'_>,
 ) -> String {
     if let Some(namespace) = label_context.namespace {
-        if label_context
-            .fragment_nodes
-            .is_some_and(|nodes| nodes.contains(&target_id))
-        {
+        if label_context.target_inside_fragment(target_id) {
             return namespaced_node_label(namespace, target_id);
-        }
-        if let Some(continuation_label) = label_context.continuation_label {
-            return continuation_label.to_string();
         }
     }
     match target_node {

@@ -110,6 +110,36 @@ pub(crate) fn stage_scale(stage_rect: egui::Rect, stage_size: (f32, f32)) -> f32
         .max(0.001)
 }
 
+pub(crate) fn stage_viewport_size(
+    available: egui::Vec2,
+    stage_size: (f32, f32),
+    reserved_height: f32,
+    vertical_budget: f32,
+) -> egui::Vec2 {
+    let width = available.x.max(1.0);
+    let usable_height = (available.y - reserved_height.max(0.0)).max(0.0);
+    if usable_height <= 0.0 {
+        return egui::vec2(width, 0.0);
+    }
+
+    let aspect_height = aspect_height_for_width(width, stage_size) + 12.0;
+    let budget_height = (available.y * vertical_budget.clamp(0.1, 1.0)).max(96.0);
+    let mut height = aspect_height.min(budget_height).min(usable_height);
+    if usable_height >= 96.0 {
+        height = height.max(96.0);
+    }
+    egui::vec2(width, height)
+}
+
+fn aspect_height_for_width(width: f32, stage_size: (f32, f32)) -> f32 {
+    let (stage_w, stage_h) = stage_size;
+    if stage_w.is_finite() && stage_h.is_finite() && stage_w > 0.0 && stage_h > 0.0 {
+        width * (stage_h / stage_w)
+    } else {
+        width * (9.0 / 16.0)
+    }
+}
+
 pub(crate) fn scaled_size_for_max_edge(size: [usize; 2], max_edge: usize) -> [usize; 2] {
     let [width, height] = size;
     let longest = width.max(height);
@@ -174,5 +204,18 @@ mod tests {
             PreviewQuality::High.scaled_image([1920, 1080], &[0; 16]).0,
             [1920, 1080]
         );
+    }
+
+    #[test]
+    fn shared_stage_viewport_caps_tall_panels_by_stage_aspect() {
+        let size = stage_viewport_size(egui::vec2(900.0, 1000.0), (1280.0, 720.0), 28.0, 0.78);
+        assert_eq!(size.x, 900.0);
+        assert!(size.y < 540.0);
+    }
+
+    #[test]
+    fn shared_stage_viewport_handles_tiny_space_without_negative_height() {
+        let size = stage_viewport_size(egui::vec2(320.0, 20.0), (1280.0, 720.0), 28.0, 0.78);
+        assert_eq!(size, egui::vec2(320.0, 0.0));
     }
 }

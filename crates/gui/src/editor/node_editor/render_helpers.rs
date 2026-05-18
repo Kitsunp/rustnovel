@@ -90,7 +90,9 @@ impl<'a> NodeEditorPanel<'a> {
         response: &egui::Response,
     ) {
         if let Some((from_id, from_port)) = self.graph.connecting_from {
-            if let Some((_, node, pos)) = self.graph.nodes().find(|(id, _, _)| *id == from_id) {
+            if let Some((_, node, pos)) =
+                self.graph.visible_nodes().find(|(id, _, _)| *id == from_id)
+            {
                 if let Some(cursor) = response.hover_pos() {
                     let from =
                         self.graph_to_screen(rect, self.calculate_port_pos(pos, &node, from_port));

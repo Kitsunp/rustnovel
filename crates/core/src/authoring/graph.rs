@@ -238,6 +238,8 @@ impl NodeGraph {
             if from_port > 1 {
                 return;
             }
+        } else if matches!(from_node, StoryNode::SubgraphCall { .. }) {
+            // Fragment output ports are validated against the selected fragment during strict export.
         } else if from_port != 0 {
             return;
         }

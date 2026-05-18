@@ -18,8 +18,8 @@ use fallbacks::*;
 #[path = "scene_stage/geometry.rs"]
 mod geometry;
 pub(crate) use geometry::{
-    clamp_transform_to_stage, display_visual_for_event, entity_rect, is_background_image,
-    scene_from_visual_state, stage_geometry, StageGeometry,
+    clamp_transform_to_stage, display_visual_for_event, entity_rect_with_background_fit,
+    is_background_image, scene_from_visual_state, stage_geometry, StageGeometry,
 };
 
 pub(crate) struct SceneStagePainter<'a> {
@@ -29,6 +29,7 @@ pub(crate) struct SceneStagePainter<'a> {
     image_failures: &'a mut HashMap<String, String>,
     asset_store: Option<vnengine_assets::AssetStore>,
     layer_overrides: HashMap<String, LayerOverride>,
+    background_fit: crate::editor::BackgroundFit,
 }
 
 pub(crate) struct SceneStageInteraction {
@@ -60,11 +61,17 @@ impl<'a> SceneStagePainter<'a> {
             image_failures,
             asset_store: None,
             layer_overrides: HashMap::new(),
+            background_fit: crate::editor::BackgroundFit::default(),
         }
     }
 
     pub fn with_layer_overrides(mut self, layer_overrides: HashMap<String, LayerOverride>) -> Self {
         self.layer_overrides = layer_overrides;
+        self
+    }
+
+    pub fn with_background_fit(mut self, background_fit: crate::editor::BackgroundFit) -> Self {
+        self.background_fit = background_fit;
         self
     }
 
@@ -82,7 +89,12 @@ impl<'a> SceneStagePainter<'a> {
             {
                 continue;
             }
-            let rect = entity_rect(&entity.kind, &entity.transform, &geometry);
+            let rect = entity_rect_with_background_fit(
+                &entity.kind,
+                &entity.transform,
+                &geometry,
+                self.background_fit,
+            );
             self.paint_entity(ui, &entity.kind, rect, false);
         }
     }
@@ -121,7 +133,12 @@ impl<'a> SceneStagePainter<'a> {
                 *selected_entity_id = None;
             }
 
-            let rect = entity_rect(&entity.kind, &entity.transform, &geometry);
+            let rect = entity_rect_with_background_fit(
+                &entity.kind,
+                &entity.transform,
+                &geometry,
+                self.background_fit,
+            );
             let locked = self
                 .entity_layer_override(&entity, source_node_id, index)
                 .is_some_and(|entry| entry.locked);
@@ -337,12 +354,14 @@ impl<'a> SceneStagePainter<'a> {
         }
 
         self.asset_store(project_root, &asset_path, &request_cache_key)?;
-        let resolved_asset_path = match self
-            .asset_store
-            .as_ref()
-            .expect("asset store initialized")
-            .resolve_image_path(&asset_path)
-        {
+        let Some(store) = self.asset_store.as_ref() else {
+            self.image_failures.insert(
+                request_cache_key,
+                format!("image '{asset_path}' asset store initialization failed"),
+            );
+            return None;
+        };
+        let resolved_asset_path = match store.resolve_image_path(&asset_path) {
             Ok(path) => normalize_asset_path(&path),
             Err(err) => {
                 self.image_failures

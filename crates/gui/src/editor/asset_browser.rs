@@ -13,8 +13,19 @@ use crate::editor::{AssetImportKind, PreviewQuality};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AssetBrowserAction {
     Import(AssetImportKind),
-    Remove { kind: AssetImportKind, name: String },
-    PreviewAudio { path: String, offset_ms: u64 },
+    Remove {
+        kind: AssetImportKind,
+        name: String,
+    },
+    AssignToSelected {
+        kind: AssetImportKind,
+        name: String,
+        path: String,
+    },
+    PreviewAudio {
+        path: String,
+        offset_ms: u64,
+    },
     StopAudio,
 }
 
@@ -101,6 +112,13 @@ impl<'a> AssetBrowserPanel<'a> {
                                     offset_ms,
                                 });
                             }
+                            if ui.small_button("Use").clicked() {
+                                actions.push(AssetBrowserAction::AssignToSelected {
+                                    kind: AssetImportKind::Audio,
+                                    name: name.clone(),
+                                    path: asset_path.clone(),
+                                });
+                            }
                             if ui.small_button("Stop").clicked() {
                                 actions.push(AssetBrowserAction::StopAudio);
                             }
@@ -171,6 +189,13 @@ impl<'a> AssetBrowserPanel<'a> {
                             }
 
                             response.on_hover_text(format!("Drag to scene\nPath: {:?}", path));
+                            if ui.small_button("Use").clicked() {
+                                actions.push(AssetBrowserAction::AssignToSelected {
+                                    kind,
+                                    name: name.clone(),
+                                    path: normalize_asset_path(&path.to_string_lossy()),
+                                });
+                            }
                             if ui.small_button("Remove").clicked() {
                                 actions.push(AssetBrowserAction::Remove {
                                     kind,
@@ -190,7 +215,7 @@ impl<'a> AssetBrowserPanel<'a> {
         name: &str,
         path: &Path,
     ) -> egui::Response {
-        let card_size = egui::vec2(96.0, 116.0);
+        let card_size = asset_card_size(ui.available_width());
         let (rect, response) = ui.allocate_exact_size(card_size, egui::Sense::click_and_drag());
         ui.painter()
             .rect_filled(rect, 4.0, egui::Color32::from_rgb(46, 46, 46));
@@ -201,8 +226,7 @@ impl<'a> AssetBrowserPanel<'a> {
         );
 
         let asset_path = normalize_asset_path(&path.to_string_lossy());
-        let image_rect =
-            egui::Rect::from_min_size(rect.min + egui::vec2(6.0, 6.0), egui::vec2(84.0, 72.0));
+        let image_rect = asset_card_image_rect(rect);
         if let Some(texture_id) = self.thumbnail_texture(ui.ctx(), &asset_path) {
             ui.painter().image(
                 texture_id,
@@ -225,7 +249,7 @@ impl<'a> AssetBrowserPanel<'a> {
         ui.painter().text(
             egui::pos2(rect.left() + 6.0, rect.bottom() - 30.0),
             egui::Align2::LEFT_TOP,
-            truncate_label(name, 16),
+            truncate_label(name, asset_label_capacity(rect.width())),
             egui::FontId::proportional(12.0),
             egui::Color32::from_gray(220),
         );
@@ -366,6 +390,24 @@ fn truncate_label(label: &str, max_chars: usize) -> String {
     value
 }
 
+fn asset_card_size(available_width: f32) -> egui::Vec2 {
+    let width = available_width.clamp(48.0, 96.0);
+    egui::vec2(width, (width * 1.2).clamp(82.0, 116.0))
+}
+
+fn asset_card_image_rect(rect: egui::Rect) -> egui::Rect {
+    let padding = 6.0;
+    let size = egui::vec2(
+        (rect.width() - padding * 2.0).max(24.0),
+        (rect.height() - 44.0).max(32.0),
+    );
+    egui::Rect::from_min_size(rect.min + egui::vec2(padding, padding), size)
+}
+
+fn asset_label_capacity(width: f32) -> usize {
+    ((width - 12.0) / 7.0).floor().max(4.0) as usize
+}
+
 fn format_audio_position(offset_secs: f32, duration_secs: f32) -> String {
     format!(
         "{} / {}",
@@ -390,87 +432,5 @@ fn secs_to_ms(seconds: f32) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn character_drag_payload_keeps_name_and_path() {
-        let payload = super::asset_drag_payload("char", "furina", "assets/characters/furina.png");
-        assert_eq!(payload, "asset://char/furina\nassets/characters/furina.png");
-    }
-
-    #[test]
-    fn thumbnail_cache_keys_do_not_overlap_scene_cache() {
-        let root = std::path::Path::new("C:/project-one");
-        let asset_path = "assets/bg/room.png";
-        let thumbnail = super::thumbnail_cache_key(root, asset_path);
-        let stage = crate::editor::image_asset_cache::scene_stage_cache_key(
-            root,
-            crate::editor::PreviewQuality::Draft,
-            asset_path,
-        );
-        assert!(thumbnail.starts_with("asset_browser::thumb::C:/project-one::assets/bg/room.png::"));
-        assert_ne!(thumbnail, stage);
-    }
-
-    #[test]
-    fn thumbnail_cache_keys_include_project_root() {
-        let asset_path = "assets/bg/room.png";
-        assert_ne!(
-            super::thumbnail_cache_key(std::path::Path::new("C:/project-one"), asset_path),
-            super::thumbnail_cache_key(std::path::Path::new("C:/project-two"), asset_path)
-        );
-    }
-
-    #[test]
-    fn thumbnail_cache_can_dedupe_equivalent_resolved_asset_paths() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(temp.path().join("assets/bg")).expect("mkdir assets");
-        std::fs::write(temp.path().join("assets/bg/room.png"), b"placeholder")
-            .expect("write asset");
-        let store = vnengine_assets::AssetStore::new(
-            temp.path().to_path_buf(),
-            vnengine_assets::SecurityMode::Trusted,
-            None,
-            false,
-        )
-        .expect("asset store");
-
-        let resolved_short = store
-            .resolve_image_path("bg/room")
-            .expect("short path should resolve");
-        let resolved_full = store
-            .resolve_image_path("assets/bg/room.png")
-            .expect("full path should resolve");
-
-        assert_eq!(resolved_short, resolved_full);
-        assert_eq!(
-            super::thumbnail_cache_key(temp.path(), &resolved_short),
-            super::thumbnail_cache_key(temp.path(), &resolved_full)
-        );
-    }
-
-    #[test]
-    fn audio_position_format_clamps_to_minutes_and_seconds() {
-        assert_eq!(super::format_audio_position(-4.0, 61.4), "0:00 / 1:01");
-        assert_eq!(super::format_audio_position(125.0, 3661.0), "2:05 / 61:01");
-    }
-
-    #[test]
-    fn audio_preview_offset_contract_is_integer_ms_and_finite() {
-        assert_eq!(super::secs_to_ms(1.234), 1234);
-        assert_eq!(super::secs_to_ms(-2.0), 0);
-        assert_eq!(super::secs_to_ms(f32::NAN), 0);
-        assert_eq!(super::secs_to_ms(f32::INFINITY), 0);
-
-        let action = super::AssetBrowserAction::PreviewAudio {
-            path: "audio/theme.ogg".to_string(),
-            offset_ms: 1234,
-        };
-        assert_eq!(
-            action,
-            super::AssetBrowserAction::PreviewAudio {
-                path: "audio/theme.ogg".to_string(),
-                offset_ms: 1234
-            }
-        );
-    }
-}
+#[path = "asset_browser/tests.rs"]
+mod tests;

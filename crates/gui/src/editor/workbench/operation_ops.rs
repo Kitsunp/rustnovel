@@ -166,6 +166,11 @@ impl EditorWorkbench {
             .iter()
             .map(|(key, value)| (key.clone(), *value))
             .collect();
+        document.composer_background_fit_overrides = self
+            .composer_background_fit_overrides
+            .iter()
+            .map(|(key, value)| (key.clone(), *value))
+            .collect();
         document.operation_log = self.operation_log.clone();
         document.verification_runs = self.verification_runs.clone();
         document

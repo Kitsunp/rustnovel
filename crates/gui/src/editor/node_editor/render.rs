@@ -14,7 +14,7 @@ impl<'a> NodeEditorPanel<'a> {
         let mut clicked_connection_target = None;
         let mut clicked_on_any_node = false;
         let mut right_clicked_canvas = None;
-        let nodes: Vec<_> = self.graph.nodes().collect();
+        let nodes: Vec<_> = self.graph.visible_nodes().collect();
 
         if self.graph.connecting_sticky && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.graph.cancel_connection();
