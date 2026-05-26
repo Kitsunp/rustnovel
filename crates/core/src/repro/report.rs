@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{VnError, VnResult};
+use crate::FidelityClass;
 
 pub const REPRO_RUN_REPORT_SCHEMA: &str = "vnengine.repro_run_report.v1";
 
@@ -82,11 +83,17 @@ pub struct ReproStepTrace {
     pub event_ip: u32,
     pub event_kind: String,
     pub event_signature: String,
+    #[serde(default = "default_runtime_real_fidelity")]
+    pub execution_fidelity: FidelityClass,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simulation_note: Option<String>,
     pub visual_background: Option<String>,
     pub visual_music: Option<String>,
     pub character_count: usize,
+}
+
+fn default_runtime_real_fidelity() -> FidelityClass {
+    FidelityClass::RuntimeReal
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

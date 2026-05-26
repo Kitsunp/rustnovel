@@ -30,3 +30,4 @@ extend-exclude = [".pytest_cache", "pytest-cache-files-*", "target"]
 addopts = "-p no:cacheprovider"
 testpaths = ["tests"]
 norecursedirs = [".pytest_cache", "target"]
+pythonpath = ["python"]

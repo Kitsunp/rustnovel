@@ -1,13 +1,13 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use visual_novel_engine::authoring::{
     parse_authoring_document_or_script, parse_runtime_script_from_entry,
-    validate_authoring_graph_with_project_root, AuthoringDocument, AuthoringPosition, LintCode,
-    LintSeverity, NodeGraph, SceneProfile, StoryNode,
+    validate_authoring_graph_with_project_root, AuthoringDocument, AuthoringPosition,
+    AuthoringValidationReport, LintCode, LintSeverity, NodeGraph, SceneProfile, StoryNode,
 };
 use visual_novel_engine::{
     AssetId, CharacterPlacementRaw, CondRaw, DialogueRaw, Engine, EventRaw, ReproCase,
-    ResourceLimiter, SceneTransitionRaw, ScriptRaw, SecurityPolicy,
+    ResourceLimiter, SceneTransitionRaw, SceneUpdateRaw, ScriptRaw, SecurityPolicy,
 };
 
 fn pos(x: f32, y: f32) -> AuthoringPosition {
@@ -49,6 +49,133 @@ fn runtime_entry_loader_accepts_script_and_authoring_document() {
     let loaded_authoring =
         parse_runtime_script_from_entry(&document_json).expect("authoring document should export");
     assert_eq!(loaded_authoring.events.len(), 1);
+}
+
+#[test]
+fn label_out_of_range_contract() {
+    let events = vec![EventRaw::Dialogue(DialogueRaw {
+        speaker: "Narrator".to_string(),
+        text: "Done".to_string(),
+    })];
+    let eof_label = ScriptRaw::new(
+        events.clone(),
+        BTreeMap::from([
+            ("start".to_string(), 0),
+            ("__end".to_string(), events.len()),
+        ]),
+    );
+
+    SecurityPolicy::default()
+        .validate_raw(&eof_label, ResourceLimiter::default())
+        .expect("labels at events.len() are valid EOF sentinels");
+    eof_label
+        .compile()
+        .expect("compiler accepts EOF sentinel labels");
+
+    let outside = ScriptRaw::new(
+        events,
+        BTreeMap::from([("start".to_string(), 0), ("bad".to_string(), 2)]),
+    );
+    let err = SecurityPolicy::default()
+        .validate_raw(&outside, ResourceLimiter::default())
+        .expect_err("labels beyond events.len() must be rejected");
+    assert!(format!("{err}").contains("points outside events"));
+    let compile_err = outside
+        .compile()
+        .expect_err("compiler must reject labels beyond events.len()");
+    assert!(format!("{compile_err}").contains("points outside events"));
+}
+
+#[test]
+fn path_traversal_encoded_windows_unc_contract() {
+    for unsafe_path in [
+        "../secret.png",
+        "%2e%2e/secret.png",
+        "assets\\backgrounds\\room.png",
+        r"\\server\share\room.png",
+        r"C:\temp\room.png",
+    ] {
+        let script = ScriptRaw::new(
+            vec![EventRaw::Scene(SceneUpdateRaw {
+                background: Some(unsafe_path.to_string()),
+                music: None,
+                characters: Vec::new(),
+            })],
+            BTreeMap::from([("start".to_string(), 0)]),
+        );
+        let err = SecurityPolicy::default()
+            .validate_raw(&script, ResourceLimiter::default())
+            .expect_err("unsafe asset path must be rejected");
+        assert!(
+            format!("{err}").contains("unsafe"),
+            "unexpected error for {unsafe_path}: {err}"
+        );
+    }
+
+    let safe = ScriptRaw::new(
+        vec![EventRaw::Scene(SceneUpdateRaw {
+            background: Some("assets/backgrounds/room.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        })],
+        BTreeMap::from([("start".to_string(), 0)]),
+    );
+    SecurityPolicy::default()
+        .validate_raw(&safe, ResourceLimiter::default())
+        .expect("normal relative asset path stays valid");
+}
+
+#[test]
+fn contract_fixture_cli_py_gui() {
+    let fixture =
+        include_str!("../../../tests/fixtures/authoring_contract/contract_fixture.authoring.json");
+    let document = AuthoringDocument::from_json(fixture).expect("shared authoring fixture parses");
+    assert_eq!(document.graph.len(), 9);
+    assert!(document.graph.fragment("shared_fragment").is_some());
+    assert!(document
+        .composer_layer_overrides
+        .contains_key("node:3:InteractionUi:0:graph_nodes_3_visual_choice"));
+
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let project_root = workspace_root.join("tests/fixtures/authoring_contract");
+    let issues = validate_authoring_graph_with_project_root(&document.graph, &project_root);
+    assert!(issues
+        .iter()
+        .any(|issue| issue.code == LintCode::AssetReferenceMissing));
+
+    let script = document
+        .graph
+        .to_script_strict()
+        .expect("fixture exports through the shared strict core path");
+    assert!(script.events.iter().any(
+        |event| matches!(event, EventRaw::ExtCall { command, .. } if command == "plugin.open_door")
+    ));
+    assert!(script.events.iter().any(
+        |event| matches!(event, EventRaw::Transition(transition) if transition.kind == "fade")
+    ));
+
+    let report = AuthoringValidationReport::from_document_and_issues(&document, &script, &issues);
+    assert!(report
+        .issues
+        .iter()
+        .any(|issue| issue.code == "VAL_ASSET_NOT_FOUND"));
+    assert!(!report.fingerprints.full_document_sha256.is_empty());
+
+    let snapshot = visual_novel_engine::authoring::composer::build_presentation_snapshot(
+        &document.graph,
+        Some(3),
+        Some((1280, 720)),
+        None,
+        None,
+        None,
+    );
+    assert_eq!(snapshot.schema, "vnengine.presentation_snapshot.v1");
+    assert!(snapshot.layout.choices_rect.is_some());
+    assert!(snapshot.safe_area.width > 0.0);
+    assert!(snapshot.overlays.iter().any(|overlay| matches!(
+        overlay,
+        visual_novel_engine::authoring::composer::ComposerOverlay::Choice { .. }
+    )));
 }
 
 #[test]

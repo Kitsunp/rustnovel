@@ -6,11 +6,16 @@ license = "MIT"
 
 [dependencies]
 visual_novel_engine = { path = "../core" }
-pixels = "0.15"
+pixels = "0.17.1"
 winit = "0.29"
-wgpu = "0.19"
-pollster = "0.3"
+wgpu = "29"
+pollster = "0.4"
 bytemuck = { version = "1.14", features = ["derive"] }
 
 rodio = "0.17"
 vnengine_assets = { path = "../assets" }
+
+[target.'cfg(windows)'.dependencies]
+# Keeps wgpu 29's gpu-allocator path on the newer windows crate while rodio/cpal
+# still requires windows 0.54.x.
+windows = "0.62.2"

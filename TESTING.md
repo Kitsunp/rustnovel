@@ -30,12 +30,17 @@ cargo test -p visual_novel_gui --verbose
 
 ### Python Bindings
 
-```bash
-# Requiere maturin instalado
-maturin develop --manifest-path crates/py/Cargo.toml
+Los tests Python deben ejecutarse contra la extension nativa local, no contra una
+instalacion global de `visual_novel_engine`. El `conftest.py` falla temprano si
+el modulo importado no viene del workspace o del virtualenv activo, o si faltan
+APIs publicas esperadas.
 
-# Ejecutar tests de Python (unittest)
-PYTHONPATH=python python -m unittest tests.python.test_examples tests.python.test_vnengine -v
+```powershell
+py -m venv target\py-audit-venv
+target\py-audit-venv\Scripts\python -m pip install --upgrade pip
+target\py-audit-venv\Scripts\python -m pip install maturin pytest
+target\py-audit-venv\Scripts\maturin develop --manifest-path crates\py\Cargo.toml --features extension-module
+target\py-audit-venv\Scripts\python -m pytest -q
 ```
 
 ### Linting y auditoría

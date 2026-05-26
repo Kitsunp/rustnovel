@@ -2,6 +2,7 @@
 //!
 //! This module keeps semantic story editing independent from egui/eframe.
 
+mod command_bus;
 pub mod compiler;
 pub mod composer;
 mod diagnostics;
@@ -18,6 +19,9 @@ mod types;
 mod validation;
 mod validation_report;
 
+pub use command_bus::{
+    AuthoringCommand, AuthoringCommandBus, AuthoringCommandOutcome, AuthoringDelta,
+};
 pub use diagnostics::{
     DiagnosticEnvelopeV2, DiagnosticExplanation, DiagnosticLanguage, DiagnosticLocation,
     DiagnosticTarget, EvidenceTrace, FieldPath, SemanticValue, SemanticValueKind, TraceAtom,

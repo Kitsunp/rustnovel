@@ -252,7 +252,7 @@ class EngineAppTests(unittest.TestCase):
         try:
             events = run_script_headless(script)
         except RuntimeError as exc:
-            self.skipTest(f"native engine not available: {exc}")
+            self.fail(f"native engine not available: {exc}")
 
         self.assertEqual(events[0]["type"], "dialogue")
         self.assertEqual(events[0]["speaker"], "Ava")

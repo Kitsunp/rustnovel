@@ -42,8 +42,8 @@ pub use authoring::{
     StoryNode as AuthoringStoryNode, ValidationPhase, AUTHORING_DOCUMENT_SCHEMA_VERSION,
 };
 pub use bundle::{
-    export_bundle, BundleAssetEntry, BundleIntegrity, ExportBundleReport, ExportBundleSpec,
-    ExportTargetPlatform,
+    build_export_plan, export_bundle, BundleAssetEntry, BundleIntegrity, ExportBundleReport,
+    ExportBundleSpec, ExportPlan, ExportTargetPlatform,
 };
 pub use engine::{ChoiceHistoryEntry, Engine, StateChange};
 pub use error::{VnError, VnResult};
@@ -57,7 +57,8 @@ pub use event::{
 };
 pub use execution_contract::{
     contract_for_authoring_node, contract_for_event_raw, contract_matrix,
-    is_preview_only_authoring_node, EventExecutionContract, FidelityClass,
+    headless_fidelity_for_event_raw, is_preview_only_authoring_node, EventExecutionContract,
+    FidelityClass,
 };
 pub use localization::{
     collect_script_localization_keys, localization_key, LocalizationCatalog, LocalizationIssue,

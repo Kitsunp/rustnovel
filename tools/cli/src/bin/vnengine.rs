@@ -52,6 +52,8 @@ enum Command {
         script: PathBuf,
         #[arg(long, default_value_t = 100)]
         steps: usize,
+        #[arg(long, value_enum)]
+        format: Option<TraceFormat>,
         #[arg(short, long)]
         output: PathBuf,
     },
@@ -136,6 +138,39 @@ enum Command {
         #[arg(long, default_value_t = 1)]
         layout_version: u16,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum TraceFormat {
+    Json,
+    Yaml,
+}
+
+impl TraceFormat {
+    fn inferred_from_output(output: &Path) -> Self {
+        match output
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("yaml" | "yml") => Self::Yaml,
+            _ => Self::Json,
+        }
+    }
+
+    fn matches_output_extension(self, output: &Path) -> bool {
+        match output
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("json") => self == Self::Json,
+            Some("yaml" | "yml") => self == Self::Yaml,
+            _ => true,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -227,8 +262,9 @@ fn main() -> Result<()> {
         Command::Trace {
             script,
             steps,
+            format,
             output,
-        } => trace_script(&script, steps, &output),
+        } => trace_script(&script, steps, format, &output),
         Command::VerifySave { save, script } => verify_save(&save, &script),
         Command::Manifest { assets, output } => build_manifest(&assets, &output),
         Command::ReproRun {
@@ -304,7 +340,19 @@ fn compile_script(path: &Path, output: &Path) -> Result<()> {
     Ok(())
 }
 
-fn trace_script(path: &Path, steps: usize, output: &Path) -> Result<()> {
+fn trace_script(
+    path: &Path,
+    steps: usize,
+    requested_format: Option<TraceFormat>,
+    output: &Path,
+) -> Result<()> {
+    let format = requested_format.unwrap_or_else(|| TraceFormat::inferred_from_output(output));
+    if !format.matches_output_extension(output) {
+        anyhow::bail!(
+            "trace output extension is incompatible with --format {format:?}: {}",
+            output.display()
+        );
+    }
     let script = load_runtime_script_from_entry(path).context("load script")?;
     let mut engine = Engine::new(
         script,
@@ -340,11 +388,14 @@ fn trace_script(path: &Path, steps: usize, output: &Path) -> Result<()> {
         script_schema_version: SCRIPT_SCHEMA_VERSION.to_string(),
         trace,
     };
-    let yaml = serde_yaml::to_string(&envelope)?;
+    let content = match format {
+        TraceFormat::Json => serde_json::to_string_pretty(&envelope)?,
+        TraceFormat::Yaml => serde_norway::to_string(&envelope)?,
+    };
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(output, yaml).with_context(|| format!("write {}", output.display()))?;
+    fs::write(output, content).with_context(|| format!("write {}", output.display()))?;
     Ok(())
 }
 

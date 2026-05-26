@@ -74,14 +74,10 @@ impl SecurityPolicy {
                         return Err(VnError::ResourceLimit("character count".to_string()));
                     }
                     if let Some(background) = &scene.background {
-                        if background.len() > limits.max_asset_length {
-                            return Err(VnError::ResourceLimit("background asset".to_string()));
-                        }
+                        validate_path(background, "background asset", limits)?;
                     }
                     if let Some(music) = &scene.music {
-                        if music.len() > limits.max_asset_length {
-                            return Err(VnError::ResourceLimit("music asset".to_string()));
-                        }
+                        validate_path(music, "music asset", limits)?;
                     }
                     for character in &scene.characters {
                         if character.name.len() > limits.max_asset_length {
@@ -263,8 +259,64 @@ fn validate_path(
     limits: crate::resource::ResourceLimiter,
 ) -> crate::error::VnResult<()> {
     if path.len() > limits.max_asset_length {
-        Err(crate::error::VnError::ResourceLimit(name.to_string()))
-    } else {
-        Ok(())
+        return Err(crate::error::VnError::ResourceLimit(name.to_string()));
+    }
+    if is_unsafe_resource_path(path) {
+        return Err(crate::error::VnError::SecurityPolicy(format!(
+            "{name} path is unsafe"
+        )));
+    }
+    Ok(())
+}
+
+fn is_unsafe_resource_path(path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('/')
+        || trimmed.starts_with('\\')
+        || trimmed.contains('\\')
+        || trimmed.contains(':')
+    {
+        return true;
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    if lowered.contains("%2e") || lowered.contains("%2f") || lowered.contains("%5c") {
+        let decoded = percent_decode_path_once(&lowered);
+        if decoded != lowered {
+            return is_unsafe_resource_path(&decoded);
+        }
+        return true;
+    }
+    trimmed
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+}
+
+fn percent_decode_path_once(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = String::with_capacity(value.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hi = from_hex(bytes[index + 1]);
+            let lo = from_hex(bytes[index + 2]);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                output.push((hi << 4 | lo) as char);
+                index += 3;
+                continue;
+            }
+        }
+        output.push(bytes[index] as char);
+        index += 1;
+    }
+    output
+}
+
+fn from_hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }

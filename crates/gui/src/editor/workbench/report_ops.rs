@@ -90,6 +90,7 @@ impl EditorWorkbench {
                             "event_ip": step.event_ip,
                             "event_kind": step.event_kind,
                             "event_signature": step.event_signature,
+                            "execution_fidelity": step.execution_fidelity,
                             "simulation_note": step.simulation_note,
                             "visual_background": step.visual_background,
                             "visual_music": step.visual_music,

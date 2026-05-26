@@ -1,6 +1,6 @@
 use crate::event::EventCompiled;
 
-use crate::{Engine, ResourceLimiter, SecurityPolicy};
+use crate::{Engine, FidelityClass, ResourceLimiter, SecurityPolicy};
 
 use super::report::{ReproRunReport, ReproStepTrace, ReproStopReason, REPRO_RUN_REPORT_SCHEMA};
 use super::signatures::{
@@ -130,6 +130,11 @@ fn build_step_trace(
         event_ip,
         event_kind: event_kind_compiled(event).to_string(),
         event_signature: compiled_event_signature(event),
+        execution_fidelity: if matches!(event, EventCompiled::ExtCall { .. }) {
+            FidelityClass::HeadlessSimulated
+        } else {
+            FidelityClass::RuntimeReal
+        },
         simulation_note,
         visual_background: engine
             .visual_state()

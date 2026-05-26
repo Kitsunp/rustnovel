@@ -83,6 +83,55 @@ fn dry_run_reports_extcall_as_simulated_capability() {
 }
 
 #[test]
+fn extcall_simulation_fidelity_contract() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let ext_node = StoryNode::Generic(EventRaw::ExtCall {
+        command: "plugin.fade".to_string(),
+        args: vec!["fast".to_string()],
+    });
+    let ext = graph.add_node(ext_node.clone(), pos(0.0, 90.0));
+    let end = graph.add_node(StoryNode::End, pos(0.0, 180.0));
+    graph.connect(start, ext);
+    graph.connect(ext, end);
+
+    let runtime_contract = crate::contract_for_authoring_node(&ext_node);
+    assert_eq!(runtime_contract.fidelity, crate::FidelityClass::RuntimeReal);
+
+    let result = compiler::compile_authoring_graph(&graph, None);
+    let dry_run = result.dry_run_report.expect("dry-run report");
+    let dry_step = dry_run
+        .steps
+        .iter()
+        .find(|step| step.event_kind == "ext_call")
+        .expect("extcall step");
+    assert_eq!(
+        dry_step.execution_fidelity,
+        crate::FidelityClass::HeadlessSimulated
+    );
+    assert_eq!(
+        dry_step.simulation_note.as_deref(),
+        Some("external_call_simulated")
+    );
+
+    let repro = crate::ReproCase::new("extcall fidelity", result.script);
+    let repro_report = crate::run_repro_case(&repro);
+    let repro_step = repro_report
+        .steps
+        .iter()
+        .find(|step| step.event_kind == "ext_call")
+        .expect("repro extcall step");
+    assert_eq!(
+        repro_step.execution_fidelity,
+        crate::FidelityClass::HeadlessSimulated
+    );
+    assert_eq!(
+        repro_step.simulation_note.as_deref(),
+        Some("external_call_simulated")
+    );
+}
+
+#[test]
 fn verification_run_tracks_resolved_and_introduced_diagnostics() {
     let graph = NodeGraph::new();
     let script = graph.to_script_lossy_for_diagnostics();

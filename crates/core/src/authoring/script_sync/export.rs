@@ -231,6 +231,16 @@ struct ExportBuildContext<'a> {
     labels: &'a mut BTreeMap<String, usize>,
 }
 
+struct SubgraphEmitRequest<'a> {
+    call_node_id: u32,
+    fragment_id: &'a str,
+    entry_port: Option<&'a str>,
+    exit_port: Option<&'a str>,
+    namespace: &'a str,
+    call_label: &'a str,
+    caller_context: ExportLabelContext<'a>,
+}
+
 fn emit_subgraph_call(
     graph: &NodeGraph,
     call_node_id: u32,
@@ -239,33 +249,53 @@ fn emit_subgraph_call(
     exit_port: Option<&str>,
     build: &mut ExportBuildContext<'_>,
 ) {
-    let Some(fragment) = graph.fragment(fragment_id) else {
-        return;
-    };
-    let Some(entry_node_id) = fragment_entry_node(fragment, entry_port) else {
-        return;
-    };
     let namespace = format!("__call_{call_node_id}");
+    let call_label = format!("node_{call_node_id}");
+    emit_subgraph_call_in_context(
+        graph,
+        SubgraphEmitRequest {
+            call_node_id,
+            fragment_id,
+            entry_port,
+            exit_port,
+            namespace: &namespace,
+            call_label: &call_label,
+            caller_context: ExportLabelContext::top(),
+        },
+        build,
+    );
+}
+
+fn emit_subgraph_call_in_context(
+    graph: &NodeGraph,
+    request: SubgraphEmitRequest<'_>,
+    build: &mut ExportBuildContext<'_>,
+) {
+    let Some(fragment) = graph.fragment(request.fragment_id) else {
+        return;
+    };
+    let Some(entry_node_id) = fragment_entry_node(fragment, request.entry_port) else {
+        return;
+    };
     let output_labels = fragment_output_labels(
         fragment,
-        call_node_id,
-        exit_port,
+        request.call_node_id,
+        request.exit_port,
         build.node_lookup,
         build.choice_targets,
+        request.caller_context,
     );
     let ordered_ids = fragment_order_node_ids(graph, &fragment.node_ids, entry_node_id);
     let fragment_nodes = fragment.node_ids.iter().copied().collect::<BTreeSet<_>>();
     build
         .labels
-        .insert(format!("node_{call_node_id}"), build.events.len());
+        .insert(request.call_label.to_string(), build.events.len());
     build
         .labels
-        .insert(format!("{namespace}_entry"), build.events.len());
+        .insert(format!("{}_entry", request.namespace), build.events.len());
     for node_id in &ordered_ids {
-        build.labels.insert(
-            namespaced_node_label(&namespace, *node_id),
-            build.events.len(),
-        );
+        let node_label = namespaced_node_label(request.namespace, *node_id);
+        build.labels.insert(node_label.clone(), build.events.len());
         if let Some(port) = fragment
             .inputs
             .iter()
@@ -273,7 +303,7 @@ fn emit_subgraph_call(
             .find(|port| port.node_id == Some(*node_id))
         {
             build.labels.insert(
-                namespaced_port_label(&namespace, &port.port_id),
+                namespaced_port_label(request.namespace, &port.port_id),
                 build.events.len(),
             );
         }
@@ -283,7 +313,30 @@ fn emit_subgraph_call(
         if node.is_marker() {
             continue;
         }
-        let context = ExportLabelContext::fragment(&namespace, &fragment_nodes, &output_labels);
+        let context =
+            ExportLabelContext::fragment(request.namespace, &fragment_nodes, &output_labels);
+        if let StoryNode::SubgraphCall {
+            fragment_id,
+            entry_port,
+            exit_port,
+        } = node
+        {
+            let nested_namespace = format!("{}_call_{node_id}", request.namespace);
+            emit_subgraph_call_in_context(
+                graph,
+                SubgraphEmitRequest {
+                    call_node_id: *node_id,
+                    fragment_id,
+                    entry_port: entry_port.as_deref(),
+                    exit_port: exit_port.as_deref(),
+                    namespace: &nested_namespace,
+                    call_label: &node_label,
+                    caller_context: context,
+                },
+                build,
+            );
+            continue;
+        }
         if let Some(event) = event_from_node(
             *node_id,
             node,
@@ -302,6 +355,7 @@ fn fragment_output_labels(
     exit_port: Option<&str>,
     node_lookup: &BTreeMap<u32, &StoryNode>,
     choice_targets: &BTreeMap<(u32, usize), u32>,
+    caller_context: ExportLabelContext<'_>,
 ) -> BTreeMap<(u32, usize), String> {
     let selected_exit = exit_port.filter(|value| !value.trim().is_empty());
     let mut labels = BTreeMap::new();
@@ -316,9 +370,14 @@ fn fragment_output_labels(
         let label = choice_targets
             .get(&(call_node_id, call_port))
             .and_then(|target_id| {
+                if caller_context.namespace.is_some()
+                    && !caller_context.target_inside_fragment(*target_id)
+                {
+                    return caller_context.external_output_label(call_node_id, call_port);
+                }
                 node_lookup
                     .get(target_id)
-                    .map(|node| node_target_label(*target_id, node, ExportLabelContext::top()))
+                    .map(|node| node_target_label(*target_id, node, caller_context))
             })
             .unwrap_or_else(|| "__end".to_string());
         labels.insert(source, label);

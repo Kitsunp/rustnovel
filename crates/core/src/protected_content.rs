@@ -8,6 +8,7 @@
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -75,7 +76,7 @@ pub fn open_protected_content(
         chunk.nonce,
         &chunk.ciphertext,
     );
-    if expected != chunk.tag {
+    if !bool::from(expected.ct_eq(&chunk.tag)) {
         return Err(ProtectedContentError::AuthenticationFailed);
     }
     Ok(xor_keystream(

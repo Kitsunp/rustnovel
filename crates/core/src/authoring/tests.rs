@@ -22,6 +22,167 @@ fn character(name: &str, image: &str) -> CharacterPlacementRaw {
 }
 
 #[test]
+fn command_bus_replay_headless() {
+    let commands = vec![
+        AuthoringCommand::CreateNode {
+            node_id: 0,
+            node: StoryNode::Start,
+            position: pos(0.0, 0.0),
+        },
+        AuthoringCommand::CreateNode {
+            node_id: 1,
+            node: StoryNode::Dialogue {
+                speaker: "Narrator".to_string(),
+                text: "Replay".to_string(),
+            },
+            position: pos(0.0, 90.0),
+        },
+        AuthoringCommand::CreateNode {
+            node_id: 2,
+            node: StoryNode::End,
+            position: pos(0.0, 180.0),
+        },
+        AuthoringCommand::Connect {
+            from: 0,
+            from_port: 0,
+            to: 1,
+        },
+        AuthoringCommand::Connect {
+            from: 1,
+            from_port: 0,
+            to: 2,
+        },
+    ];
+
+    let bus = AuthoringCommandBus::replay(&commands).expect("replay commands");
+    let script = bus.graph().to_script_strict().expect("strict script");
+    script.compile().expect("compiled replay script");
+    assert_eq!(bus.operation_log().len(), commands.len());
+    assert_eq!(bus.verification_runs().len(), commands.len());
+}
+
+#[test]
+fn undo_delta_memory_contract() {
+    let mut bus = AuthoringCommandBus::new(NodeGraph::new());
+    for node_id in 0..1000 {
+        bus.apply(AuthoringCommand::CreateNode {
+            node_id,
+            node: if node_id == 0 {
+                StoryNode::Start
+            } else {
+                StoryNode::Dialogue {
+                    speaker: "Narrator".to_string(),
+                    text: format!("Line {node_id}"),
+                }
+            },
+            position: pos(0.0, node_id as f32),
+        })
+        .expect("create node");
+    }
+    let created_delta_count = bus.undo_delta_count();
+
+    for idx in 0..50 {
+        bus.apply(AuthoringCommand::EditNode {
+            node_id: 1,
+            replacement: StoryNode::Dialogue {
+                speaker: "Narrator".to_string(),
+                text: format!("Edited {idx}"),
+            },
+        })
+        .expect("edit node");
+    }
+
+    assert_eq!(bus.graph().len(), 1000);
+    assert_eq!(bus.undo_delta_count(), created_delta_count + 50);
+    assert_eq!(bus.redo_delta_count(), 0);
+}
+
+#[test]
+fn operation_log_replay_create_connect_edit_import_move_revert() {
+    let mut bus = AuthoringCommandBus::new(NodeGraph::new());
+    bus.apply(AuthoringCommand::CreateNode {
+        node_id: 0,
+        node: StoryNode::Start,
+        position: pos(0.0, 0.0),
+    })
+    .expect("create start");
+    bus.apply(AuthoringCommand::CreateNode {
+        node_id: 1,
+        node: StoryNode::Scene {
+            profile: None,
+            background: Some("assets/bg.png".to_string()),
+            music: None,
+            characters: vec![character("Ava", "assets/ava.png")],
+        },
+        position: pos(0.0, 90.0),
+    })
+    .expect("create scene");
+    bus.apply(AuthoringCommand::CreateNode {
+        node_id: 2,
+        node: StoryNode::Dialogue {
+            speaker: "Ava".to_string(),
+            text: "Before".to_string(),
+        },
+        position: pos(0.0, 180.0),
+    })
+    .expect("create dialogue");
+    bus.apply(AuthoringCommand::Connect {
+        from: 0,
+        from_port: 0,
+        to: 1,
+    })
+    .expect("connect start");
+    bus.apply(AuthoringCommand::Connect {
+        from: 1,
+        from_port: 0,
+        to: 2,
+    })
+    .expect("connect scene");
+    bus.apply(AuthoringCommand::EditNode {
+        node_id: 2,
+        replacement: StoryNode::Dialogue {
+            speaker: "Ava".to_string(),
+            text: "After".to_string(),
+        },
+    })
+    .expect("edit field");
+    bus.apply(AuthoringCommand::ImportAsset {
+        path: "assets/bg.png".to_string(),
+    })
+    .expect("import asset");
+
+    let object_id = composer::list_layered_objects(bus.graph(), Some(1))
+        .into_iter()
+        .find(|object| object.character_name.as_deref() == Some("Ava"))
+        .expect("character layer")
+        .object_id;
+    bus.apply(AuthoringCommand::MoveLayer {
+        object_id,
+        x: 640,
+        y: 360,
+        scale: Some(1.2),
+    })
+    .expect("move layer");
+    bus.apply(AuthoringCommand::RevertLast)
+        .expect("revert layer move");
+
+    assert!(bus
+        .operation_log()
+        .iter()
+        .any(|entry| entry.operation_kind == "asset_imported"));
+    assert_eq!(
+        bus.operation_log()
+            .last()
+            .and_then(|entry| entry.operation_kind_v2.as_ref()),
+        Some(&OperationKind::Revert)
+    );
+    assert_eq!(bus.operation_log().len(), bus.verification_runs().len());
+
+    let replay = AuthoringCommandBus::replay(bus.recorded_commands()).expect("replay log commands");
+    assert_eq!(replay.graph().len(), bus.graph().len());
+}
+
+#[test]
 fn authoring_graph_roundtrips_script_without_gui_types() {
     let mut labels = BTreeMap::new();
     labels.insert("start".to_string(), 0);

@@ -22,9 +22,9 @@ class ComposerReportBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
         if not hasattr(vn.NodeGraph, "set_layer_visible"):
-            self.skipTest("Native graph binding does not expose composer layers")
+            self.fail("Native graph binding does not expose composer layers")
 
         graph = vn.NodeGraph()
         scene = graph.add_node(
@@ -62,9 +62,9 @@ class ComposerReportBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
         if not hasattr(vn.NodeGraph, "set_layer_visible"):
-            self.skipTest("Native graph binding does not expose composer layers")
+            self.fail("Native graph binding does not expose composer layers")
 
         graph = vn.NodeGraph()
         scene = graph.add_node(
@@ -102,9 +102,9 @@ class ComposerReportBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
         if not hasattr(vn.NodeGraph, "validation_report"):
-            self.skipTest("Native graph binding does not expose report v2")
+            self.fail("Native graph binding does not expose report v2")
 
         graph = vn.NodeGraph()
         scene = graph.add_node(
@@ -141,9 +141,9 @@ class ComposerReportBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
         if not hasattr(vn, "AuthoringValidationReport"):
-            self.skipTest("Native report v2 bindings are not available")
+            self.fail("Native report v2 bindings are not available")
 
         graph = vn.NodeGraph()
         graph.add_node(
@@ -171,9 +171,9 @@ class ComposerReportBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
         if not hasattr(vn.NodeGraph, "operation_log"):
-            self.skipTest("Native graph binding does not expose operation log")
+            self.fail("Native graph binding does not expose operation log")
 
         graph = vn.NodeGraph()
         graph.add_node(vn.StoryNode.dialogue("Narrator", "Trace me"), 0.0, 0.0)
@@ -232,9 +232,9 @@ class ComposerReportBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
         if not hasattr(vn.NodeGraph, "operation_log"):
-            self.skipTest("Native graph binding does not expose operation log")
+            self.fail("Native graph binding does not expose operation log")
 
         graph = vn.NodeGraph()
         start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)
@@ -291,11 +291,9 @@ class ComposerReportBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
         if not hasattr(vn.NodeGraph, "reorder_choice_option"):
-            self.skipTest(
-                "Native graph binding does not expose composer choice editing"
-            )
+            self.fail("Native graph binding does not expose composer choice editing")
 
         graph = vn.NodeGraph()
         choice = graph.add_node(
@@ -332,7 +330,7 @@ class ComposerReportBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
 
         graph = vn.NodeGraph()
         graph.add_node(vn.StoryNode.scene(r"C:\temp\evil.png", None, []), 0.0, 0.0)
@@ -343,7 +341,7 @@ class ComposerReportBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
 
         with workspace_tempdir("project-root-validation") as root:
             (root / "assets" / "bg").mkdir(parents=True)
@@ -362,7 +360,7 @@ class ComposerReportBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
 
         graph = vn.NodeGraph()
         start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)

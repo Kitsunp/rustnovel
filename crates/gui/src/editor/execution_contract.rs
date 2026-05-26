@@ -27,6 +27,9 @@ mod tests {
         assert!(contract_matrix()
             .iter()
             .any(|entry| entry.fidelity == FidelityClass::RuntimeReal));
+        assert!(contract_matrix()
+            .iter()
+            .any(|entry| entry.fidelity == FidelityClass::FallbackDegraded));
     }
 
     #[test]

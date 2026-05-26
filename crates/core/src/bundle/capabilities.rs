@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::event::EventRaw;
 use crate::ScriptRaw;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExportCapabilityReport {
     pub schema: String,
     pub ext_call_commands: Vec<String>,

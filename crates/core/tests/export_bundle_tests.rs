@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use visual_novel_engine::{
     authoring::{AuthoringDocument, AuthoringPosition, NodeGraph, StoryNode},
-    export_bundle, AudioActionRaw, BundleIntegrity, DialogueRaw, EventRaw, ExportBundleSpec,
-    ExportTargetPlatform, ProjectManifest, SceneTransitionRaw, ScriptRaw,
+    build_export_plan, export_bundle, AudioActionRaw, BundleIntegrity, DialogueRaw, EventRaw,
+    ExportBundleSpec, ExportTargetPlatform, ProjectManifest, SceneTransitionRaw, ScriptRaw,
 };
 
 fn create_escape_symlink(link: &Path, target: &Path) -> bool {
@@ -112,6 +112,114 @@ fn export_bundle_builds_expected_layout_and_manifest() {
         serde_json::from_str(&manifest_raw).expect("assets manifest json");
     assert!(manifest.get("assets/bgm/theme.ogg").is_some());
     assert!(manifest.get("assets/bgm/unused.ogg").is_none());
+}
+
+#[test]
+fn export_plan_cli_py_gui_parity() {
+    let (_tmp, project_root) = build_project_fixture();
+    let spec = ExportBundleSpec {
+        project_root: project_root.clone(),
+        output_root: project_root.join("dist"),
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: None,
+        integrity: BundleIntegrity::None,
+        output_layout_version: 1,
+        hmac_key: None,
+    };
+
+    let cli_plan = build_export_plan(&spec).expect("cli plan");
+    let py_plan_json = serde_json::to_string(&cli_plan).expect("plan json");
+    let py_plan: visual_novel_engine::ExportPlan =
+        serde_json::from_str(&py_plan_json).expect("py/gui plan");
+
+    assert_eq!(cli_plan.script_sha256, py_plan.script_sha256);
+    assert_eq!(cli_plan.layout, py_plan.layout);
+    assert_eq!(cli_plan.capabilities, py_plan.capabilities);
+    assert!(cli_plan
+        .warnings
+        .contains(&"missing_runtime_artifact".to_string()));
+}
+
+#[test]
+fn export_plan_extcall_audio_transition_missing_runtime() {
+    let tmp = TempDir::new().expect("temp dir");
+    let root = tmp.path().join("project");
+    fs::create_dir_all(root.join("assets/bgm")).expect("assets dir");
+    ProjectManifest::new("fixture", "qa")
+        .save(&root.join("project.vnm"))
+        .expect("manifest");
+    let script = ScriptRaw::new(
+        vec![
+            EventRaw::AudioAction(AudioActionRaw {
+                channel: "bgm".to_string(),
+                action: "play".to_string(),
+                asset: Some("assets/bgm/theme.ogg".to_string()),
+                volume: Some(0.5),
+                fade_duration_ms: Some(300),
+                loop_playback: Some(true),
+            }),
+            EventRaw::Transition(SceneTransitionRaw {
+                kind: "fade".to_string(),
+                duration_ms: 250,
+                color: None,
+            }),
+            EventRaw::ExtCall {
+                command: "plugin".to_string(),
+                args: vec![],
+            },
+        ],
+        BTreeMap::from([("start".to_string(), 0)]),
+    );
+    fs::write(root.join("main.json"), script.to_json().expect("script")).expect("script");
+    fs::write(root.join("assets/bgm/theme.ogg"), [1u8, 2, 3, 4]).expect("asset");
+
+    let plan = build_export_plan(&ExportBundleSpec {
+        project_root: root.clone(),
+        output_root: root.join("dist"),
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: None,
+        integrity: BundleIntegrity::None,
+        output_layout_version: 1,
+        hmac_key: None,
+    })
+    .expect("plan");
+
+    assert!(plan
+        .warnings
+        .contains(&"missing_runtime_artifact".to_string()));
+    assert!(plan
+        .capabilities
+        .ext_call_commands
+        .contains(&"plugin".to_string()));
+    assert!(!plan.capabilities.audio_actions.is_empty());
+    assert!(!plan.capabilities.transitions.is_empty());
+}
+
+#[test]
+fn export_plan_capability_policy_contract() {
+    let (_tmp, project_root) = build_project_fixture();
+    let plan = build_export_plan(&ExportBundleSpec {
+        project_root: project_root.clone(),
+        output_root: project_root.join("dist"),
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: Some(PathBuf::from("missing-runtime.exe")),
+        integrity: BundleIntegrity::HmacSha256,
+        output_layout_version: 1,
+        hmac_key: None,
+    })
+    .expect("plan with policy errors");
+
+    assert!(plan
+        .errors
+        .iter()
+        .any(|error| error.contains("runtime artifact")));
+    assert!(plan
+        .errors
+        .iter()
+        .any(|error| error.contains("requires hmac_key")));
 }
 
 #[test]

@@ -17,6 +17,7 @@ postcard = { version = "1.0", default-features = false, features = ["alloc"] }
 crc32fast = "1.4"
 sha2 = "0.10"
 hmac = "0.12"
+subtle = "2.6"
 schemars = "0.8"
 toml = "0.8"
 walkdir = "2.5"

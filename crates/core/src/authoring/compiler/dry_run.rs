@@ -3,7 +3,7 @@ use super::{
     signatures::event_kind_compiled, ChoicePolicy, DryRunReport, DryRunStepTrace, DryRunStopReason,
 };
 use crate::authoring::{LintCode, LintIssue, ValidationPhase};
-use crate::{Engine, EventCompiled, VnError};
+use crate::{Engine, EventCompiled, FidelityClass, VnError};
 
 #[derive(Debug, Clone)]
 pub struct DryRunOutcome {
@@ -79,6 +79,11 @@ pub fn run_dry_run(mut engine: Engine, policy: &ChoicePolicy, max_steps: usize) 
             event_ip: ip,
             event_kind: event_kind_compiled(&event).to_string(),
             event_signature: compiled_event_signature(&event),
+            execution_fidelity: if matches!(event, EventCompiled::ExtCall { .. }) {
+                FidelityClass::HeadlessSimulated
+            } else {
+                FidelityClass::RuntimeReal
+            },
             simulation_note: matches!(event, EventCompiled::ExtCall { .. })
                 .then(|| "external_call_simulated".to_string()),
             visual_background: engine

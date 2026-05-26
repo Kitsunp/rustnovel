@@ -28,6 +28,7 @@ mod player_ui;
 mod preview_policy;
 pub mod project_io;
 pub mod quick_fix;
+pub mod resource_service;
 mod scene_stage;
 mod script_sync;
 mod timeline_panel;

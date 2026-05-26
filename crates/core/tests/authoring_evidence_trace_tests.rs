@@ -50,3 +50,40 @@ fn asset_missing_trace_keeps_raw_value_and_resolver_metadata() {
         Some("bg/missing.png")
     );
 }
+
+#[test]
+fn evidence_trace_asset_resolver_chain() {
+    let mut graph = NodeGraph::new();
+    graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/missing.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        },
+        AuthoringPosition::new(0.0, 0.0),
+    );
+
+    let issue = validate_authoring_graph_with_resolver(&graph, |_asset| false)
+        .into_iter()
+        .find(|issue| issue.code == LintCode::AssetReferenceMissing)
+        .expect("missing asset diagnostic");
+    let trace = issue.evidence_trace.expect("evidence trace");
+    let atom_kinds = trace
+        .atoms
+        .iter()
+        .map(|atom| atom.kind.clone())
+        .collect::<Vec<_>>();
+
+    assert!(atom_kinds.contains(&TraceAtomKind::OperationApplied));
+    assert!(atom_kinds.contains(&TraceAtomKind::FieldChanged));
+    assert!(atom_kinds.contains(&TraceAtomKind::ValueRead));
+    assert!(atom_kinds.contains(&TraceAtomKind::ResolverLookup));
+    assert!(atom_kinds.contains(&TraceAtomKind::RuleEvaluated));
+    assert!(atom_kinds.contains(&TraceAtomKind::Failure));
+    assert!(atom_kinds.contains(&TraceAtomKind::FixSuggested));
+    assert!(trace
+        .edges
+        .iter()
+        .any(|edge| edge.from == "value_0" && edge.to == "resolver_lookup"));
+}

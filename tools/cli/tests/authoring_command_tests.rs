@@ -246,6 +246,8 @@ fn compile_and_trace_accept_authoring_document() {
     let trace = Command::new(env!("CARGO_BIN_EXE_vnengine"))
         .arg("trace")
         .arg(path.as_os_str())
+        .arg("--format")
+        .arg("yaml")
         .arg("--output")
         .arg(trace_path.as_os_str())
         .output()
@@ -259,6 +261,146 @@ fn compile_and_trace_accept_authoring_document() {
     assert!(fs::read_to_string(trace_path)
         .expect("trace")
         .contains("trace_format_version"));
+}
+
+#[test]
+fn cli_trace_json_contract() {
+    let (_tmp, path) = write_authoring_document();
+    let json_path = path.with_file_name("trace.json");
+    let yaml_path = path.with_file_name("trace.yaml");
+    let mismatched_path = path.with_file_name("trace.json");
+
+    let json = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("trace")
+        .arg(path.as_os_str())
+        .arg("--format")
+        .arg("json")
+        .arg("--output")
+        .arg(json_path.as_os_str())
+        .output()
+        .expect("run json trace");
+    assert!(
+        json.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&json.stdout),
+        String::from_utf8_lossy(&json.stderr)
+    );
+    let parsed_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&json_path).expect("json trace"))
+            .expect("trace must be JSON");
+    assert_eq!(parsed_json["trace_format_version"], 1);
+
+    let yaml = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("trace")
+        .arg(path.as_os_str())
+        .arg("--format")
+        .arg("yaml")
+        .arg("--output")
+        .arg(yaml_path.as_os_str())
+        .output()
+        .expect("run yaml trace");
+    assert!(
+        yaml.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&yaml.stdout),
+        String::from_utf8_lossy(&yaml.stderr)
+    );
+    let parsed_yaml: serde_json::Value =
+        serde_norway::from_str(&fs::read_to_string(&yaml_path).expect("yaml trace"))
+            .expect("trace must be YAML");
+    assert_eq!(parsed_yaml["trace_format_version"], 1);
+
+    let mismatch = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("trace")
+        .arg(path.as_os_str())
+        .arg("--format")
+        .arg("yaml")
+        .arg("--output")
+        .arg(mismatched_path.as_os_str())
+        .output()
+        .expect("run mismatched trace");
+    assert!(
+        !mismatch.status.success(),
+        "YAML output to .json must not succeed silently"
+    );
+    assert!(String::from_utf8_lossy(&mismatch.stderr).contains("incompatible"));
+}
+
+#[test]
+fn example_entrypoint_authoring_validate() {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let script = repo_root.join("examples/scripts/demo_story.json");
+    let project_root = repo_root.join("examples/scripts");
+    let tmp = TempDir::new().expect("temp dir");
+    let report_path = tmp.path().join("example-authoring-report.json");
+
+    let runtime = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("validate")
+        .arg(script.as_os_str())
+        .output()
+        .expect("run runtime validate");
+    assert!(
+        runtime.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&runtime.stdout),
+        String::from_utf8_lossy(&runtime.stderr)
+    );
+
+    let authoring = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("authoring")
+        .arg("validate")
+        .arg(script.as_os_str())
+        .arg("--project-root")
+        .arg(project_root.as_os_str())
+        .arg("--output")
+        .arg(report_path.as_os_str())
+        .output()
+        .expect("run authoring validate");
+    assert!(
+        authoring.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&authoring.stdout),
+        String::from_utf8_lossy(&authoring.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(report_path).expect("report json"))
+            .expect("authoring report json");
+    assert_eq!(report["error_count"], 0);
+}
+
+#[test]
+fn contract_fixture_cli_authoring_validate_reports_expected_asset_error() {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let project_root = repo_root.join("tests/fixtures/authoring_contract");
+    let fixture = project_root.join("contract_fixture.authoring.json");
+    let tmp = TempDir::new().expect("temp dir");
+    let report_path = tmp.path().join("contract-authoring-report.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("authoring")
+        .arg("validate")
+        .arg(fixture.as_os_str())
+        .arg("--project-root")
+        .arg(project_root.as_os_str())
+        .arg("--output")
+        .arg(report_path.as_os_str())
+        .output()
+        .expect("run authoring validate");
+    assert!(
+        !output.status.success(),
+        "fixture intentionally contains missing assets\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(report_path).expect("report json"))
+            .expect("authoring report json");
+    assert!(report["error_count"].as_u64().unwrap_or_default() >= 1);
+    assert!(report["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .any(|issue| issue["code"] == "VAL_ASSET_NOT_FOUND"));
 }
 
 #[test]

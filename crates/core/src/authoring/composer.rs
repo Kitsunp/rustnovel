@@ -131,6 +131,42 @@ pub struct ComposerSnapshot {
     pub overlays: Vec<ComposerOverlay>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PresentationRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PresentationLayout {
+    pub dialogue_rect: Option<PresentationRect>,
+    pub choices_rect: Option<PresentationRect>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresentationTransition {
+    pub kind: String,
+    pub duration_ms: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PresentationSnapshot {
+    pub schema: String,
+    pub stage_width: u32,
+    pub stage_height: u32,
+    pub safe_area: PresentationRect,
+    pub layout: PresentationLayout,
+    pub visual_background: Option<String>,
+    pub visual_music: Option<String>,
+    pub visual_character_count: usize,
+    pub transition: Option<PresentationTransition>,
+    pub objects: Vec<LayeredSceneObject>,
+    pub overlays: Vec<ComposerOverlay>,
+    pub provenance: Vec<String>,
+}
+
 pub fn list_stage_layers() -> Vec<StageLayerKind> {
     vec![
         StageLayerKind::Background,
@@ -184,6 +220,102 @@ pub fn compose_scene_snapshot(
         stage_height,
         objects,
         overlays,
+    }
+}
+
+pub fn build_presentation_snapshot(
+    graph: &NodeGraph,
+    selected_node_id: Option<u32>,
+    stage_resolution: Option<(u32, u32)>,
+    engine: Option<&Engine>,
+    locale: Option<&str>,
+    catalog: Option<&LocalizationCatalog>,
+) -> PresentationSnapshot {
+    let composer = compose_scene_snapshot(
+        graph,
+        selected_node_id,
+        stage_resolution,
+        engine,
+        locale,
+        catalog,
+    );
+    PresentationSnapshot::from_composer_snapshot(composer, engine)
+}
+
+impl PresentationSnapshot {
+    pub fn from_composer_snapshot(snapshot: ComposerSnapshot, engine: Option<&Engine>) -> Self {
+        let safe_area = calculate_safe_area(snapshot.stage_width, snapshot.stage_height);
+        let layout = calculate_overlay_layout(&snapshot.overlays, &safe_area);
+        let transition = snapshot.overlays.iter().find_map(|overlay| match overlay {
+            ComposerOverlay::Transition { kind, duration_ms } => Some(PresentationTransition {
+                kind: kind.clone(),
+                duration_ms: *duration_ms,
+            }),
+            _ => None,
+        });
+        let provenance = snapshot
+            .objects
+            .iter()
+            .map(|object| object.source_field_path.clone())
+            .collect();
+        let visual = engine.map(|engine| engine.visual_state());
+
+        Self {
+            schema: "vnengine.presentation_snapshot.v1".to_string(),
+            stage_width: snapshot.stage_width,
+            stage_height: snapshot.stage_height,
+            safe_area,
+            layout,
+            visual_background: visual
+                .and_then(|state| state.background.as_ref())
+                .map(|value| value.as_ref().to_string()),
+            visual_music: visual
+                .and_then(|state| state.music.as_ref())
+                .map(|value| value.as_ref().to_string()),
+            visual_character_count: visual.map_or(0, |state| state.characters.len()),
+            transition,
+            objects: snapshot.objects,
+            overlays: snapshot.overlays,
+            provenance,
+        }
+    }
+}
+
+fn calculate_safe_area(stage_width: u32, stage_height: u32) -> PresentationRect {
+    let margin_x = stage_width as f32 * 0.05;
+    let margin_y = stage_height as f32 * 0.05;
+    PresentationRect {
+        x: margin_x,
+        y: margin_y,
+        width: (stage_width as f32 - margin_x * 2.0).max(0.0),
+        height: (stage_height as f32 - margin_y * 2.0).max(0.0),
+    }
+}
+
+fn calculate_overlay_layout(
+    overlays: &[ComposerOverlay],
+    safe_area: &PresentationRect,
+) -> PresentationLayout {
+    let has_dialogue = overlays
+        .iter()
+        .any(|overlay| matches!(overlay, ComposerOverlay::Dialogue { .. }));
+    let has_choices = overlays
+        .iter()
+        .any(|overlay| matches!(overlay, ComposerOverlay::Choice { .. }));
+
+    PresentationLayout {
+        dialogue_rect: has_dialogue.then_some(PresentationRect {
+            x: safe_area.x,
+            y: safe_area.y + safe_area.height * 0.72,
+            width: safe_area.width,
+            height: safe_area.height * 0.24,
+        }),
+        choices_rect: has_choices.then_some(PresentationRect {
+            x: safe_area.x + safe_area.width * 0.12,
+            y: safe_area.y + safe_area.height * 0.18,
+            width: safe_area.width * 0.76,
+            height: safe_area.height * 0.56,
+        }),
     }
 }
 
@@ -279,6 +411,23 @@ impl ComposerPreviewSession {
         catalog: Option<&LocalizationCatalog>,
     ) -> ComposerSnapshot {
         compose_scene_snapshot(
+            graph,
+            None,
+            stage_resolution,
+            Some(&self.engine),
+            locale,
+            catalog,
+        )
+    }
+
+    pub fn presentation_snapshot(
+        &self,
+        graph: &NodeGraph,
+        stage_resolution: Option<(u32, u32)>,
+        locale: Option<&str>,
+        catalog: Option<&LocalizationCatalog>,
+    ) -> PresentationSnapshot {
+        build_presentation_snapshot(
             graph,
             None,
             stage_resolution,
@@ -407,6 +556,12 @@ fn overlays_from_authoring_node(
                 .iter()
                 .map(|option| localize(option, locale, catalog))
                 .collect(),
+        }],
+        StoryNode::Transition {
+            kind, duration_ms, ..
+        } => vec![ComposerOverlay::Transition {
+            kind: kind.clone(),
+            duration_ms: *duration_ms,
         }],
         _ => Vec::new(),
     }

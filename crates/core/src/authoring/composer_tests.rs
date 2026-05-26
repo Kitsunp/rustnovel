@@ -65,6 +65,87 @@ fn composer_snapshot_uses_provenance_for_duplicate_characters() {
 }
 
 #[test]
+fn presentation_snapshot_parity() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let scene = graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/room.png".to_string()),
+            music: None,
+            characters: vec![character("Ava", "char/ava_happy.png")],
+        },
+        pos(0.0, 90.0),
+    );
+    let line = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Ava".to_string(),
+            text: "Hello".to_string(),
+        },
+        pos(0.0, 180.0),
+    );
+    let end = graph.add_node(StoryNode::End, pos(0.0, 270.0));
+    graph.connect(start, scene);
+    graph.connect(scene, line);
+    graph.connect(line, end);
+
+    let composer =
+        composer::compose_scene_snapshot(&graph, Some(scene), Some((800, 450)), None, None, None);
+    let presentation = composer::build_presentation_snapshot(
+        &graph,
+        Some(scene),
+        Some((800, 450)),
+        None,
+        None,
+        None,
+    );
+    assert_eq!(presentation.objects, composer.objects);
+    assert_eq!(presentation.overlays, composer.overlays);
+    assert_eq!(presentation.safe_area.width, 720.0);
+
+    let preview =
+        composer::ComposerPreviewSession::start_from_node(&graph, scene).expect("preview session");
+    let runtime_presentation = preview.presentation_snapshot(&graph, Some((800, 450)), None, None);
+    assert_eq!(
+        runtime_presentation.visual_background.as_deref(),
+        Some("bg/room.png")
+    );
+    assert_eq!(runtime_presentation.stage_width, presentation.stage_width);
+}
+
+#[test]
+fn duplicated_character_pose_parity() {
+    let mut graph = NodeGraph::new();
+    let scene = graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/room.png".to_string()),
+            music: None,
+            characters: vec![
+                character("Ava", "char/ava_happy.png"),
+                character("Ava", "char/ava_angry.png"),
+            ],
+        },
+        pos(0.0, 0.0),
+    );
+
+    let snapshot =
+        composer::build_presentation_snapshot(&graph, Some(scene), None, None, None, None);
+    let character_objects = snapshot
+        .objects
+        .iter()
+        .filter(|object| object.character_name.as_deref() == Some("Ava"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(character_objects.len(), 2);
+    assert_ne!(
+        character_objects[0].object_id,
+        character_objects[1].object_id
+    );
+    assert_ne!(snapshot.provenance[1], snapshot.provenance[2]);
+}
+
+#[test]
 fn layer_lock_override_does_not_hide_object_by_default() {
     let mut graph = NodeGraph::new();
     let scene = graph.add_node(
@@ -97,6 +178,57 @@ fn layer_lock_override_does_not_hide_object_by_default() {
 
     assert!(object.locked);
     assert!(object.visible, "locking must not implicitly hide the layer");
+}
+
+#[test]
+fn long_choices_transition_snapshot_contract() {
+    let mut graph = NodeGraph::new();
+    let choice = graph.add_node(
+        StoryNode::Choice {
+            prompt: "Choose carefully".to_string(),
+            options: vec![
+                "Take the long branch with enough text to require wrapping in narrow layouts"
+                    .to_string(),
+                "Stay".to_string(),
+            ],
+        },
+        pos(0.0, 0.0),
+    );
+    let transition = graph.add_node(
+        StoryNode::Transition {
+            kind: "fade".to_string(),
+            duration_ms: 450,
+            color: None,
+        },
+        pos(0.0, 90.0),
+    );
+
+    let choice_snapshot = composer::build_presentation_snapshot(
+        &graph,
+        Some(choice),
+        Some((320, 180)),
+        None,
+        None,
+        None,
+    );
+    assert!(choice_snapshot.layout.choices_rect.is_some());
+    assert!(choice_snapshot.layout.dialogue_rect.is_none());
+
+    let transition_snapshot = composer::build_presentation_snapshot(
+        &graph,
+        Some(transition),
+        Some((320, 180)),
+        None,
+        None,
+        None,
+    );
+    assert_eq!(
+        transition_snapshot.transition,
+        Some(composer::PresentationTransition {
+            kind: "fade".to_string(),
+            duration_ms: 450,
+        })
+    );
 }
 
 #[test]

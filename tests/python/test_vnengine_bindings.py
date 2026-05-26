@@ -35,7 +35,7 @@ class NativeBindingsTests(unittest.TestCase):
     def setUp(self):
         self._original_module = sys.modules.get("visual_novel_engine")
         if self.native is None:
-            self.skipTest("visual_novel_engine native module not available")
+            self.fail("visual_novel_engine native module not available")
 
     def tearDown(self):
         if self._original_module is None:
@@ -106,7 +106,7 @@ class NativeBindingsTests(unittest.TestCase):
 
     def test_resource_config_and_memory_usage(self):
         if not hasattr(self.native, "ResourceConfig"):
-            self.skipTest("Native engine without ResourceConfig API")
+            self.fail("Native engine without ResourceConfig API")
         engine = self.native.Engine(self._dialogue_script_json())
         config = self.native.ResourceConfig(
             max_texture_memory=123, max_script_bytes=456
@@ -118,7 +118,7 @@ class NativeBindingsTests(unittest.TestCase):
 
     def test_ext_call_handler_and_resume(self):
         if not self._supports_ext_call():
-            self.skipTest("Native engine without ext_call support")
+            self.fail("Native engine without ext_call support")
 
         engine = self.native.Engine(self._ext_call_script_json())
         calls = []
@@ -146,9 +146,9 @@ class NativeBindingsTests(unittest.TestCase):
     def test_audio_controller_and_prefetch_api(self):
         engine = self.native.Engine(self._dialogue_script_json())
         if not hasattr(engine, "set_prefetch_depth"):
-            self.skipTest("Native engine without prefetch API")
+            self.fail("Native engine without prefetch API")
         if not hasattr(engine, "audio"):
-            self.skipTest("Native engine without audio controller API")
+            self.fail("Native engine without audio controller API")
         engine.set_prefetch_depth(3)
         if hasattr(engine, "prefetch_assets_hint"):
             self.assertIsInstance(engine.prefetch_assets_hint(), list)
@@ -170,7 +170,7 @@ class NativeBindingsTests(unittest.TestCase):
     def test_native_event_contract_matches_python_contract(self):
         engine = self.native.Engine(self._dialogue_script_json())
         if not hasattr(engine, "supported_event_types"):
-            self.skipTest("Native engine without event contract API")
+            self.fail("Native engine without event contract API")
 
         self.assertEqual(tuple(engine.supported_event_types()), SUPPORTED_EVENT_TYPES)
         if hasattr(self.native, "ScriptBuilder"):
@@ -181,7 +181,7 @@ class NativeBindingsTests(unittest.TestCase):
 
     def test_engine_choice_history_and_read_tracking(self):
         if not hasattr(self.native.Engine, "is_current_dialogue_read"):
-            self.skipTest("Engine binding without read-tracking API")
+            self.fail("Engine binding without read-tracking API")
         payload = {
             "script_schema_version": SCRIPT_SCHEMA_VERSION,
             "events": [

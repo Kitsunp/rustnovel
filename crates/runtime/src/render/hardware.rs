@@ -2,10 +2,10 @@ use pollster::FutureExt;
 use std::sync::Arc;
 use visual_novel_engine::UiState;
 use wgpu::{
-    Backends, Color, CommandEncoderDescriptor, Device, DeviceDescriptor, Features, Instance,
-    Limits, LoadOp, Operations, PowerPreference, Queue, RenderPassColorAttachment,
-    RenderPassDescriptor, RequestAdapterOptions, StoreOp, Surface, SurfaceConfiguration,
-    TextureUsages, TextureViewDescriptor,
+    Backends, Color, CommandEncoderDescriptor, CurrentSurfaceTexture, Device, DeviceDescriptor,
+    Features, Instance, Limits, LoadOp, Operations, PowerPreference, Queue,
+    RenderPassColorAttachment, RenderPassDescriptor, RequestAdapterOptions, StoreOp, Surface,
+    SurfaceConfiguration, TextureUsages, TextureViewDescriptor,
 };
 use winit::window::Window;
 
@@ -20,10 +20,9 @@ pub struct WgpuBackend<'a> {
 
 impl<'a> WgpuBackend<'a> {
     pub fn new(window: Arc<Window>, width: u32, height: u32) -> Result<Self, String> {
-        let instance = Instance::new(wgpu::InstanceDescriptor {
-            backends: Backends::all(),
-            ..Default::default()
-        });
+        let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        instance_descriptor.backends = Backends::all();
+        let instance = Instance::new(instance_descriptor);
 
         let surface = instance.create_surface(window).map_err(|e| e.to_string())?;
 
@@ -34,17 +33,15 @@ impl<'a> WgpuBackend<'a> {
                 force_fallback_adapter: false,
             })
             .block_on()
-            .ok_or("Failed to find an appropriate adapter")?;
+            .map_err(|err| format!("failed to find an appropriate adapter: {err}"))?;
 
         let (device, queue) = adapter
-            .request_device(
-                &DeviceDescriptor {
-                    label: Some("Wgpu Device"),
-                    required_features: Features::empty(),
-                    required_limits: Limits::default(),
-                },
-                None,
-            )
+            .request_device(&DeviceDescriptor {
+                label: Some("Wgpu Device"),
+                required_features: Features::empty(),
+                required_limits: Limits::default(),
+                ..Default::default()
+            })
             .block_on()
             .map_err(|e| e.to_string())?;
 
@@ -81,10 +78,27 @@ impl<'a> RenderBackend for WgpuBackend<'a> {
     }
 
     fn render(&mut self, ui: &UiState) -> Result<(), String> {
-        let output = self
-            .surface
-            .get_current_texture()
-            .map_err(|e| e.to_string())?;
+        let output = match self.surface.get_current_texture() {
+            CurrentSurfaceTexture::Success(texture)
+            | CurrentSurfaceTexture::Suboptimal(texture) => texture,
+            CurrentSurfaceTexture::Timeout | CurrentSurfaceTexture::Occluded => return Ok(()),
+            CurrentSurfaceTexture::Outdated => {
+                self.surface.configure(&self.device, &self.config);
+                match self.surface.get_current_texture() {
+                    CurrentSurfaceTexture::Success(texture)
+                    | CurrentSurfaceTexture::Suboptimal(texture) => texture,
+                    CurrentSurfaceTexture::Timeout | CurrentSurfaceTexture::Occluded => {
+                        return Ok(());
+                    }
+                    other => {
+                        return Err(format!(
+                            "failed to acquire surface texture after reconfigure: {other:?}"
+                        ));
+                    }
+                }
+            }
+            other => return Err(format!("failed to acquire surface texture: {other:?}")),
+        };
         let view = output
             .texture
             .create_view(&TextureViewDescriptor::default());
@@ -115,6 +129,7 @@ impl<'a> RenderBackend for WgpuBackend<'a> {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: Operations {
                         load: LoadOp::Clear(clear_color),
@@ -124,6 +139,7 @@ impl<'a> RenderBackend for WgpuBackend<'a> {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
         }
 

@@ -2,11 +2,26 @@
 
 use crate::authoring::StoryNode;
 use crate::EventRaw;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FidelityClass {
-    PreviewOnly,
     RuntimeReal,
+    HeadlessSimulated,
+    PreviewOnly,
+    FallbackDegraded,
+}
+
+impl FidelityClass {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::RuntimeReal => "runtime_real",
+            Self::HeadlessSimulated => "headless_simulated",
+            Self::PreviewOnly => "preview_only",
+            Self::FallbackDegraded => "fallback_degraded",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,7 +83,7 @@ const GENERIC_EVENT: EventExecutionContract = EventExecutionContract {
     preview_supported: true,
     runtime_supported: false,
     export_supported: false,
-    fidelity: FidelityClass::PreviewOnly,
+    fidelity: FidelityClass::FallbackDegraded,
 };
 
 const CONTRACT_MATRIX: [EventExecutionContract; 16] = [
@@ -133,6 +148,13 @@ pub fn contract_for_event_raw(event: &EventRaw) -> EventExecutionContract {
     }
 }
 
+pub fn headless_fidelity_for_event_raw(event: &EventRaw) -> FidelityClass {
+    match event {
+        EventRaw::ExtCall { .. } => FidelityClass::HeadlessSimulated,
+        _ => contract_for_event_raw(event).fidelity,
+    }
+}
+
 pub fn is_preview_only_authoring_node(node: &StoryNode) -> bool {
     matches!(
         contract_for_authoring_node(node).fidelity,
@@ -153,6 +175,9 @@ mod tests {
         assert!(contract_matrix()
             .iter()
             .any(|entry| entry.fidelity == FidelityClass::RuntimeReal));
+        assert!(contract_matrix()
+            .iter()
+            .any(|entry| entry.fidelity == FidelityClass::FallbackDegraded));
     }
 
     #[test]

@@ -144,6 +144,147 @@ fn subgraph_call_strict_export_flattens_fragment_with_call_namespace() {
 }
 
 #[test]
+fn fragment_nested_namespace_stress() {
+    let mut graph = NodeGraph::new();
+    let inner_a = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "Inner A".to_string(),
+        },
+        pos(300.0, 0.0),
+    );
+    let inner_b = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "Inner B".to_string(),
+        },
+        pos(300.0, 90.0),
+    );
+    graph.connect(inner_a, inner_b);
+    assert!(graph.create_fragment("inner", "Inner", vec![inner_a, inner_b]));
+    let inner_hash = graph.fragment("inner").expect("inner").interface_hash();
+
+    let outer_call = graph.add_node(
+        StoryNode::SubgraphCall {
+            fragment_id: "inner".to_string(),
+            entry_port: None,
+            exit_port: None,
+        },
+        pos(600.0, 0.0),
+    );
+    assert!(graph.create_fragment("outer", "Outer", vec![outer_call]));
+    let outer_hash = graph.fragment("outer").expect("outer").interface_hash();
+    assert_ne!(inner_hash, outer_hash);
+
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let call_outer = graph.add_node(
+        StoryNode::SubgraphCall {
+            fragment_id: "outer".to_string(),
+            entry_port: None,
+            exit_port: None,
+        },
+        pos(0.0, 90.0),
+    );
+    let end = graph.add_node(StoryNode::End, pos(0.0, 180.0));
+    graph.connect(start, call_outer);
+    graph.connect(call_outer, end);
+
+    let script = graph.to_script_strict().expect("nested strict export");
+    assert!(script
+        .labels
+        .keys()
+        .any(|label| label.contains(&format!("__call_{call_outer}_"))));
+    script.compile().expect("nested fragment script compiles");
+}
+
+#[test]
+fn repeated_fragment_calls_do_not_collide() {
+    let mut graph = NodeGraph::new();
+    let fragment_line = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "Shared fragment".to_string(),
+        },
+        pos(300.0, 0.0),
+    );
+    assert!(graph.create_fragment("shared", "Shared", vec![fragment_line]));
+
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let call_a = graph.add_node(
+        StoryNode::SubgraphCall {
+            fragment_id: "shared".to_string(),
+            entry_port: None,
+            exit_port: None,
+        },
+        pos(0.0, 90.0),
+    );
+    let call_b = graph.add_node(
+        StoryNode::SubgraphCall {
+            fragment_id: "shared".to_string(),
+            entry_port: None,
+            exit_port: None,
+        },
+        pos(0.0, 180.0),
+    );
+    let end = graph.add_node(StoryNode::End, pos(0.0, 270.0));
+    graph.connect(start, call_a);
+    graph.connect(call_a, call_b);
+    graph.connect(call_b, end);
+
+    let script = graph.to_script_strict().expect("strict export");
+    assert!(script
+        .labels
+        .contains_key(&format!("__call_{call_a}_node_{fragment_line}")));
+    assert!(script
+        .labels
+        .contains_key(&format!("__call_{call_b}_node_{fragment_line}")));
+}
+
+#[test]
+fn deleting_internal_node_invalidates_ports_and_blocks_strict_export() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let inside = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "Inside".to_string(),
+        },
+        pos(300.0, 0.0),
+    );
+    let after = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "After".to_string(),
+        },
+        pos(0.0, 180.0),
+    );
+    graph.connect(start, inside);
+    graph.connect(inside, after);
+    assert!(graph.create_fragment("frag", "Frag", vec![inside]));
+    let call = graph.add_node(
+        StoryNode::SubgraphCall {
+            fragment_id: "frag".to_string(),
+            entry_port: None,
+            exit_port: None,
+        },
+        pos(0.0, 90.0),
+    );
+    graph.connect(start, call);
+    graph.connect(call, after);
+
+    graph.connect_port(inside, 1, after);
+
+    let issues = graph.validate_fragments();
+    assert!(issues.iter().any(|issue| {
+        issue.code == LintCode::FragmentPortStale || issue.message.contains("stale")
+    }));
+    let err = graph
+        .to_script_strict()
+        .expect_err("stale fragment ports must block strict export");
+    assert!(err.to_string().contains("stale") || err.to_string().contains("fragment"));
+}
+
+#[test]
 fn fragment_ownership_conflict_is_blocked_at_creation() {
     let mut graph = NodeGraph::new();
     let node = graph.add_node(

@@ -2,7 +2,7 @@
   "events": [
     {
       "type": "scene",
-      "background": "bg/classroom.png",
+      "background": "assets/backgrounds/genshin-furina.png",
       "music": null,
       "characters": []
     },
@@ -18,7 +18,7 @@
     },
     {
       "type": "scene",
-      "background": "bg/classroom.png",
+      "background": "assets/backgrounds/genshin-furina.png",
       "music": null,
       "characters": []
     },

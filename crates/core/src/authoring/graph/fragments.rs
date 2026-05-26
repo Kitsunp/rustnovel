@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FragmentPort {
@@ -16,6 +18,22 @@ pub struct GraphFragment {
     pub inputs: Vec<FragmentPort>,
     #[serde(default)]
     pub outputs: Vec<FragmentPort>,
+}
+
+impl GraphFragment {
+    pub fn interface_hash(&self) -> String {
+        let mut hasher = DefaultHasher::new();
+        self.fragment_id.hash(&mut hasher);
+        for port in &self.inputs {
+            port.port_id.hash(&mut hasher);
+            port.node_id.hash(&mut hasher);
+        }
+        for port in &self.outputs {
+            port.port_id.hash(&mut hasher);
+            port.node_id.hash(&mut hasher);
+        }
+        format!("{:016x}", hasher.finish())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

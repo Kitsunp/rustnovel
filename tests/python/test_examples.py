@@ -35,7 +35,7 @@ class ExampleUsageTests(unittest.TestCase):
     def test_basic_engine_example(self):
         py_engine, err = load_engine()
         if py_engine is None:
-            self.skipTest(f"py_engine not available: {err}")
+            self.fail(f"py_engine not available: {err}")
         script_json = """
         {
           "script_schema_version": "1.0",
@@ -60,9 +60,9 @@ class ExampleUsageTests(unittest.TestCase):
     def test_scene_visuals_example(self):
         py_engine, err = load_engine()
         if py_engine is None:
-            self.skipTest(f"py_engine not available: {err}")
+            self.fail(f"py_engine not available: {err}")
         if not self._supports_event(py_engine, "patch"):
-            self.skipTest("native engine module does not advertise patch support")
+            self.fail("native engine module does not advertise patch support")
         script_json = """
         {
           "script_schema_version": "1.0",

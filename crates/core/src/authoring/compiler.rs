@@ -15,6 +15,7 @@ pub use route_sim::{
 use std::collections::HashSet;
 use std::path::Path;
 
+use crate::FidelityClass;
 use crate::{Engine, ResourceLimiter, ScriptRaw, SecurityPolicy, StoryGraph};
 
 use super::{
@@ -118,6 +119,7 @@ pub struct DryRunStepTrace {
     pub event_ip: u32,
     pub event_kind: String,
     pub event_signature: String,
+    pub execution_fidelity: FidelityClass,
     pub simulation_note: Option<String>,
     pub visual_background: Option<String>,
     pub visual_music: Option<String>,

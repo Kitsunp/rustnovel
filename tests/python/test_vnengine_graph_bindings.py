@@ -37,7 +37,7 @@ class GuiBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "export_bundle"):
-            self.skipTest("Native module without export_bundle API")
+            self.fail("Native module without export_bundle API")
 
         with workspace_tempdir("export-bundle-exe") as root:
             project = root / "project"
@@ -100,7 +100,7 @@ class GuiBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
 
         graph = vn.NodeGraph()
         start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)
@@ -121,12 +121,12 @@ class GuiBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
 
         graph = vn.NodeGraph()
         required = ["validate", "fix_candidates", "autofix_issue", "autofix_safe"]
         if not all(hasattr(graph, attr) for attr in required):
-            self.skipTest("Native GUI build without autofix APIs")
+            self.fail("Native GUI build without autofix APIs")
 
         start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)
         dialogue = graph.add_node(vn.StoryNode.dialogue("", "Hola"), 0.0, 100.0)
@@ -166,7 +166,7 @@ class GuiBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
 
         graph = vn.NodeGraph()
         graph.add_node(vn.StoryNode.dialogue("", "Hola"), 0.0, 0.0)
@@ -195,7 +195,7 @@ class GuiBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
 
         graph = vn.NodeGraph()
         start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)
@@ -220,9 +220,9 @@ class GuiBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
         if not hasattr(vn.NodeGraph, "connect_port"):
-            self.skipTest("Native graph binding does not expose port connections")
+            self.fail("Native graph binding does not expose port connections")
 
         graph = vn.NodeGraph()
         start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)
@@ -258,9 +258,9 @@ class GuiBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
         if not hasattr(vn.NodeGraph, "connect_or_branch"):
-            self.skipTest("Native graph binding does not expose branch connection API")
+            self.fail("Native graph binding does not expose branch connection API")
 
         graph = vn.NodeGraph()
         start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)
@@ -292,9 +292,9 @@ class GuiBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
         if not hasattr(vn.NodeGraph, "connect_or_branch"):
-            self.skipTest("Native graph binding does not expose branch connection API")
+            self.fail("Native graph binding does not expose branch connection API")
 
         graph = vn.NodeGraph()
         start = graph.add_node(vn.StoryNode.start(), 0.0, 0.0)
@@ -321,9 +321,9 @@ class GuiBindingTests(unittest.TestCase):
         import visual_novel_engine as vn
 
         if not hasattr(vn, "NodeGraph") or not hasattr(vn, "StoryNode"):
-            self.skipTest("GUI graph bindings are not available in this native build")
+            self.fail("GUI graph bindings are not available in this native build")
         if not hasattr(vn.NodeGraph, "connections"):
-            self.skipTest("Native graph binding does not expose graph inspection")
+            self.fail("Native graph binding does not expose graph inspection")
 
         graph = vn.NodeGraph()
         source = graph.add_node(vn.StoryNode.dialogue("N", "Go"), 0.0, 0.0)
@@ -333,13 +333,14 @@ class GuiBindingTests(unittest.TestCase):
         self.assertTrue(graph.connect_or_branch(source, 0, first))
         self.assertTrue(graph.connect_or_branch(source, 0, second))
 
-        self.assertEqual(set(graph.node_ids()), {source, first, second, 4})
         source_connection = next(
             connection for connection in graph.connections() if connection[0] == source
         )
         hub = source_connection[2]
+        self.assertNotIn(hub, {source, first, second})
+        self.assertEqual(set(graph.node_ids()), {source, first, second, hub})
         self.assertEqual(graph.get_node(hub).node_type, "Choice")
-        self.assertEqual(graph.node_position(hub), (0.0, 120.0))
+        self.assertEqual(graph.node_position(hub), (0.0, 90.0))
         hub_edges = {
             (port, target)
             for from_id, port, target in graph.connections()

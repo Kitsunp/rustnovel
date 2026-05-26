@@ -1,0 +1,210 @@
+{
+  "authoring_schema_version": "1.1",
+  "graph": {
+    "nodes": [
+      [
+        1,
+        "Start",
+        {
+          "x": 0.0,
+          "y": 0.0
+        }
+      ],
+      [
+        2,
+        {
+          "Scene": {
+            "profile": null,
+            "background": "assets/missing/classroom.png",
+            "music": "assets/audio/theme.ogg",
+            "characters": [
+              {
+                "name": "Ava",
+                "expression": "neutral",
+                "position": "left",
+                "x": 120,
+                "y": 420,
+                "scale": 1.0
+              }
+            ]
+          }
+        },
+        {
+          "x": 0.0,
+          "y": 90.0
+        }
+      ],
+      [
+        3,
+        {
+          "Choice": {
+            "prompt": "Where should the scene go next?",
+            "options": [
+              "Take the long route through the archived contract fixture to stress wrapping and deterministic targets.",
+              "Pause and take the short branch."
+            ]
+          }
+        },
+        {
+          "x": 0.0,
+          "y": 180.0
+        }
+      ],
+      [
+        4,
+        {
+          "Transition": {
+            "kind": "fade",
+            "duration_ms": 300,
+            "color": "#000000"
+          }
+        },
+        {
+          "x": 0.0,
+          "y": 270.0
+        }
+      ],
+      [
+        5,
+        {
+          "Generic": {
+            "type": "ext_call",
+            "command": "plugin.open_door",
+            "args": [
+              "door-a"
+            ]
+          }
+        },
+        {
+          "x": 0.0,
+          "y": 360.0
+        }
+      ],
+      [
+        6,
+        {
+          "SubgraphCall": {
+            "fragment_id": "shared_fragment",
+            "entry_port": null,
+            "exit_port": null
+          }
+        },
+        {
+          "x": 0.0,
+          "y": 450.0
+        }
+      ],
+      [
+        7,
+        "End",
+        {
+          "x": 0.0,
+          "y": 540.0
+        }
+      ],
+      [
+        8,
+        {
+          "Dialogue": {
+            "speaker": "Fragment",
+            "text": "Shared fragment line."
+          }
+        },
+        {
+          "x": 360.0,
+          "y": 0.0
+        }
+      ],
+      [
+        9,
+        {
+          "Dialogue": {
+            "speaker": "Ava",
+            "text": "Short branch."
+          }
+        },
+        {
+          "x": 360.0,
+          "y": 180.0
+        }
+      ]
+    ],
+    "connections": [
+      {
+        "from": 1,
+        "from_port": 0,
+        "to": 2
+      },
+      {
+        "from": 2,
+        "from_port": 0,
+        "to": 3
+      },
+      {
+        "from": 3,
+        "from_port": 0,
+        "to": 4
+      },
+      {
+        "from": 3,
+        "from_port": 1,
+        "to": 9
+      },
+      {
+        "from": 4,
+        "from_port": 0,
+        "to": 5
+      },
+      {
+        "from": 5,
+        "from_port": 0,
+        "to": 6
+      },
+      {
+        "from": 6,
+        "from_port": 0,
+        "to": 7
+      },
+      {
+        "from": 9,
+        "from_port": 0,
+        "to": 7
+      }
+    ],
+    "scene_profiles": {},
+    "bookmarks": {
+      "contract_choice": 3
+    },
+    "fragments": {
+      "shared_fragment": {
+        "fragment_id": "shared_fragment",
+        "title": "Shared Fragment",
+        "node_ids": [
+          8
+        ],
+        "inputs": [],
+        "outputs": []
+      }
+    },
+    "graph_stack": {
+      "active_fragment": null,
+      "breadcrumb": []
+    },
+    "next_id": 10
+  },
+  "composer_layer_overrides": {
+    "node:2:CharacterMain:0:graph_nodes_2_visual_character_Ava_0": {
+      "visible": true,
+      "locked": false
+    },
+    "node:3:InteractionUi:0:graph_nodes_3_visual_choice": {
+      "visible": true,
+      "locked": true
+    }
+  },
+  "composer_background_fit_overrides": {
+    "node:2:background": "contain"
+  },
+  "operation_log": [],
+  "verification_runs": []
+}
