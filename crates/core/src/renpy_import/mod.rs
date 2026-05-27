@@ -323,15 +323,3 @@ fn is_ui_file(path: &str) -> bool {
         || path.starts_with("game/gui/")
         || path.contains("/game/gui/")
 }
-
-#[cfg(test)]
-#[path = "tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "tests_profile_and_security.rs"]
-mod tests_profile_and_security;
-
-#[cfg(test)]
-#[path = "tests_asset_resolution.rs"]
-mod tests_asset_resolution;

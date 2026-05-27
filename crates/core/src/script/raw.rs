@@ -9,7 +9,6 @@ use crate::event::{
     CondCompiled, CondRaw, DialogueCompiled, EventCompiled, EventRaw, ScenePatchCompiled,
     SceneUpdateCompiled, SharedStr,
 };
-use crate::migration::migrate_script_json_value;
 use crate::resource::ResourceLimiter;
 use crate::version::SCRIPT_SCHEMA_VERSION;
 
@@ -17,8 +16,7 @@ use super::compiled::ScriptCompiled;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
 struct ScriptEnvelope {
-    #[serde(default)]
-    script_schema_version: Option<String>,
+    script_schema_version: String,
     events: Vec<EventRaw>,
     labels: BTreeMap<String, usize>,
 }
@@ -45,7 +43,7 @@ impl ScriptRaw {
     /// Serializes the script to a JSON string with the current schema version.
     pub fn to_json(&self) -> VnResult<String> {
         let envelope = ScriptEnvelope {
-            script_schema_version: Some(SCRIPT_SCHEMA_VERSION.to_string()),
+            script_schema_version: SCRIPT_SCHEMA_VERSION.to_string(),
             events: self.events.clone(),
             labels: self.labels.clone(),
         };
@@ -63,11 +61,8 @@ impl ScriptRaw {
                 "script json input budget".to_string(),
             ));
         }
-        let mut payload: serde_json::Value =
+        let payload: serde_json::Value =
             serde_json::from_str(input).map_err(|err| json_deserialize_error(input, &err))?;
-        migrate_script_json_value(&mut payload)
-            .map_err(|err| VnError::InvalidScript(format!("script migration failed: {err}")))?;
-
         let migrated_input =
             serde_json::to_string_pretty(&payload).map_err(|err| VnError::Serialization {
                 message: err.to_string(),
@@ -76,8 +71,8 @@ impl ScriptRaw {
             })?;
         let envelope: ScriptEnvelope = serde_json::from_value(payload)
             .map_err(|err| json_deserialize_error(&migrated_input, &err))?;
-        match envelope.script_schema_version.as_deref() {
-            Some(version) if is_compatible_schema(version) => {
+        match envelope.script_schema_version.as_str() {
+            version if is_compatible_schema(version) => {
                 let script = Self {
                     events: envelope.events,
                     labels: envelope.labels,
@@ -85,18 +80,9 @@ impl ScriptRaw {
                 script.ensure_string_budget(limits.max_script_bytes)?;
                 Ok(script)
             }
-            Some(version) => Err(VnError::InvalidScript(format!(
+            version => Err(VnError::InvalidScript(format!(
                 "schema incompatible: found {version}, expected {SCRIPT_SCHEMA_VERSION}"
             ))),
-            None => {
-                // Allow legacy scripts without version
-                let script = Self {
-                    events: envelope.events,
-                    labels: envelope.labels,
-                };
-                script.ensure_string_budget(limits.max_script_bytes)?;
-                Ok(script)
-            }
         }
     }
 
@@ -315,22 +301,7 @@ impl ScriptRaw {
 }
 
 fn is_compatible_schema(version: &str) -> bool {
-    if version == SCRIPT_SCHEMA_VERSION {
-        return true;
-    }
-
-    let Some((major, _)) = version.split_once('.') else {
-        return false;
-    };
-    let Some((current_major, _)) = SCRIPT_SCHEMA_VERSION.split_once('.') else {
-        return false;
-    };
-
-    match (major.parse::<u32>(), current_major.parse::<u32>()) {
-        // Accept legacy major versions when no structural migration is required.
-        (Ok(found_major), Ok(active_major)) => found_major <= active_major,
-        _ => false,
-    }
+    version == SCRIPT_SCHEMA_VERSION
 }
 
 #[cold]
@@ -473,7 +444,3 @@ fn compile_transition_kind(kind: &str) -> VnResult<u8> {
         ))),
     }
 }
-
-#[cfg(test)]
-#[path = "tests/raw_tests.rs"]
-mod tests;

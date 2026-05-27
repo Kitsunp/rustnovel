@@ -32,7 +32,16 @@ impl NodeGraph {
 
     /// Connects a specific output port to a target node.
     pub fn connect_port(&mut self, from: u32, from_port: usize, to: u32) {
-        self.authoring.connect_port(from, from_port, to);
+        if self
+            .apply_authoring_command(AuthoringCommand::Connect {
+                from,
+                from_port,
+                to,
+            })
+            .is_none()
+        {
+            return;
+        }
         self.queue_operation_hint(
             "node_connected",
             format!("Connected node {from} port {from_port} to node {to}"),
@@ -49,8 +58,13 @@ impl NodeGraph {
             .map(|pos| AuthoringPosition::new(pos.x, pos.y + NODE_VERTICAL_SPACING))
             .unwrap_or_default();
         let changed = self
-            .authoring
-            .connect_or_branch(from, from_port, to, branch_pos);
+            .apply_authoring_command(AuthoringCommand::ConnectOrBranch {
+                from,
+                from_port,
+                to,
+                branch_position: branch_pos,
+            })
+            .is_some();
         if changed {
             self.queue_operation_hint(
                 "node_connected",
@@ -78,16 +92,23 @@ impl NodeGraph {
         to: u32,
         text: impl Into<String>,
     ) -> Option<usize> {
-        self.authoring
-            .connect_new_choice_option(choice_id, to, text)
-            .inspect(|port| {
+        let delta = self.apply_authoring_command(AuthoringCommand::ConnectNewChoiceOption {
+            choice_id,
+            to,
+            text: text.into(),
+        })?;
+        match delta {
+            AuthoringDelta::ChoiceOptionConnected { option_index, .. } => {
                 self.queue_operation_hint(
                     "node_connected",
-                    format!("Connected choice {choice_id} option {port} to node {to}"),
-                    Some(format!("graph.nodes[{choice_id}].options[{port}]")),
+                    format!("Connected choice {choice_id} option {option_index} to node {to}"),
+                    Some(format!("graph.nodes[{choice_id}].options[{option_index}]")),
                     true,
                 );
-            })
+                Some(option_index)
+            }
+            _ => None,
+        }
     }
 
     /// Disconnects two nodes (any port).
@@ -116,7 +137,12 @@ impl NodeGraph {
 
     /// Disconnects all outbound connections from a specific source port.
     pub fn disconnect_port(&mut self, from: u32, from_port: usize) {
-        self.authoring.disconnect_port(from, from_port);
+        if self
+            .apply_authoring_command(AuthoringCommand::Disconnect { from, from_port })
+            .is_none()
+        {
+            return;
+        }
         self.queue_operation_hint(
             "node_disconnected",
             format!("Disconnected node {from} port {from_port}"),
@@ -133,6 +159,21 @@ impl NodeGraph {
 
     /// Removes a specific option from a Choice node and updates connections.
     pub fn remove_choice_option(&mut self, node_id: u32, option_idx: usize) {
-        self.authoring.remove_choice_option(node_id, option_idx);
+        let changed = self
+            .apply_authoring_command(AuthoringCommand::RemoveChoiceOption {
+                node_id,
+                option_index: option_idx,
+            })
+            .is_some();
+        if changed {
+            self.queue_operation_hint(
+                "field_edited",
+                format!("Removed choice option {option_idx} from node {node_id}"),
+                Some(format!(
+                    "graph.nodes[{node_id}].choice.options[{option_idx}]"
+                )),
+                true,
+            );
+        }
     }
 }

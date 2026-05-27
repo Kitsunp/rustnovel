@@ -117,7 +117,3 @@ fn auth_tag(key: &[u8], domain: &str, salt: &[u8; 16], nonce: u64, ciphertext: &
     mac.update(ciphertext);
     mac.finalize().into_bytes().into()
 }
-
-#[cfg(test)]
-#[path = "tests/protected_content_tests.rs"]
-mod tests;

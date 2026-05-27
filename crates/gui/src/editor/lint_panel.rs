@@ -279,7 +279,7 @@ fn render_fix_card(
     ui.separator();
 }
 
-fn diagnostic_docs_url(docs_ref: &str) -> String {
+pub fn diagnostic_docs_url(docs_ref: &str) -> String {
     let (path, anchor) = docs_ref
         .split_once('#')
         .map_or((docs_ref, None), |(path, anchor)| (path, Some(anchor)));
@@ -296,16 +296,4 @@ fn diagnostic_docs_url(docs_ref: &str) -> String {
         url.push_str(anchor);
     }
     url
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn diagnostic_docs_url_resolves_relative_docs_ref_to_local_file_url() {
-        let url = super::diagnostic_docs_url("docs/diagnostics/authoring.md#val-asset-not-found");
-
-        assert!(url.starts_with("file:///"), "{url}");
-        assert!(url.contains("/docs/diagnostics/authoring.md#val-asset-not-found"));
-        assert!(!url.contains('\\'));
-    }
 }

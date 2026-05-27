@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, HashMap};
 use super::route_sim::simulate_raw_sequence;
 use super::{ChoicePolicy, DryRunReport};
 use crate::authoring::{LintCode, LintIssue, ValidationPhase};
-use crate::{EventRaw, ScriptRaw};
+use crate::event::EventRaw;
+use crate::script::ScriptRaw;
 
 pub fn check_preview_runtime_parity(
     script: &ScriptRaw,

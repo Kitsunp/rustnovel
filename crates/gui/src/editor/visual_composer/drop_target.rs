@@ -1,13 +1,13 @@
 use crate::editor::{AssetFieldTarget, StoryNode};
 
-pub(crate) struct DraggedAsset<'a> {
-    pub(crate) kind: &'a str,
-    pub(crate) name: &'a str,
-    pub(crate) path: &'a str,
+pub struct DraggedAsset<'a> {
+    pub kind: &'a str,
+    pub name: &'a str,
+    pub path: &'a str,
 }
 
 impl<'a> DraggedAsset<'a> {
-    pub(crate) fn parse(payload: &'a str) -> Option<Self> {
+    pub fn parse(payload: &'a str) -> Option<Self> {
         let payload = payload.strip_prefix("asset://")?;
         let mut lines = payload.lines();
         let header = lines.next()?;
@@ -21,7 +21,7 @@ impl<'a> DraggedAsset<'a> {
     }
 }
 
-pub(crate) fn assignment_for_dropped_asset(
+pub fn assignment_for_dropped_asset(
     kind: &str,
     asset_path: &str,
     selected_node_id: Option<u32>,
@@ -40,7 +40,7 @@ pub(crate) fn assignment_for_dropped_asset(
     Some((node_id, target, asset_path.to_string()))
 }
 
-pub(crate) fn character_drop_target_node(
+pub fn character_drop_target_node(
     kind: &str,
     selected_node_id: Option<u32>,
     selected_node: Option<&StoryNode>,

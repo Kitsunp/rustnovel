@@ -81,11 +81,7 @@ impl StageFit {
     }
 }
 
-pub(crate) fn fit_stage_rect(
-    bounds: egui::Rect,
-    stage_size: (f32, f32),
-    fit: StageFit,
-) -> egui::Rect {
+pub fn fit_stage_rect(bounds: egui::Rect, stage_size: (f32, f32), fit: StageFit) -> egui::Rect {
     let (stage_w, stage_h) = stage_size;
     let available = bounds.shrink2(egui::vec2(6.0, 6.0));
     if available.width() <= 1.0 || available.height() <= 1.0 {
@@ -103,14 +99,14 @@ pub(crate) fn fit_stage_rect(
     egui::Rect::from_center_size(available.center(), size)
 }
 
-pub(crate) fn stage_scale(stage_rect: egui::Rect, stage_size: (f32, f32)) -> f32 {
+pub fn stage_scale(stage_rect: egui::Rect, stage_size: (f32, f32)) -> f32 {
     let (stage_w, stage_h) = stage_size;
     (stage_rect.width() / stage_w)
         .min(stage_rect.height() / stage_h)
         .max(0.001)
 }
 
-pub(crate) fn stage_viewport_size(
+pub fn stage_viewport_size(
     available: egui::Vec2,
     stage_size: (f32, f32),
     reserved_height: f32,
@@ -140,7 +136,7 @@ fn aspect_height_for_width(width: f32, stage_size: (f32, f32)) -> f32 {
     }
 }
 
-pub(crate) fn scaled_size_for_max_edge(size: [usize; 2], max_edge: usize) -> [usize; 2] {
+pub fn scaled_size_for_max_edge(size: [usize; 2], max_edge: usize) -> [usize; 2] {
     let [width, height] = size;
     let longest = width.max(height);
     if longest <= max_edge || longest == 0 {
@@ -172,50 +168,4 @@ fn resize_rgba_nearest(size: [usize; 2], pixels: &[u8], target: [usize; 2]) -> V
         }
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stage_fit_scales_stage_monotonically() {
-        let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 900.0));
-        let compact = fit_stage_rect(bounds, (1280.0, 720.0), StageFit::Compact);
-        let normal = fit_stage_rect(bounds, (1280.0, 720.0), StageFit::Normal);
-        let fill = fit_stage_rect(bounds, (1280.0, 720.0), StageFit::Fill);
-        assert!(compact.width() < normal.width());
-        assert!(normal.width() < fill.width());
-    }
-
-    #[test]
-    fn stage_fit_preserves_aspect_ratio() {
-        let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 1000.0));
-        let rect = fit_stage_rect(bounds, (1280.0, 720.0), StageFit::Fill);
-        let aspect = rect.width() / rect.height();
-        assert!((aspect - (16.0 / 9.0)).abs() < 0.01);
-    }
-
-    #[test]
-    fn preview_quality_changes_actual_texture_pixels() {
-        assert_eq!(scaled_size_for_max_edge([1920, 1080], 640), [640, 360]);
-        assert_eq!(scaled_size_for_max_edge([1920, 1080], 1280), [1280, 720]);
-        assert_eq!(
-            PreviewQuality::High.scaled_image([1920, 1080], &[0; 16]).0,
-            [1920, 1080]
-        );
-    }
-
-    #[test]
-    fn shared_stage_viewport_caps_tall_panels_by_stage_aspect() {
-        let size = stage_viewport_size(egui::vec2(900.0, 1000.0), (1280.0, 720.0), 28.0, 0.78);
-        assert_eq!(size.x, 900.0);
-        assert!(size.y < 540.0);
-    }
-
-    #[test]
-    fn shared_stage_viewport_handles_tiny_space_without_negative_height() {
-        let size = stage_viewport_size(egui::vec2(320.0, 20.0), (1280.0, 720.0), 28.0, 0.78);
-        assert_eq!(size, egui::vec2(320.0, 0.0));
-    }
 }

@@ -1,6 +1,6 @@
 use pollster::FutureExt;
 use std::sync::Arc;
-use visual_novel_engine::UiState;
+use visual_novel_engine::runtime::UiState;
 use wgpu::{
     Backends, Color, CommandEncoderDescriptor, CurrentSurfaceTexture, Device, DeviceDescriptor,
     Features, Instance, Limits, LoadOp, Operations, PowerPreference, Queue,

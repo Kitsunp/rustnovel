@@ -1,7 +1,7 @@
 use super::*;
 
 impl EditorWorkbench {
-    pub(super) fn render_fragments_panel(&mut self, ui: &mut egui::Ui) {
+    pub fn render_fragments_panel(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("Fragments")
             .default_open(true)
             .show(ui, |ui| {

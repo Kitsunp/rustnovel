@@ -18,12 +18,12 @@ mod fallbacks;
 use fallbacks::*;
 #[path = "scene_stage/geometry.rs"]
 mod geometry;
-pub(crate) use geometry::{
+pub use geometry::{
     clamp_transform_to_stage, display_visual_for_event, entity_rect_with_background_fit,
     is_background_image, scene_from_visual_state, stage_geometry, StageGeometry,
 };
 
-pub(crate) struct SceneStagePainter<'a> {
+pub struct SceneStagePainter<'a> {
     project_root: Option<&'a Path>,
     preview_quality: PreviewQuality,
     image_cache: &'a mut HashMap<String, egui::TextureHandle>,
@@ -34,12 +34,12 @@ pub(crate) struct SceneStagePainter<'a> {
     background_fit: crate::editor::BackgroundFit,
 }
 
-pub(crate) struct SceneStageInteraction {
+pub struct SceneStageInteraction {
     pub selected_node: Option<u32>,
     pub moved_character: Option<MovedCharacter>,
 }
 
-pub(crate) struct MovedCharacter {
+pub struct MovedCharacter {
     pub node_id: u32,
     pub name: String,
     pub expression: Option<String>,
@@ -333,7 +333,7 @@ impl<'a> SceneStagePainter<'a> {
         }
     }
 
-    fn resolve_image_texture(
+    pub fn resolve_image_texture(
         &mut self,
         ctx: &egui::Context,
         asset_path: &str,
@@ -454,7 +454,7 @@ impl<'a> SceneStagePainter<'a> {
     }
 }
 
-pub(crate) fn entity_matches_active_node(
+pub fn entity_matches_active_node(
     source_node_id: Option<u32>,
     active_node_id: Option<u32>,
 ) -> bool {
@@ -487,7 +487,3 @@ fn character_instance_index(
     }
     index
 }
-
-#[cfg(test)]
-#[path = "scene_stage_tests.rs"]
-mod tests;

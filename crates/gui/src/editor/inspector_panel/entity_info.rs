@@ -1,7 +1,7 @@
 use super::*;
 
 impl<'a> InspectorPanel<'a> {
-    pub(super) fn render_entity_info(&self, ui: &mut egui::Ui) {
+    pub fn render_entity_info(&self, ui: &mut egui::Ui) {
         if let Some(entity_id) = self.selected_entity {
             if let Some(entity) = self
                 .scene

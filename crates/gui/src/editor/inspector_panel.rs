@@ -76,7 +76,7 @@ impl<'a> InspectorPanel<'a> {
     }
 }
 
-pub(crate) fn graph_summary_lines(graph: &NodeGraph) -> Vec<String> {
+pub fn graph_summary_lines(graph: &NodeGraph) -> Vec<String> {
     let selected = graph.selected_node_ids();
     let selected_label = match selected.as_slice() {
         [] => "none".to_string(),
@@ -100,32 +100,6 @@ fn join_node_ids(ids: &[u32]) -> String {
         .join(", ")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::editor::StoryNode;
-
-    #[test]
-    fn graph_summary_reports_selection_connections_and_fragments() {
-        let mut graph = NodeGraph::new();
-        let start = graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
-        let end = graph.add_node(StoryNode::End, egui::pos2(0.0, 120.0));
-        graph.connect(start, end);
-        graph.toggle_multi_selection(start);
-        graph.toggle_multi_selection(end);
-        assert!(graph.create_fragment_from_selection("intro", "Intro"));
-        assert!(graph.enter_fragment("intro"));
-
-        let lines = graph_summary_lines(&graph);
-
-        assert!(lines.contains(&"Nodes: 2".to_string()));
-        assert!(lines.contains(&"Connections: 1".to_string()));
-        assert!(lines.contains(&"Selected: 2 nodes (0, 1)".to_string()));
-        assert!(lines.contains(&"Active fragment: intro".to_string()));
-        assert!(lines.contains(&"Fragments: 1".to_string()));
-    }
-}
-
 mod entity_info;
 #[path = "inspector_panel_node_editor.rs"]
-mod node_editor;
+pub mod node_editor;

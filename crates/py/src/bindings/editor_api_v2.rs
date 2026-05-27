@@ -396,7 +396,3 @@ fn stage_layer_label(layer: StageLayerKind) -> String {
         .trim_matches('"')
         .to_string()
 }
-
-#[cfg(test)]
-#[path = "editor_api_v2_tests.rs"]
-mod tests;

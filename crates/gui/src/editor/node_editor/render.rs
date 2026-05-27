@@ -1,7 +1,7 @@
 use super::*;
 
 impl<'a> NodeEditorPanel<'a> {
-    pub(super) fn render_nodes(
+    pub fn render_nodes(
         &mut self,
         ui: &egui::Ui,
         painter: &egui::Painter,

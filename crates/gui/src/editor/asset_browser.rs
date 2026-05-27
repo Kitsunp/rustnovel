@@ -363,7 +363,7 @@ impl<'a> AssetBrowserPanel<'a> {
         }
     }
 
-    fn audio_duration_secs(&mut self, asset_path: &str) -> Option<f32> {
+    pub fn audio_duration_secs(&mut self, asset_path: &str) -> Option<f32> {
         let root = self.project_root?;
         self.resource_service
             .audio_metadata(root, asset_path)
@@ -373,7 +373,7 @@ impl<'a> AssetBrowserPanel<'a> {
     }
 }
 
-fn asset_drag_payload(type_id: &str, value: &str, asset_path: &str) -> String {
+pub fn asset_drag_payload(type_id: &str, value: &str, asset_path: &str) -> String {
     if type_id == "char" {
         format!("asset://char/{value}\n{asset_path}")
     } else {
@@ -389,12 +389,12 @@ fn truncate_label(label: &str, max_chars: usize) -> String {
     value
 }
 
-fn asset_card_size(available_width: f32) -> egui::Vec2 {
+pub fn asset_card_size(available_width: f32) -> egui::Vec2 {
     let width = available_width.clamp(48.0, 96.0);
     egui::vec2(width, (width * 1.2).clamp(82.0, 116.0))
 }
 
-fn asset_card_image_rect(rect: egui::Rect) -> egui::Rect {
+pub fn asset_card_image_rect(rect: egui::Rect) -> egui::Rect {
     let padding = 6.0;
     let size = egui::vec2(
         (rect.width() - padding * 2.0).max(24.0),
@@ -403,11 +403,11 @@ fn asset_card_image_rect(rect: egui::Rect) -> egui::Rect {
     egui::Rect::from_min_size(rect.min + egui::vec2(padding, padding), size)
 }
 
-fn asset_label_capacity(width: f32) -> usize {
+pub fn asset_label_capacity(width: f32) -> usize {
     ((width - 12.0) / 7.0).floor().max(4.0) as usize
 }
 
-fn format_audio_position(offset_secs: f32, duration_secs: f32) -> String {
+pub fn format_audio_position(offset_secs: f32, duration_secs: f32) -> String {
     format!(
         "{} / {}",
         format_duration_secs(offset_secs),
@@ -422,14 +422,10 @@ fn format_duration_secs(seconds: f32) -> String {
     format!("{minutes}:{seconds:02}")
 }
 
-fn secs_to_ms(seconds: f32) -> u64 {
+pub fn secs_to_ms(seconds: f32) -> u64 {
     if seconds.is_finite() {
         (seconds.max(0.0) * 1000.0).round() as u64
     } else {
         0
     }
 }
-
-#[cfg(test)]
-#[path = "asset_browser/tests.rs"]
-mod tests;

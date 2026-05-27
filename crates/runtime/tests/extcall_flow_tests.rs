@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use visual_novel_engine::{
-    DialogueRaw, Engine, EventRaw, ResourceLimiter, ScriptRaw, SecurityPolicy,
+    runtime::{DialogueRaw, Engine, EventRaw, ScriptRaw},
+    ResourceLimiter, SecurityPolicy,
 };
 use vnengine_runtime::{AssetStore, Audio, Input, InputAction, RuntimeApp};
 
@@ -58,7 +59,10 @@ fn runtime_advance_resumes_ext_call_without_stalling() {
 
     let current = app.engine().current_event().expect("current event");
     assert!(
-        matches!(current, visual_novel_engine::EventCompiled::Dialogue(_)),
+        matches!(
+            current,
+            visual_novel_engine::runtime::EventCompiled::Dialogue(_)
+        ),
         "advance should resume ext_call and move to next event"
     );
 }

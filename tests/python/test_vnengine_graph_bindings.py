@@ -162,6 +162,28 @@ class GuiBindingTests(unittest.TestCase):
             "speaker-empty issue should be auto-fixed",
         )
 
+    def test_node_graph_review_autofix_is_explicit_for_missing_start(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "NodeGraph"):
+            self.fail("GUI graph bindings are not available in this native build")
+
+        graph = vn.NodeGraph()
+        issues = graph.validate()
+        idx = next(
+            i for i, issue in enumerate(issues) if issue.code == "VAL_START_MISSING"
+        )
+        candidates = graph.fix_candidates(idx)
+        self.assertEqual(candidates[0].fix_id, "graph_add_start")
+        with self.assertRaises(ValueError):
+            graph.autofix_issue(idx, False)
+
+        applied = graph.autofix_issue(idx, True)
+        self.assertEqual(applied, "graph_add_start")
+        self.assertNotIn(
+            "VAL_START_MISSING", {issue.code for issue in graph.validate()}
+        )
+
     def test_node_graph_diagnostic_envelope_is_localized(self):
         import visual_novel_engine as vn
 

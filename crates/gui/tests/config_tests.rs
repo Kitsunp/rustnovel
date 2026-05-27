@@ -1,7 +1,7 @@
 use std::fs;
 
 use tempfile::tempdir;
-use visual_novel_engine::{EngineState, SaveData};
+use visual_novel_engine::{runtime::EngineState, SaveData};
 use visual_novel_gui::{load_state_from, save_state_to, DisplayInfo, UserPreferences, VnConfig};
 
 #[test]
@@ -67,7 +67,7 @@ fn saves_and_loads_state() {
 }
 
 #[test]
-fn loads_legacy_plain_state_files() {
+fn rejects_legacy_plain_state_files() {
     let dir = tempdir().expect("tempdir");
     let path = dir.path().join("legacy_state.vns");
     let mut state = EngineState::new(4, 1);
@@ -78,7 +78,10 @@ fn loads_legacy_plain_state_files() {
     };
 
     fs::write(&path, data.to_binary().expect("plain save")).expect("write plain state");
-    let loaded = load_state_from(&path).expect("load legacy plain state");
-    assert_eq!(loaded.script_id, [9u8; 32]);
-    assert_eq!(loaded.state.position, 7);
+    let err = load_state_from(&path).expect_err("legacy plain state must be rejected");
+    let message = err.to_string();
+    assert!(
+        message.contains("invalid save file magic bytes"),
+        "unexpected error: {err}"
+    );
 }

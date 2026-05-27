@@ -15,12 +15,3 @@ pub use model::{
     TranscodePreset, TranscodeRecommendation,
 };
 pub use store::{decode_image_bytes, AssetStore};
-
-#[cfg(test)]
-use helpers::sha256_hex;
-#[cfg(test)]
-use std::collections::BTreeMap;
-
-#[cfg(test)]
-#[path = "tests/lib_tests.rs"]
-mod tests;

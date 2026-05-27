@@ -27,11 +27,6 @@ pub use diagnostics::{PyLintIssue, PyLintSeverity, PyQuickFixCandidate};
 pub use node_graph::PyNodeGraph;
 pub use story_node::PyStoryNode;
 
-#[cfg(test)]
-use support::{apply_autofix_pass, select_fix_candidate};
-#[cfg(test)]
-use visual_novel_engine::authoring::{LintIssue, NodeGraph, StoryNode};
-
 #[pyfunction]
 pub fn py_validate_graph(graph: &PyNodeGraph) -> Vec<PyLintIssue> {
     validate_authoring_graph(graph.inner())
@@ -65,7 +60,3 @@ pub fn register_editor_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_validate_graph, m)?)?;
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "tests/editor_tests.rs"]
-mod tests;

@@ -2,12 +2,12 @@ use super::layout::{WorkspacePanelId, WorkspacePanelRect};
 use super::*;
 
 impl EditorWorkbench {
-    pub(crate) fn sync_workspace_layout_from_flags(&mut self) {
+    pub fn sync_workspace_layout_from_flags(&mut self) {
         let flags = self.workspace_panel_flags();
         sync_layout_flags(&mut self.workspace_layout, flags);
     }
 
-    pub(super) fn workspace_layout_from_current_flags(&self) -> super::layout::WorkspaceLayout {
+    pub fn workspace_layout_from_current_flags(&self) -> super::layout::WorkspaceLayout {
         let mut layout = self.workspace_layout.clone();
         sync_layout_flags(&mut layout, self.workspace_panel_flags());
         layout
@@ -25,7 +25,7 @@ impl EditorWorkbench {
         }
     }
 
-    pub(super) fn apply_workspace_layout_flags(&mut self) {
+    pub fn apply_workspace_layout_flags(&mut self) {
         self.workspace_layout.normalize();
         self.show_asset_browser = self
             .workspace_layout

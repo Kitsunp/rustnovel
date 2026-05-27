@@ -7,7 +7,7 @@ enum ValidationPanelMode {
 }
 
 impl EditorWorkbench {
-    fn append_localization_issues(&mut self, script: &visual_novel_engine::ScriptRaw) {
+    fn append_localization_issues(&mut self, script: &visual_novel_engine::runtime::ScriptRaw) {
         if self.localization_catalog.locales.is_empty() {
             return;
         }
@@ -42,7 +42,7 @@ impl EditorWorkbench {
 
     fn apply_compilation_state(
         &mut self,
-        script: &visual_novel_engine::ScriptRaw,
+        script: &visual_novel_engine::runtime::ScriptRaw,
         dry_run_report: &Option<crate::editor::compiler::DryRunReport>,
         issues: &[LintIssue],
         phase_trace: &[crate::editor::compiler::PhaseTrace],

@@ -3,7 +3,7 @@
 //! Displays a scene preview with deterministic glyph rendering for each entity kind.
 
 use eframe::egui;
-use visual_novel_engine::{Engine, EntityKind, SceneState};
+use visual_novel_engine::{runtime::Engine, EntityKind, SceneState};
 
 /// Viewport panel widget.
 pub struct ViewportPanel<'a> {

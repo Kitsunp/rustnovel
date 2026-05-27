@@ -1,7 +1,8 @@
 use std::fs;
 use std::path::Path;
 
-use crate::{ScriptRaw, VnError, VnResult};
+use crate::error::{VnError, VnResult};
+use crate::script::ScriptRaw;
 
 use super::{
     source_looks_like_authoring_document, AuthoringDocument, AuthoringDocumentError, NodeGraph,

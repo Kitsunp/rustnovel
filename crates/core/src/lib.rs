@@ -1,11 +1,14 @@
+mod asset_refs;
 mod assets;
 mod audio;
 pub mod authoring;
 mod bundle;
+mod clock;
 mod engine;
 mod entity;
 mod error;
 mod event;
+mod event_signature;
 mod execution_contract;
 mod graph;
 mod localization;
@@ -16,6 +19,7 @@ mod render;
 mod renpy_import;
 mod repro;
 mod resource;
+pub mod runtime;
 mod script;
 mod security;
 mod state;
@@ -27,39 +31,24 @@ mod version;
 mod visual;
 
 pub use assets::{AssetId, AssetId128, AssetManifest};
-pub use audio::AudioCommand;
 pub use authoring::{
-    asset_exists_from_project_root, default_asset_exists, export_runtime_script_from_authoring,
-    is_unsafe_asset_ref, load_authoring_document_or_script, load_runtime_script_from_entry,
+    asset_exists_from_project_root, export_runtime_script_from_authoring, is_unsafe_asset_ref,
+    load_authoring_document_or_script, load_runtime_script_from_entry,
     parse_authoring_document_or_script, parse_runtime_script_from_entry,
-    quick_fix as authoring_quick_fix, should_probe_asset_exists, validate_authoring_graph,
-    validate_authoring_graph_no_io, validate_authoring_graph_with_probe,
-    validate_authoring_graph_with_project_root, validate_authoring_graph_with_resolver,
-    AuthoringDocument, AuthoringPosition, CharacterPoseBinding,
-    GraphConnection as AuthoringGraphConnection, LintCode as AuthoringLintCode,
-    LintIssue as AuthoringLintIssue, LintSeverity as AuthoringLintSeverity,
-    NodeGraph as AuthoringGraph, QuickFixCandidate, QuickFixRisk, SceneLayer, SceneProfile,
-    StoryNode as AuthoringStoryNode, ValidationPhase, AUTHORING_DOCUMENT_SCHEMA_VERSION,
+    quick_fix as authoring_quick_fix, validate_authoring_graph, validate_authoring_graph_no_io,
+    validate_authoring_graph_with_probe, validate_authoring_graph_with_project_root,
+    validate_authoring_graph_with_resolver, AuthoringDocument, AuthoringPosition,
+    CharacterPoseBinding, GraphConnection as AuthoringGraphConnection,
+    LintCode as AuthoringLintCode, LintIssue as AuthoringLintIssue,
+    LintSeverity as AuthoringLintSeverity, NodeGraph as AuthoringGraph, QuickFixCandidate,
+    QuickFixRisk, SceneLayer, SceneProfile, StoryNode as AuthoringStoryNode, ValidationPhase,
+    AUTHORING_DOCUMENT_SCHEMA_VERSION,
 };
 pub use bundle::{
     build_export_plan, export_bundle, BundleAssetEntry, BundleIntegrity, ExportBundleReport,
     ExportBundleSpec, ExportPlan, ExportTargetPlatform,
 };
-pub use engine::{ChoiceHistoryEntry, Engine, StateChange};
 pub use error::{VnError, VnResult};
-pub use event::{
-    AudioActionCompiled, AudioActionRaw, CharacterPatchCompiled, CharacterPatchRaw,
-    CharacterPlacementCompiled, CharacterPlacementRaw, ChoiceCompiled, ChoiceOptionCompiled,
-    ChoiceOptionRaw, ChoiceRaw, CmpOp, CondCompiled, CondRaw, DialogueCompiled, DialogueRaw,
-    EventCompiled, EventRaw, ScenePatchCompiled, ScenePatchRaw, SceneTransitionCompiled,
-    SceneTransitionRaw, SceneUpdateCompiled, SceneUpdateRaw, SetCharacterPositionCompiled,
-    SetCharacterPositionRaw, SharedStr,
-};
-pub use execution_contract::{
-    contract_for_authoring_node, contract_for_event_raw, contract_matrix,
-    headless_fidelity_for_event_raw, is_preview_only_authoring_node, EventExecutionContract,
-    FidelityClass,
-};
 pub use localization::{
     collect_script_localization_keys, localization_key, LocalizationCatalog, LocalizationIssue,
     LocalizationIssueKind,
@@ -83,17 +72,12 @@ pub use repro::{
     ReproOracle, ReproRunReport, ReproStepTrace, ReproStopReason, REPRO_CASE_SCHEMA,
 };
 pub use resource::{LruCache, ResourceLimiter};
-pub use script::{ScriptCompiled, ScriptRaw};
 pub use security::SecurityPolicy;
-pub use state::EngineState;
 pub use storage::{
     compute_script_id, SaveData, SaveError, SaveSlotEntry, SaveSlotMetadata, SaveSlotStore,
     SaveStoreError, ScriptId, AUTH_SAVE_KEY,
 };
-pub use trace::{StateDigest, UiTrace, UiTraceStep, UiView as TraceUiView, VisualDigest};
-pub use ui::{UiState, UiView};
 pub use version::{COMPILED_FORMAT_VERSION, SAVE_FORMAT_VERSION, SCRIPT_SCHEMA_VERSION};
-pub use visual::VisualState;
 
 // Phase 1: Entity System exports
 pub use entity::{
@@ -112,9 +96,6 @@ pub use graph::{
     analyze_flow_graph, EdgeType, FlowGraphAnalysis, GraphEdge, GraphNode, GraphStats, NodeType,
     StoryGraph,
 };
-
-pub type Event = EventCompiled;
-pub type Script = ScriptRaw;
 
 // Python bindings are now handled in the `vnengine_py` crate.
 // Core remains agnostic to the language binding layer.

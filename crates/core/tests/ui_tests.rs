@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use visual_novel_engine::{
+use visual_novel_engine::runtime::{
     CharacterPlacementCompiled, ChoiceCompiled, ChoiceOptionCompiled, DialogueCompiled,
     EventCompiled, SceneUpdateCompiled, SharedStr, UiState, UiView, VisualState,
 };

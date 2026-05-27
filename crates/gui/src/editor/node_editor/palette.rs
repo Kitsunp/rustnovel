@@ -1,7 +1,7 @@
 use crate::editor::StoryNode;
-use visual_novel_engine::{CondRaw, EventRaw, ScenePatchRaw};
+use visual_novel_engine::runtime::{CondRaw, EventRaw, ScenePatchRaw};
 
-pub(crate) fn extended_node_palette_items() -> Vec<(&'static str, StoryNode)> {
+pub fn extended_node_palette_items() -> Vec<(&'static str, StoryNode)> {
     vec![
         (
             "Scene Patch",

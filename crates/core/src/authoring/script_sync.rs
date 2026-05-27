@@ -1,10 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{EventRaw, ScriptRaw};
+use crate::event::EventRaw;
+use crate::script::ScriptRaw;
 
 use super::{AuthoringPosition, NodeGraph, StoryNode, NODE_VERTICAL_SPACING};
 
 mod export;
+mod export_helpers;
 mod export_validation;
 mod labels;
 

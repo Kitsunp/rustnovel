@@ -282,6 +282,3 @@ impl StoryGraph {
 mod analysis;
 mod build;
 mod export;
-#[cfg(test)]
-#[path = "tests/graph_tests.rs"]
-mod tests;

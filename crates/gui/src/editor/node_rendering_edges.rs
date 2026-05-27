@@ -48,7 +48,7 @@ pub fn draw_bezier_connection(painter: &egui::Painter, from: egui::Pos2, to: egu
     ));
 }
 
-pub(crate) fn bezier_control_points(from: egui::Pos2, to: egui::Pos2) -> (egui::Pos2, egui::Pos2) {
+pub fn bezier_control_points(from: egui::Pos2, to: egui::Pos2) -> (egui::Pos2, egui::Pos2) {
     let delta = to - from;
     if delta.length_sq() <= f32::EPSILON {
         return (from, to);

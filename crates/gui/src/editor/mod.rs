@@ -6,38 +6,38 @@
 //! - Viewport for scene preview
 //! - Inspector for entity properties
 
-mod asset_browser;
-mod asset_candidates;
-mod asset_import;
-mod authoring_adapter;
+pub mod asset_browser;
+pub mod asset_candidates;
+pub mod asset_import;
+pub mod authoring_adapter;
 pub mod compiler;
-mod diagnostics;
-mod diff_dialog;
-mod errors;
+pub mod diagnostics;
+pub mod diff_dialog;
+pub mod errors;
 pub mod execution_contract;
-mod graph_panel;
-mod image_asset_cache;
-mod inspector_panel;
-mod lint_panel;
-mod menu_bar;
-mod node_editor;
-mod node_graph;
-mod node_rendering;
-mod node_types;
-mod player_ui;
-mod preview_policy;
+pub mod graph_panel;
+pub mod image_asset_cache;
+pub mod inspector_panel;
+pub mod lint_panel;
+pub mod menu_bar;
+pub mod node_editor;
+pub mod node_graph;
+pub mod node_rendering;
+pub mod node_types;
+pub mod player_ui;
+pub mod preview_policy;
 pub mod project_io;
 pub mod quick_fix;
 pub mod resource_service;
-mod scene_stage;
-mod script_sync;
-mod timeline_panel;
-mod undo;
-mod validator;
-mod viewport_panel;
+pub mod scene_stage;
+pub mod script_sync;
+pub mod timeline_panel;
+pub mod undo;
+pub mod validator;
+pub mod viewport_panel;
 pub mod visual_composer;
-mod visual_composer_preview;
-mod workbench;
+pub mod visual_composer_preview;
+pub mod workbench;
 
 pub use asset_browser::{AssetBrowserAction, AssetBrowserPanel};
 pub use asset_import::{AssetFieldTarget, AssetImportKind};
@@ -62,7 +62,7 @@ pub use visual_composer_preview::{PreviewQuality, StageFit};
 pub use workbench::EditorWorkbench;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PlayerVisualPreferences {
+pub struct PlayerVisualPreferences {
     pub preview_quality: PreviewQuality,
     pub stage_fit: StageFit,
 }

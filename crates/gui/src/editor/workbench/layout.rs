@@ -2,10 +2,10 @@ use super::LayoutOverrides;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const WORKSPACE_LAYOUT_SCHEMA_VERSION: u32 = 1;
+pub const WORKSPACE_LAYOUT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) enum WorkspacePanelId {
+pub enum WorkspacePanelId {
     AssetBrowser,
     Graph,
     Composer,
@@ -16,7 +16,7 @@ pub(crate) enum WorkspacePanelId {
 }
 
 impl WorkspacePanelId {
-    pub(crate) const ALL: [Self; 7] = [
+    pub const ALL: [Self; 7] = [
         Self::AssetBrowser,
         Self::Graph,
         Self::Composer,
@@ -42,7 +42,7 @@ impl WorkspacePanelId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum WorkspacePanelPlacement {
+pub enum WorkspacePanelPlacement {
     Left,
     Center,
     Right,
@@ -51,7 +51,7 @@ pub(crate) enum WorkspacePanelPlacement {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct WorkspacePanelRect {
+pub struct WorkspacePanelRect {
     pub x: f32,
     pub y: f32,
     pub w: f32,
@@ -59,7 +59,7 @@ pub(crate) struct WorkspacePanelRect {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct WorkspacePanelState {
+pub struct WorkspacePanelState {
     pub id: WorkspacePanelId,
     pub placement: WorkspacePanelPlacement,
     pub visible: bool,
@@ -104,7 +104,7 @@ fn workspace_layout_schema_version() -> u32 {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct WorkspaceLayout {
+pub struct WorkspaceLayout {
     #[serde(default = "workspace_layout_schema_version")]
     pub schema_version: u32,
     #[serde(default)]
@@ -125,7 +125,7 @@ impl Default for WorkspaceLayout {
 }
 
 impl WorkspaceLayout {
-    pub(crate) fn normalize(&mut self) {
+    pub fn normalize(&mut self) {
         self.schema_version = WORKSPACE_LAYOUT_SCHEMA_VERSION;
         for (idx, id) in WorkspacePanelId::ALL.into_iter().enumerate() {
             self.panels
@@ -134,28 +134,28 @@ impl WorkspaceLayout {
         }
     }
 
-    pub(crate) fn panel(&self, id: WorkspacePanelId) -> WorkspacePanelState {
+    pub fn panel(&self, id: WorkspacePanelId) -> WorkspacePanelState {
         self.panels
             .get(&id)
             .cloned()
             .unwrap_or_else(|| WorkspacePanelState::default_for(id, id as i32))
     }
 
-    pub(crate) fn set_visible(&mut self, id: WorkspacePanelId, visible: bool) {
+    pub fn set_visible(&mut self, id: WorkspacePanelId, visible: bool) {
         self.normalize();
         if let Some(panel) = self.panels.get_mut(&id) {
             panel.visible = visible;
         }
     }
 
-    pub(crate) fn set_collapsed(&mut self, id: WorkspacePanelId, collapsed: bool) {
+    pub fn set_collapsed(&mut self, id: WorkspacePanelId, collapsed: bool) {
         self.normalize();
         if let Some(panel) = self.panels.get_mut(&id) {
             panel.collapsed = collapsed;
         }
     }
 
-    pub(crate) fn set_floating_rect(&mut self, id: WorkspacePanelId, rect: WorkspacePanelRect) {
+    pub fn set_floating_rect(&mut self, id: WorkspacePanelId, rect: WorkspacePanelRect) {
         self.normalize();
         if let Some(panel) = self.panels.get_mut(&id) {
             panel.placement = WorkspacePanelPlacement::Floating;
@@ -166,14 +166,14 @@ impl WorkspaceLayout {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct PanelSize {
+pub struct PanelSize {
     pub min: f32,
     pub default: f32,
     pub max: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct EditorPanelLayout {
+pub struct EditorPanelLayout {
     pub asset_browser: PanelSize,
     pub inspector: PanelSize,
     pub graph: PanelSize,
@@ -183,13 +183,13 @@ pub(super) struct EditorPanelLayout {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct ValidationPanelLayout {
+pub struct ValidationPanelLayout {
     pub min: f32,
     pub default: f32,
     pub max: f32,
 }
 
-pub(super) fn editor_panel_layout(
+pub fn editor_panel_layout(
     available_width: f32,
     available_height: f32,
     overrides: &LayoutOverrides,
@@ -270,7 +270,7 @@ pub(super) fn editor_panel_layout(
     layout
 }
 
-pub(super) fn validation_panel_layout(
+pub fn validation_panel_layout(
     available_height: f32,
     collapsed: bool,
     overrides: &LayoutOverrides,
@@ -295,7 +295,7 @@ pub(super) fn validation_panel_layout(
     }
 }
 
-pub(super) fn timeline_panel_layout(base: PanelSize, stacked_with_validation: bool) -> PanelSize {
+pub fn timeline_panel_layout(base: PanelSize, stacked_with_validation: bool) -> PanelSize {
     if !stacked_with_validation {
         return base;
     }
@@ -306,7 +306,7 @@ pub(super) fn timeline_panel_layout(base: PanelSize, stacked_with_validation: bo
     }
 }
 
-pub(super) fn dragged_panel_override(
+pub fn dragged_panel_override(
     current: Option<f32>,
     measured: f32,
     min: f32,
@@ -460,7 +460,3 @@ fn shrink_panel_max(panel: &mut PanelSize, overflow: f32) -> f32 {
     panel.max -= removed;
     overflow - removed
 }
-
-#[cfg(test)]
-#[path = "layout_tests.rs"]
-mod tests;

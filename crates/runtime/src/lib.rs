@@ -13,7 +13,8 @@ use std::sync::Arc;
 // use pixels::{Pixels, SurfaceTexture}; // Removed unused imports
 // Logic moved to software.rs
 use visual_novel_engine::{
-    AudioCommand, Engine, EventCompiled, RenderOutput, TextRenderer, UiState, VisualState,
+    runtime::{AudioCommand, Engine, EventCompiled, UiState, VisualState},
+    RenderOutput, TextRenderer,
 };
 use winit::{
     dpi::LogicalSize,

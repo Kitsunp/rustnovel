@@ -1,72 +1,26 @@
+mod apply;
+mod choice;
+mod fragments;
+mod inverse;
+mod node_edits;
+mod types;
+
 use super::{
-    build_authoring_report_fingerprint, composer, validate_authoring_graph_no_io,
-    AuthoringPosition, DiagnosticTarget, FieldPath, GraphConnection, NodeGraph, OperationKind,
-    OperationLogEntry, OperationStatus, StoryNode, VerificationRun,
+    build_authoring_report_fingerprint, validate_authoring_graph_no_io, DiagnosticTarget,
+    NodeGraph, OperationKind, OperationLogEntry, OperationStatus, VerificationRun,
 };
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum AuthoringCommand {
-    CreateNode {
-        node_id: u32,
-        node: StoryNode,
-        position: AuthoringPosition,
-    },
-    Connect {
-        from: u32,
-        from_port: usize,
-        to: u32,
-    },
-    EditNode {
-        node_id: u32,
-        replacement: StoryNode,
-    },
-    ImportAsset {
-        path: String,
-    },
-    MoveLayer {
-        object_id: String,
-        x: i32,
-        y: i32,
-        scale: Option<f32>,
-    },
-    RevertLast,
-}
+pub use types::{AuthoringCommand, AuthoringCommandOutcome, AuthoringDelta};
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum AuthoringDelta {
-    NodeCreated {
-        node_id: u32,
-        node: StoryNode,
-        position: AuthoringPosition,
-    },
-    Connected {
-        connection: GraphConnection,
-        replaced: Vec<GraphConnection>,
-    },
-    NodeEdited {
-        node_id: u32,
-        before: StoryNode,
-        after: StoryNode,
-    },
-    AssetImported {
-        path: String,
-    },
-    LayerMoved {
-        object_id: String,
-        before: (Option<i32>, Option<i32>, Option<f32>),
-        after: (Option<i32>, Option<i32>, Option<f32>),
-    },
-    Reverted {
-        reverted: Box<AuthoringDelta>,
-    },
-}
-
-#[derive(Clone, Debug)]
-pub struct AuthoringCommandOutcome {
-    pub delta: AuthoringDelta,
-    pub operation: OperationLogEntry,
-    pub verification: VerificationRun,
-}
+pub(super) type CommandApplyResult = Result<
+    (
+        AuthoringDelta,
+        OperationKind,
+        Option<String>,
+        Option<DiagnosticTarget>,
+    ),
+    String,
+>;
 
 #[derive(Clone, Debug)]
 pub struct AuthoringCommandBus {
@@ -84,6 +38,21 @@ impl AuthoringCommandBus {
             graph,
             operation_log: Vec::new(),
             verification_runs: Vec::new(),
+            undo_deltas: Vec::new(),
+            redo_deltas: Vec::new(),
+            recorded_commands: Vec::new(),
+        }
+    }
+
+    pub fn with_history(
+        graph: NodeGraph,
+        operation_log: Vec<OperationLogEntry>,
+        verification_runs: Vec<VerificationRun>,
+    ) -> Self {
+        Self {
+            graph,
+            operation_log,
+            verification_runs,
             undo_deltas: Vec::new(),
             redo_deltas: Vec::new(),
             recorded_commands: Vec::new(),
@@ -114,6 +83,10 @@ impl AuthoringCommandBus {
         &self.recorded_commands
     }
 
+    pub fn into_parts(self) -> (NodeGraph, Vec<OperationLogEntry>, Vec<VerificationRun>) {
+        (self.graph, self.operation_log, self.verification_runs)
+    }
+
     pub fn undo_delta_count(&self) -> usize {
         self.undo_deltas.len()
     }
@@ -140,7 +113,7 @@ impl AuthoringCommandBus {
         let after_issues = validate_authoring_graph_no_io(&self.graph);
         let mut operation = OperationLogEntry::new_typed(
             kind,
-            OperationStatus::Applied.label(),
+            OperationStatus::Applied,
             format!("authoring command applied: {command:?}"),
         )
         .with_before_after_fingerprints(&before_fingerprint, &after_fingerprint);
@@ -149,6 +122,9 @@ impl AuthoringCommandBus {
         }
         if let Some(target) = target {
             operation = operation.with_target(target);
+        }
+        if let AuthoringCommand::ApplyQuickFix { issue, .. } = &command {
+            operation = operation.with_diagnostic(issue);
         }
         let verification = VerificationRun::from_diagnostics(
             operation.operation_id.clone(),
@@ -170,131 +146,6 @@ impl AuthoringCommandBus {
         })
     }
 
-    fn apply_without_logging(
-        &mut self,
-        command: &AuthoringCommand,
-    ) -> Result<
-        (
-            AuthoringDelta,
-            OperationKind,
-            Option<String>,
-            Option<DiagnosticTarget>,
-        ),
-        String,
-    > {
-        match command {
-            AuthoringCommand::CreateNode {
-                node_id,
-                node,
-                position,
-            } => {
-                if !self
-                    .graph
-                    .add_node_with_id(*node_id, node.clone(), *position)
-                {
-                    return Err(format!("node {node_id} already exists"));
-                }
-                Ok((
-                    AuthoringDelta::NodeCreated {
-                        node_id: *node_id,
-                        node: node.clone(),
-                        position: *position,
-                    },
-                    OperationKind::NodeCreated,
-                    Some(format!("graph.nodes[{node_id}]")),
-                    Some(DiagnosticTarget::Node { node_id: *node_id }),
-                ))
-            }
-            AuthoringCommand::Connect {
-                from,
-                from_port,
-                to,
-            } => {
-                let replaced = self
-                    .graph
-                    .connections()
-                    .filter(|conn| conn.from == *from && conn.from_port == *from_port)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                self.graph.connect_port(*from, *from_port, *to);
-                let connection = GraphConnection {
-                    from: *from,
-                    from_port: *from_port,
-                    to: *to,
-                };
-                Ok((
-                    AuthoringDelta::Connected {
-                        connection: connection.clone(),
-                        replaced,
-                    },
-                    OperationKind::NodeConnected,
-                    Some(format!("graph.connections[{from}:{from_port}]")),
-                    Some(DiagnosticTarget::Edge {
-                        from: *from,
-                        from_port: *from_port,
-                        to: Some(*to),
-                    }),
-                ))
-            }
-            AuthoringCommand::EditNode {
-                node_id,
-                replacement,
-            } => {
-                let node = self
-                    .graph
-                    .get_node_mut(*node_id)
-                    .ok_or_else(|| format!("node {node_id} not found"))?;
-                let before = node.clone();
-                *node = replacement.clone();
-                Ok((
-                    AuthoringDelta::NodeEdited {
-                        node_id: *node_id,
-                        before,
-                        after: replacement.clone(),
-                    },
-                    OperationKind::FieldEdited,
-                    Some(format!("graph.nodes[{node_id}]")),
-                    Some(DiagnosticTarget::Node { node_id: *node_id }),
-                ))
-            }
-            AuthoringCommand::ImportAsset { path } => Ok((
-                AuthoringDelta::AssetImported { path: path.clone() },
-                OperationKind::AssetImported,
-                Some("assets".to_string()),
-                Some(DiagnosticTarget::AssetRef {
-                    node_id: None,
-                    field_path: FieldPath::new("assets"),
-                    asset_path: path.clone(),
-                }),
-            )),
-            AuthoringCommand::MoveLayer {
-                object_id,
-                x,
-                y,
-                scale,
-            } => {
-                let before = object_pose(&self.graph, object_id)
-                    .ok_or_else(|| format!("layer object '{object_id}' not found"))?;
-                if !composer::move_scene_object(&mut self.graph, object_id, *x, *y, *scale) {
-                    return Err(format!("layer object '{object_id}' could not be moved"));
-                }
-                let after = object_pose(&self.graph, object_id)
-                    .ok_or_else(|| format!("layer object '{object_id}' missing after move"))?;
-                Ok((
-                    AuthoringDelta::LayerMoved {
-                        object_id: object_id.clone(),
-                        before,
-                        after,
-                    },
-                    OperationKind::ComposerObjectMoved,
-                    Some(format!("composer.objects[{object_id}]")),
-                    Some(DiagnosticTarget::Graph),
-                ))
-            }
-            AuthoringCommand::RevertLast => unreachable!("handled by apply"),
-        }
-    }
-
     fn revert_last(&mut self) -> Result<AuthoringCommandOutcome, String> {
         let delta = self
             .undo_deltas
@@ -313,7 +164,7 @@ impl AuthoringCommandBus {
         let after_issues = validate_authoring_graph_no_io(&self.graph);
         let operation = OperationLogEntry::new_typed(
             OperationKind::Revert,
-            OperationStatus::Applied.label(),
+            OperationStatus::Applied,
             "reverted last command delta",
         )
         .with_before_after_fingerprints(&before_fingerprint, &after_fingerprint);
@@ -337,60 +188,4 @@ impl AuthoringCommandBus {
             verification,
         })
     }
-
-    fn apply_inverse_delta(&mut self, delta: &AuthoringDelta) -> Result<(), String> {
-        match delta {
-            AuthoringDelta::NodeCreated { node_id, .. } => {
-                self.graph.remove_node(*node_id);
-                Ok(())
-            }
-            AuthoringDelta::Connected {
-                connection,
-                replaced,
-            } => {
-                self.graph
-                    .disconnect_port(connection.from, connection.from_port);
-                for old in replaced {
-                    self.graph.connect_port(old.from, old.from_port, old.to);
-                }
-                Ok(())
-            }
-            AuthoringDelta::NodeEdited {
-                node_id, before, ..
-            } => {
-                let node = self
-                    .graph
-                    .get_node_mut(*node_id)
-                    .ok_or_else(|| format!("node {node_id} not found"))?;
-                *node = before.clone();
-                Ok(())
-            }
-            AuthoringDelta::AssetImported { .. } => Ok(()),
-            AuthoringDelta::LayerMoved {
-                object_id, before, ..
-            } => {
-                let (x, y, scale) = *before;
-                composer::move_scene_object(
-                    &mut self.graph,
-                    object_id,
-                    x.unwrap_or_default(),
-                    y.unwrap_or_default(),
-                    scale,
-                )
-                .then_some(())
-                .ok_or_else(|| format!("layer object '{object_id}' could not be reverted"))
-            }
-            AuthoringDelta::Reverted { reverted } => self.apply_inverse_delta(reverted),
-        }
-    }
-}
-
-fn object_pose(
-    graph: &NodeGraph,
-    object_id: &str,
-) -> Option<(Option<i32>, Option<i32>, Option<f32>)> {
-    composer::list_layered_objects(graph, None)
-        .into_iter()
-        .find(|object| object.object_id == object_id)
-        .map(|object| (object.x, object.y, object.scale))
 }

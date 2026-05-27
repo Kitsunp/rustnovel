@@ -1,7 +1,10 @@
 use directories::ProjectDirs;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
-use visual_novel_engine::{Engine, LocalizationCatalog, ScriptRaw};
+use visual_novel_engine::{
+    runtime::{Engine, ScriptRaw},
+    LocalizationCatalog,
+};
 
 use crate::editor::{
     asset_browser::AssetBrowserPanel,
@@ -32,24 +35,24 @@ pub struct LayoutOverrides {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-struct LayoutPreferences {
-    show_graph: bool,
-    show_inspector: bool,
-    show_timeline: bool,
-    show_asset_browser: bool,
-    node_editor_window_open: bool,
+pub struct LayoutPreferences {
+    pub show_graph: bool,
+    pub show_inspector: bool,
+    pub show_timeline: bool,
+    pub show_asset_browser: bool,
+    pub node_editor_window_open: bool,
     #[serde(default)]
-    layout_overrides: LayoutOverrides,
+    pub layout_overrides: LayoutOverrides,
     #[serde(default)]
-    composer_preview_quality: crate::editor::PreviewQuality,
+    pub composer_preview_quality: crate::editor::PreviewQuality,
     #[serde(default)]
-    composer_stage_fit: crate::editor::StageFit,
+    pub composer_stage_fit: crate::editor::StageFit,
     #[serde(default)]
-    composer_preview_mode: crate::editor::ComposerPreviewMode,
+    pub composer_preview_mode: crate::editor::ComposerPreviewMode,
     #[serde(default)]
-    composer_default_background_fit: crate::editor::BackgroundFit,
+    pub composer_default_background_fit: crate::editor::BackgroundFit,
     #[serde(default)]
-    workspace_layout: layout::WorkspaceLayout,
+    pub workspace_layout: layout::WorkspaceLayout,
 }
 
 #[derive(Clone, Debug)]
@@ -82,7 +85,7 @@ pub struct PendingAutoFixBatch {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct PendingEditorOperation {
+pub struct PendingEditorOperation {
     pub kind: String,
     pub details: String,
     pub field_path: Option<String>,
@@ -366,7 +369,7 @@ impl EditorWorkbench {
         self.apply_workspace_layout_flags();
     }
 
-    fn collect_layout_prefs(&self) -> LayoutPreferences {
+    pub fn collect_layout_prefs(&self) -> LayoutPreferences {
         LayoutPreferences {
             show_graph: self.show_graph,
             show_inspector: self.show_inspector,
@@ -430,14 +433,14 @@ impl EditorWorkbench {
 
 mod app_ui;
 mod asset_import_ops;
-mod audio_preview_store;
+pub mod audio_preview_store;
 mod compile_cache;
 mod compile_ops;
 mod composer_mutations;
 mod composer_ops;
 mod fragments_ui;
 mod import_ops;
-mod layout;
+pub mod layout;
 mod operation_ops;
 mod player_audio_ops;
 mod player_audio_path;
@@ -449,9 +452,6 @@ mod project_ops;
 mod quick_fix_ops;
 mod report_ops;
 mod repro_ops;
-#[cfg(test)]
-#[path = "tests/workbench_tests.rs"]
-mod tests;
 mod ui;
 mod ui_actions;
 mod workspace_layout_ops;

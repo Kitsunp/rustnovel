@@ -1,4 +1,4 @@
-pub(super) fn resolve_player_audio_asset_path(
+pub fn resolve_player_audio_asset_path(
     project_root: Option<&std::path::Path>,
     raw_path: &str,
 ) -> Option<String> {

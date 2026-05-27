@@ -4,10 +4,10 @@ use super::types::{vn_error_to_py, PyResourceConfig};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyDictMethods, PyList, PyListMethods};
 use std::collections::BTreeSet;
-use visual_novel_engine::{
-    AudioCommand, Engine as CoreEngine, EventCompiled, EventRaw, ResourceLimiter, ScriptRaw,
-    SecurityPolicy, UiState,
+use visual_novel_engine::runtime::{
+    AudioCommand, Engine as CoreEngine, EventCompiled, EventRaw, ScriptRaw, UiState,
 };
+use visual_novel_engine::{ResourceLimiter, SecurityPolicy};
 
 #[pyclass(name = "Engine")]
 #[derive(Debug)]
@@ -253,107 +253,5 @@ impl PyEngine {
         let py = slf.py();
         let engine: Py<PyEngine> = slf.into();
         Py::new(py, PyAudio::new(py, engine)?)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pyo3::ffi::c_str;
-    use pyo3::types::PyModule;
-
-    fn make_ext_call_engine() -> PyEngine {
-        let script_json = r#"{
-  "script_schema_version": "1.0",
-  "events": [
-    { "type": "ext_call", "command": "minigame_start", "args": ["cards"] },
-    { "type": "dialogue", "speaker": "Narrator", "text": "Next" }
-  ],
-  "labels": { "start": 0 }
-}"#;
-        PyEngine::new(script_json).expect("engine should build")
-    }
-
-    #[test]
-    fn ext_call_callbacks_are_denied_by_default() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
-            let mut engine = make_ext_call_engine();
-            let module = PyModule::from_code(
-                py,
-                c_str!(
-                    r#"
-calls = []
-def handler(command, args):
-    calls.append((command, list(args)))
-"#
-                ),
-                c_str!("handler.py"),
-                c_str!("handler_mod"),
-            )
-            .expect("python module");
-            let handler = module.getattr("handler").expect("handler").unbind();
-
-            engine.register_handler(handler);
-            let _result = engine.step(py).expect("ext-call step should still succeed");
-            assert_eq!(
-                module
-                    .getattr("calls")
-                    .expect("calls list")
-                    .extract::<Vec<(String, Vec<String>)>>()
-                    .expect("extract calls"),
-                Vec::<(String, Vec<String>)>::new()
-            );
-            assert!(
-                engine
-                    .last_ext_call_error()
-                    .as_deref()
-                    .is_some_and(|message| message.contains("denied")),
-                "denied ext-call should be recorded"
-            );
-        });
-    }
-
-    #[test]
-    fn ext_call_callbacks_require_explicit_authorization() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
-            let mut engine = make_ext_call_engine();
-            let module = PyModule::from_code(
-                py,
-                c_str!(
-                    r#"
-calls = []
-def handler(command, args):
-    calls.append((command, list(args)))
-"#
-                ),
-                c_str!("handler.py"),
-                c_str!("handler_mod"),
-            )
-            .expect("python module");
-            let handler = module.getattr("handler").expect("handler").unbind();
-
-            engine.allow_ext_call_command("minigame_start");
-            engine.register_handler(handler);
-            let _ = engine.step(py).expect("authorized ext-call should succeed");
-
-            let calls = module
-                .getattr("calls")
-                .expect("calls list")
-                .extract::<Vec<(String, Vec<String>)>>()
-                .expect("extract calls");
-            assert_eq!(
-                calls,
-                vec![("minigame_start".to_string(), vec!["cards".to_string()])]
-            );
-            assert_eq!(engine.last_ext_call_error(), None);
-
-            engine.resume().expect("resume after ext-call");
-            let _ = engine
-                .step(py)
-                .expect("post-ext-call dialogue should step cleanly");
-            assert_eq!(engine.last_ext_call_error(), None);
-        });
     }
 }

@@ -3,7 +3,7 @@ use eframe::egui;
 use std::collections::HashMap;
 use std::path::Path;
 use visual_novel_engine::{
-    authoring::composer::PresentationSnapshot, Engine, EntityId, SceneState,
+    authoring::composer::PresentationSnapshot, runtime::Engine, EntityId, SceneState,
 };
 
 use crate::editor::resource_service::EditorResourceService;
@@ -11,21 +11,19 @@ use crate::editor::{
     AssetFieldTarget, BackgroundFit, ComposerPreviewMode, PreviewQuality, StageFit,
 };
 
-mod drop_target;
-mod layers;
-mod overlay_editor;
-mod overlays;
-mod preview_badge;
-mod viewport;
-pub(crate) use drop_target::{
-    assignment_for_dropped_asset, character_drop_target_node, DraggedAsset,
-};
-pub(crate) use layers::scene_entity_object_id;
+pub mod drop_target;
+pub mod layers;
+pub mod overlay_editor;
+pub mod overlays;
+pub mod preview_badge;
+pub mod viewport;
+pub use drop_target::{assignment_for_dropped_asset, character_drop_target_node, DraggedAsset};
+pub use layers::scene_entity_object_id;
 pub use layers::{
     layered_scene_objects, layered_scene_objects_with_authoring_overlay, LayerOverride,
     LayeredSceneObject, StageLayerKind,
 };
-pub(crate) use preview_badge::preview_source_label;
+pub use preview_badge::preview_source_label;
 use preview_badge::short_event_label;
 
 pub enum ComposerNodeMutation {
@@ -113,7 +111,7 @@ pub struct VisualComposerPanel<'a> {
     image_failures: &'a mut HashMap<String, String>,
     resource_service: &'a mut EditorResourceService,
     selected_entity_id: &'a mut Option<u32>,
-    layer_overrides: &'a mut HashMap<String, LayerOverride>,
+    layer_overrides: &'a HashMap<String, LayerOverride>,
     active_event_node_id: Option<u32>,
     selected_authoring_node_id: Option<u32>,
     selected_authoring_node: Option<&'a StoryNode>,
@@ -133,7 +131,7 @@ pub struct VisualComposerPanelParams<'a> {
     pub image_failures: &'a mut HashMap<String, String>,
     pub resource_service: &'a mut EditorResourceService,
     pub selected_entity_id: &'a mut Option<u32>,
-    pub layer_overrides: &'a mut HashMap<String, LayerOverride>,
+    pub layer_overrides: &'a HashMap<String, LayerOverride>,
     pub active_event_node_id: Option<u32>,
     pub selected_authoring_node_id: Option<u32>,
     pub selected_authoring_node: Option<&'a StoryNode>,
@@ -308,19 +306,21 @@ impl<'a> VisualComposerPanel<'a> {
                         });
                     } else {
                         let node = match dragged.kind {
-                            "char" => {
-                                Some(StoryNode::ScenePatch(visual_novel_engine::ScenePatchRaw {
-                                    add: vec![visual_novel_engine::CharacterPlacementRaw {
-                                        name: dragged.name.to_string(),
-                                        expression: Some(dragged.path.to_string()),
-                                        position: None,
-                                        x: Some(pos.x.round() as i32),
-                                        y: Some(pos.y.round() as i32),
-                                        scale: Some(1.0),
-                                    }],
+                            "char" => Some(StoryNode::ScenePatch(
+                                visual_novel_engine::runtime::ScenePatchRaw {
+                                    add: vec![
+                                        visual_novel_engine::runtime::CharacterPlacementRaw {
+                                            name: dragged.name.to_string(),
+                                            expression: Some(dragged.path.to_string()),
+                                            position: None,
+                                            x: Some(pos.x.round() as i32),
+                                            y: Some(pos.y.round() as i32),
+                                            scale: Some(1.0),
+                                        },
+                                    ],
                                     ..Default::default()
-                                }))
-                            }
+                                },
+                            )),
                             "bg" => Some(StoryNode::Scene {
                                 profile: None,
                                 background: Some(dragged.path.to_string()),
@@ -438,22 +438,25 @@ impl<'a> VisualComposerPanel<'a> {
                         for object in objects.iter().rev() {
                             let entry = self
                                 .layer_overrides
-                                .entry(object.object_id.clone())
-                                .or_insert(LayerOverride {
+                                .get(&object.object_id)
+                                .copied()
+                                .unwrap_or(LayerOverride {
                                     visible: object.visible,
                                     locked: object.locked,
                                 });
                             ui.horizontal(|ui| {
-                                if ui.checkbox(&mut entry.visible, "").changed() {
+                                let mut visible = entry.visible;
+                                if ui.checkbox(&mut visible, "").changed() {
                                     action = Some(VisualComposerAction::LayerVisibilityChanged {
                                         object_id: object.object_id.clone(),
-                                        visible: entry.visible,
+                                        visible,
                                     });
                                 }
-                                if ui.checkbox(&mut entry.locked, "Lock").changed() {
+                                let mut locked = entry.locked;
+                                if ui.checkbox(&mut locked, "Lock").changed() {
                                     action = Some(VisualComposerAction::LayerLockChanged {
                                         object_id: object.object_id.clone(),
-                                        locked: entry.locked,
+                                        locked,
                                     });
                                 }
                                 if object.source_node_id == self.active_event_node_id {
@@ -480,7 +483,3 @@ impl<'a> VisualComposerPanel<'a> {
         (w.max(1) as f32, h.max(1) as f32)
     }
 }
-
-#[cfg(test)]
-#[path = "visual_composer/tests.rs"]
-mod tests;

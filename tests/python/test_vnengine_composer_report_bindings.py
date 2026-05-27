@@ -4,6 +4,8 @@ import unittest
 from contextlib import contextmanager
 from pathlib import Path
 
+from native_healthcheck import python_native_module_origin_healthcheck
+
 
 @contextmanager
 def workspace_tempdir(name: str):
@@ -18,6 +20,15 @@ def workspace_tempdir(name: str):
 
 
 class ComposerReportBindingTests(unittest.TestCase):
+    def test_python_document_command_no_global_site_package_origin(self):
+        healthcheck = python_native_module_origin_healthcheck()
+
+        self.assertTrue(healthcheck["ok"], healthcheck["message"])
+        self.assertTrue(
+            healthcheck["in_repo"]
+            or (healthcheck["in_virtualenv"] and healthcheck["in_active_prefix"])
+        )
+
     def test_composer_layer_overrides_are_visible_in_python_snapshots(self):
         import visual_novel_engine as vn
 
@@ -57,6 +68,133 @@ class ComposerReportBindingTests(unittest.TestCase):
         )
         self.assertFalse(hidden_character.visible)
         self.assertTrue(hidden_character.locked)
+
+    def test_python_document_command_layer_visible_trace(self):
+        import visual_novel_engine as vn
+
+        graph = vn.NodeGraph()
+        scene = graph.add_node(
+            vn.StoryNode.scene_full(
+                None,
+                "bg/room.png",
+                None,
+                [("Ava", "characters/ava.png", "center", 10, 20, 1.0)],
+            ),
+            0.0,
+            0.0,
+        )
+        character = next(
+            obj
+            for obj in graph.list_layered_objects(scene)
+            if obj.character_name == "Ava"
+        )
+        before_report = json.loads(graph.validation_report().fingerprints_json())
+
+        graph.set_layer_visible(character.object_id, False)
+        graph.set_layer_visible(character.object_id, False)
+
+        after_report = json.loads(graph.validation_report().fingerprints_json())
+        operations = [json.loads(entry.to_json()) for entry in graph.operation_log()]
+        layer_operations = [
+            entry
+            for entry in operations
+            if entry["operation_kind"] == "layer_visibility_changed"
+        ]
+        self.assertEqual(
+            len(layer_operations), 1, "no-op repeat must not create a fake log"
+        )
+        entry = layer_operations[0]
+        self.assertEqual(entry["operation_kind"], "layer_visibility_changed")
+        self.assertEqual(
+            entry["field_paths"][0]["value"],
+            f"composer.layers[{character.object_id}].visible",
+        )
+        self.assertIsNotNone(entry["before_fingerprint_sha256"])
+        self.assertIsNotNone(entry["after_fingerprint_sha256"])
+        self.assertEqual(len(graph.verification_runs()), len(graph.operation_log()))
+        self.assertEqual(
+            before_report["story_semantic_sha256"],
+            after_report["story_semantic_sha256"],
+        )
+        self.assertNotEqual(
+            before_report["full_document_sha256"],
+            after_report["full_document_sha256"],
+        )
+
+    def test_python_document_command_layer_locked_trace(self):
+        import visual_novel_engine as vn
+
+        graph = vn.NodeGraph()
+        scene = graph.add_node(
+            vn.StoryNode.scene_full(
+                None,
+                "bg/room.png",
+                None,
+                [("Ava", "characters/ava.png", "center", 10, 20, 1.0)],
+            ),
+            0.0,
+            0.0,
+        )
+        character = next(
+            obj
+            for obj in graph.list_layered_objects(scene)
+            if obj.character_name == "Ava"
+        )
+
+        graph.set_layer_locked(character.object_id, True)
+        operations = [json.loads(entry.to_json()) for entry in graph.operation_log()]
+        entry = operations[-1]
+
+        self.assertEqual(entry["operation_kind"], "layer_lock_changed")
+        self.assertEqual(
+            entry["field_paths"][0]["value"],
+            f"composer.layers[{character.object_id}].locked",
+        )
+        self.assertEqual(len(graph.verification_runs()), len(graph.operation_log()))
+
+    def test_python_document_command_core_parity(self):
+        import visual_novel_engine as vn
+
+        graph = vn.NodeGraph()
+        scene = graph.add_node(
+            vn.StoryNode.scene_full(
+                None,
+                "bg/room.png",
+                None,
+                [("Ava", "characters/ava.png", "center", 10, 20, 1.0)],
+            ),
+            0.0,
+            0.0,
+        )
+        character = next(
+            obj
+            for obj in graph.list_layered_objects(scene)
+            if obj.character_name == "Ava"
+        )
+
+        graph.set_layer_locked(character.object_id, True)
+        graph.set_layer_visible(character.object_id, False)
+        operations = [json.loads(entry.to_json()) for entry in graph.operation_log()]
+        observed = [
+            (entry["operation_kind"], entry["field_paths"][0]["value"])
+            for entry in operations
+            if entry["operation_kind"]
+            in {"layer_lock_changed", "layer_visibility_changed"}
+        ]
+
+        self.assertEqual(
+            observed,
+            [
+                (
+                    "layer_lock_changed",
+                    f"composer.layers[{character.object_id}].locked",
+                ),
+                (
+                    "layer_visibility_changed",
+                    f"composer.layers[{character.object_id}].visible",
+                ),
+            ],
+        )
 
     def test_composer_layer_overrides_roundtrip_through_authoring_save(self):
         import visual_novel_engine as vn
@@ -167,6 +305,30 @@ class ComposerReportBindingTests(unittest.TestCase):
         changed_report = graph.validation_report()
         self.assertTrue(report.is_stale_against_report(changed_report))
 
+    def test_operation_status_wrappers_roundtrip_typed_status(self):
+        import visual_novel_engine as vn
+
+        if not hasattr(vn, "OperationLogEntry") or not hasattr(vn, "OperationStatus"):
+            self.fail("Native operation log v2 bindings are not available")
+
+        entry = {
+            "schema": "vnengine.operation_log.v2",
+            "operation_id": "op:test-python-status",
+            "created_unix_ms": 1,
+            "operation_kind": "composer_object_moved",
+            "operation_kind_v2": "composer_object_moved",
+            "diagnostic_id": None,
+            "semantic_fingerprint_sha256": None,
+            "status": "applied_with_warnings",
+            "status_v2": "applied_with_warnings",
+            "details": "moved object and revalidated",
+        }
+        parsed = vn.OperationLogEntry.from_json(json.dumps(entry))
+        self.assertIn('"status_v2": "applied_with_warnings"', parsed.to_json())
+
+        status = vn.OperationStatus.from_json('"rejected"')
+        self.assertIn('"rejected"', status.to_json())
+
     def test_node_graph_preserves_operation_log_and_verifications(self):
         import visual_novel_engine as vn
 
@@ -192,6 +354,7 @@ class ComposerReportBindingTests(unittest.TestCase):
                     "diagnostic_id": None,
                     "semantic_fingerprint_sha256": None,
                     "status": "applied",
+                    "status_v2": "applied",
                     "details": "created from external tool",
                 }
             ]

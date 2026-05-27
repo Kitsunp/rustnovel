@@ -3,7 +3,7 @@
 //! This example demonstrates how to generate and analyze a story graph
 //! from a compiled script, including detecting unreachable nodes.
 
-use visual_novel_engine::{ScriptRaw, StoryGraph};
+use visual_novel_engine::{runtime::ScriptRaw, StoryGraph};
 
 fn main() {
     println!("=== Story Graph Analysis Example ===\n");

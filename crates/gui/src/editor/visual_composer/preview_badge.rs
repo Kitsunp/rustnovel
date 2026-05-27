@@ -1,33 +1,33 @@
 use std::collections::HashMap;
 
-use visual_novel_engine::{Engine, SceneState};
+use visual_novel_engine::{runtime::Engine, SceneState};
 
 use crate::editor::{ComposerPreviewMode, StoryNode};
 
-pub(super) fn short_event_label(event: &visual_novel_engine::EventCompiled) -> String {
+pub fn short_event_label(event: &visual_novel_engine::runtime::EventCompiled) -> String {
     match event {
-        visual_novel_engine::EventCompiled::Scene(scene) => {
+        visual_novel_engine::runtime::EventCompiled::Scene(scene) => {
             let background = scene.background.as_deref().unwrap_or("<none>");
             format!("Event: Scene bg={background}")
         }
-        visual_novel_engine::EventCompiled::Patch(patch) => {
+        visual_novel_engine::runtime::EventCompiled::Patch(patch) => {
             let background = patch.background.as_deref().unwrap_or("<none>");
             format!("Event: Patch bg={background}")
         }
-        visual_novel_engine::EventCompiled::Dialogue(dialogue) => {
+        visual_novel_engine::runtime::EventCompiled::Dialogue(dialogue) => {
             format!("Event: Dialogue {}", dialogue.speaker.as_ref())
         }
-        visual_novel_engine::EventCompiled::Choice(choice) => {
+        visual_novel_engine::runtime::EventCompiled::Choice(choice) => {
             format!("Event: Choice {} option(s)", choice.options.len())
         }
-        visual_novel_engine::EventCompiled::AudioAction(action) => {
+        visual_novel_engine::runtime::EventCompiled::AudioAction(action) => {
             format!("Event: Audio {}", audio_channel_label(action.channel))
         }
         _ => format!("Event: {:?}", event),
     }
 }
 
-pub(super) fn audio_channel_label(channel: u8) -> &'static str {
+pub fn audio_channel_label(channel: u8) -> &'static str {
     match channel {
         0 => "bgm",
         1 => "sfx",
@@ -36,7 +36,7 @@ pub(super) fn audio_channel_label(channel: u8) -> &'static str {
     }
 }
 
-pub(crate) fn preview_source_label(
+pub fn preview_source_label(
     scene: &SceneState,
     engine: &Option<Engine>,
     preview_mode: ComposerPreviewMode,

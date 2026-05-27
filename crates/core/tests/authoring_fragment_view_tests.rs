@@ -1,5 +1,5 @@
 use visual_novel_engine::authoring::{AuthoringPosition, NodeGraph, StoryNode};
-use visual_novel_engine::EventRaw;
+use visual_novel_engine::runtime::EventRaw;
 
 fn dialogue(label: &str) -> StoryNode {
     StoryNode::Dialogue {

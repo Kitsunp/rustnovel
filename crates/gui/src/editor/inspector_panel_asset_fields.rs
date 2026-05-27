@@ -3,14 +3,14 @@ use eframe::egui;
 use super::NodeEditActions;
 use crate::editor::{inspector_panel::InspectorAction, AssetFieldTarget, AssetImportKind};
 
-pub(super) struct AssetFieldEdit {
+pub struct AssetFieldEdit {
     pub label: &'static str,
     pub kind: AssetImportKind,
     pub target: AssetFieldTarget,
     pub node_id: u32,
 }
 
-pub(super) fn edit_optional_asset_text(
+pub fn edit_optional_asset_text(
     ui: &mut egui::Ui,
     value: &mut Option<String>,
     edit: AssetFieldEdit,
@@ -23,7 +23,7 @@ pub(super) fn edit_optional_asset_text(
     });
 }
 
-pub(super) fn edit_optional_asset_inline(
+pub fn edit_optional_asset_inline(
     ui: &mut egui::Ui,
     value: &mut Option<String>,
     edit: AssetFieldEdit,
@@ -36,7 +36,7 @@ pub(super) fn edit_optional_asset_inline(
     });
 }
 
-pub(super) fn edit_optional_text_inline(
+pub fn edit_optional_text_inline(
     ui: &mut egui::Ui,
     label: &str,
     value: &mut Option<String>,
@@ -52,11 +52,11 @@ pub(super) fn edit_optional_text_inline(
     });
 }
 
-pub(super) fn render_character_fields(
+pub fn render_character_fields(
     ui: &mut egui::Ui,
     node_id: u32,
     character_index: usize,
-    character: &mut visual_novel_engine::CharacterPlacementRaw,
+    character: &mut visual_novel_engine::runtime::CharacterPlacementRaw,
     standard_changed: &mut bool,
     actions: &mut NodeEditActions,
 ) {
@@ -82,7 +82,7 @@ pub(super) fn render_character_fields(
     );
 }
 
-pub(super) fn render_optional_character_fields(
+pub fn render_optional_character_fields(
     ui: &mut egui::Ui,
     node_id: u32,
     expression_target: Option<AssetFieldTarget>,
@@ -110,7 +110,7 @@ pub(super) fn render_optional_character_fields(
     edit_optional_text_inline(ui, "Pos:", position, standard_changed);
 }
 
-pub(super) fn render_optional_transform_fields(
+pub fn render_optional_transform_fields(
     ui: &mut egui::Ui,
     x: &mut Option<i32>,
     y: &mut Option<i32>,

@@ -5,7 +5,9 @@ use std::time::Duration;
 use eframe::egui;
 use tracing::instrument;
 use visual_novel_engine::{
-    localization_key, AudioCommand, Engine, EventCompiled, LocalizationCatalog,
+    localization_key,
+    runtime::{AudioCommand, Engine, EventCompiled},
+    LocalizationCatalog,
 };
 
 use super::super::node_types::ToastState;
@@ -17,7 +19,7 @@ mod content;
 #[path = "controls.rs"]
 mod controls;
 
-pub(crate) struct PlayerVisualContext<'a> {
+pub struct PlayerVisualContext<'a> {
     pub project_root: Option<&'a Path>,
     pub stage_resolution: Option<(u32, u32)>,
     pub preview_quality: crate::editor::PreviewQuality,
@@ -221,7 +223,7 @@ fn render_event_ui(
     audio_commands
 }
 
-pub(crate) fn is_end_of_script_error(error: &visual_novel_engine::VnError) -> bool {
+pub fn is_end_of_script_error(error: &visual_novel_engine::VnError) -> bool {
     matches!(error, visual_novel_engine::VnError::EndOfScript)
 }
 
@@ -261,10 +263,7 @@ fn render_visual_state_for_event(
     ui.add_space(12.0);
 }
 
-pub(crate) fn player_stage_viewport_size(
-    available: egui::Vec2,
-    stage_size: (f32, f32),
-) -> egui::Vec2 {
+pub fn player_stage_viewport_size(available: egui::Vec2, stage_size: (f32, f32)) -> egui::Vec2 {
     crate::editor::visual_composer_preview::stage_viewport_size(available, stage_size, 0.0, 0.62)
 }
 
@@ -280,7 +279,7 @@ fn localize_inline_value(
     }
 }
 
-pub(crate) fn byte_index_for_char(text: &str, char_count: usize) -> usize {
+pub fn byte_index_for_char(text: &str, char_count: usize) -> usize {
     text.char_indices()
         .nth(char_count)
         .map(|(idx, _)| idx)

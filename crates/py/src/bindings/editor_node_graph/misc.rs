@@ -1,13 +1,14 @@
 use pyo3::exceptions::PyValueError;
 use std::collections::BTreeMap;
-use visual_novel_engine::authoring::quick_fix::{apply_fix, suggest_fixes};
+use visual_novel_engine::authoring::quick_fix::suggest_fixes;
 use visual_novel_engine::authoring::{
-    load_authoring_document_or_script, validate_authoring_graph, AuthoringDocument, OperationKind,
+    load_authoring_document_or_script, validate_authoring_graph, AuthoringCommand,
+    AuthoringDocument,
 };
 
 use super::super::diagnostics::PyQuickFixCandidate;
-use super::super::support::{apply_autofix_pass, select_fix_candidate};
-use super::{PyNodeGraph, PythonOperation};
+use super::super::support::select_fix_candidate;
+use super::PyNodeGraph;
 
 impl PyNodeGraph {
     pub(super) fn py_fix_candidates(
@@ -35,56 +36,21 @@ impl PyNodeGraph {
             .ok_or_else(|| PyValueError::new_err(format!("invalid issue index {issue_index}")))?;
         let candidate = select_fix_candidate(issue, &self.inner, include_review)
             .ok_or_else(|| PyValueError::new_err("no fix candidate available for issue"))?;
-        let before = self.trace_before_mutation();
-        let changed =
-            apply_fix(&mut self.inner, issue, candidate.fix_id).map_err(PyValueError::new_err)?;
-        if changed {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::QuickFixApplied,
-                    format!(
-                        "Applied quick-fix {} for diagnostic {} from Python",
-                        candidate.fix_id,
-                        issue.diagnostic_id()
-                    ),
-                )
-                .with_diagnostic(issue),
-                before,
-            );
-            Ok(Some(candidate.fix_id.to_string()))
-        } else {
-            Ok(None)
-        }
+        let fix_id = candidate.fix_id.to_string();
+        self.apply_authoring_command(AuthoringCommand::ApplyQuickFix {
+            issue: Box::new(issue.clone()),
+            fix_id: fix_id.clone(),
+        })
+        .map_err(PyValueError::new_err)?;
+        Ok(Some(fix_id))
     }
 
     pub(super) fn py_autofix_safe(&mut self) -> pyo3::PyResult<usize> {
-        let before = self.trace_before_mutation();
-        let applied = apply_autofix_pass(&mut self.inner, false).map_err(PyValueError::new_err)?;
-        if applied > 0 {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::QuickFixApplied,
-                    format!("Applied {applied} safe quick-fix(es) from Python"),
-                ),
-                before,
-            );
-        }
-        Ok(applied)
+        self.apply_autofix_pass_with_command_bus(false)
     }
 
     pub(super) fn py_autofix_full(&mut self) -> pyo3::PyResult<usize> {
-        let before = self.trace_before_mutation();
-        let applied = apply_autofix_pass(&mut self.inner, true).map_err(PyValueError::new_err)?;
-        if applied > 0 {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::QuickFixApplied,
-                    format!("Applied {applied} full quick-fix(es) from Python"),
-                ),
-                before,
-            );
-        }
-        Ok(applied)
+        self.apply_autofix_pass_with_command_bus(true)
     }
 
     pub(super) fn py_set_bookmark(&mut self, name: String, node_id: u32) -> bool {
@@ -141,5 +107,36 @@ impl PyNodeGraph {
             self.inner.len(),
             self.inner.connection_count()
         )
+    }
+
+    fn apply_autofix_pass_with_command_bus(
+        &mut self,
+        include_review: bool,
+    ) -> pyo3::PyResult<usize> {
+        let mut applied = 0usize;
+        let mut guard = 0usize;
+        while guard < 128 {
+            guard += 1;
+            let issues = validate_authoring_graph(&self.inner);
+            let mut applied_this_round = false;
+            for issue in issues {
+                let Some(candidate) = select_fix_candidate(&issue, &self.inner, include_review)
+                else {
+                    continue;
+                };
+                self.apply_authoring_command(AuthoringCommand::ApplyQuickFix {
+                    issue: Box::new(issue),
+                    fix_id: candidate.fix_id.to_string(),
+                })
+                .map_err(PyValueError::new_err)?;
+                applied += 1;
+                applied_this_round = true;
+                break;
+            }
+            if !applied_this_round {
+                break;
+            }
+        }
+        Ok(applied)
     }
 }

@@ -1,4 +1,3 @@
-#[cfg(test)]
 use std::path::Path;
 
 use crate::editor::authoring_adapter::to_authoring_graph;
@@ -8,10 +7,7 @@ pub use visual_novel_engine::authoring::{LintCode, LintIssue, LintSeverity, Vali
 
 pub fn validate(graph: &NodeGraph) -> Vec<LintIssue> {
     let authoring = to_authoring_graph(graph);
-    visual_novel_engine::authoring::validate_authoring_graph_with_resolver(
-        &authoring,
-        visual_novel_engine::authoring::default_asset_exists,
-    )
+    visual_novel_engine::authoring::validate_authoring_graph_no_io(&authoring)
 }
 
 #[allow(dead_code)]
@@ -23,7 +19,6 @@ where
     visual_novel_engine::authoring::validate_authoring_graph_with_resolver(&authoring, asset_exists)
 }
 
-#[cfg(test)]
 pub fn validate_with_project_root(graph: &NodeGraph, project_root: &Path) -> Vec<LintIssue> {
     let authoring = to_authoring_graph(graph);
     visual_novel_engine::authoring::validate_authoring_graph_with_project_root(
@@ -31,7 +26,3 @@ pub fn validate_with_project_root(graph: &NodeGraph, project_root: &Path) -> Vec
         project_root,
     )
 }
-
-#[cfg(test)]
-#[path = "tests/validator_tests.rs"]
-mod tests;

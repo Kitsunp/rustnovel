@@ -1,11 +1,11 @@
 use super::*;
 
 impl<'a> NodeEditorPanel<'a> {
-    pub(super) fn get_node_height(&self, node: &StoryNode) -> f32 {
+    pub fn get_node_height(&self, node: &StoryNode) -> f32 {
         crate::editor::node_types::node_visual_height(node)
     }
 
-    pub(super) fn get_node_preview(&self, node: &StoryNode) -> String {
+    pub fn get_node_preview(&self, node: &StoryNode) -> String {
         match node {
             StoryNode::Dialogue { speaker, .. } => speaker.chars().take(15).collect(),
             StoryNode::Choice { prompt, .. } => prompt.chars().take(15).collect(),
@@ -47,7 +47,7 @@ impl<'a> NodeEditorPanel<'a> {
             StoryNode::Start => "Entry Point".to_string(),
             StoryNode::End => "Exit Point".to_string(),
             StoryNode::Generic(event) => match event {
-                visual_novel_engine::EventRaw::ExtCall { command, .. } => {
+                visual_novel_engine::runtime::EventRaw::ExtCall { command, .. } => {
                     format!("Ext: {}", command.chars().take(12).collect::<String>())
                 }
                 _ => {
@@ -83,7 +83,7 @@ impl<'a> NodeEditorPanel<'a> {
         }
     }
 
-    pub(super) fn render_connecting_line(
+    pub fn render_connecting_line(
         &self,
         painter: &egui::Painter,
         rect: egui::Rect,
@@ -105,7 +105,7 @@ impl<'a> NodeEditorPanel<'a> {
         }
     }
 
-    pub(super) fn render_status_bar(&self, painter: &egui::Painter, rect: egui::Rect) {
+    pub fn render_status_bar(&self, painter: &egui::Painter, rect: egui::Rect) {
         let hint = if self.graph.connecting_from.is_some() {
             "Drag to node to connect - Esc cancels"
         } else if self.graph.marquee_start.is_some() {
@@ -122,7 +122,7 @@ impl<'a> NodeEditorPanel<'a> {
         );
     }
 
-    pub(super) fn finish_marquee_selection(&mut self, ui: &egui::Ui) {
+    pub fn finish_marquee_selection(&mut self, ui: &egui::Ui) {
         let Some(start) = self.graph.marquee_start.take() else {
             self.graph.marquee_current = None;
             return;

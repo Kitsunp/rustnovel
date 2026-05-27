@@ -1,10 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::{
+use crate::error::{VnError, VnResult};
+use crate::event::{
     AudioActionRaw, ChoiceOptionRaw, ChoiceRaw, DialogueRaw, EventRaw, SceneTransitionRaw,
-    SceneUpdateRaw, ScriptRaw, SetCharacterPositionRaw, VnError, VnResult,
+    SceneUpdateRaw, SetCharacterPositionRaw,
 };
+use crate::script::ScriptRaw;
 
+use super::export_helpers::targets_end_label;
 use super::export_validation::validate_strict_graph_export;
 use super::labels::append_fragment_labels;
 use crate::authoring::{GraphFragment, NodeGraph, StoryNode};
@@ -493,13 +496,5 @@ fn node_target_label(
         StoryNode::Start => "start".to_string(),
         StoryNode::End => "__end".to_string(),
         _ => format!("node_{target_id}"),
-    }
-}
-
-fn targets_end_label(event: &EventRaw) -> bool {
-    match event {
-        EventRaw::Jump { target } | EventRaw::JumpIf { target, .. } => target == "__end",
-        EventRaw::Choice(choice) => choice.options.iter().any(|option| option.target == "__end"),
-        _ => false,
     }
 }

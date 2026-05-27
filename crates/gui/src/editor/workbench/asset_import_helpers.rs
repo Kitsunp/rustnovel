@@ -2,10 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::editor::{AssetFieldTarget, AssetImportKind};
 
-pub(super) fn pick_asset_file(
-    kind: AssetImportKind,
-    project_root: Option<&Path>,
-) -> Option<PathBuf> {
+pub fn pick_asset_file(kind: AssetImportKind, project_root: Option<&Path>) -> Option<PathBuf> {
     let mut dialog = rfd::FileDialog::new()
         .set_title(kind.dialog_title())
         .add_filter(kind.label(), kind.file_dialog_extensions());
@@ -15,7 +12,7 @@ pub(super) fn pick_asset_file(
     dialog.pick_file()
 }
 
-pub(super) fn copy_external_asset(
+pub fn copy_external_asset(
     source: &Path,
     project_root: &Path,
     kind: AssetImportKind,
@@ -55,7 +52,7 @@ fn unique_destination_path(
     }
 }
 
-pub(super) fn unique_manifest_name(
+pub fn unique_manifest_name(
     manifest: &visual_novel_engine::manifest::ProjectManifest,
     kind: AssetImportKind,
     source: &Path,
@@ -102,13 +99,13 @@ fn sanitized_stem(path: &Path) -> String {
     }
 }
 
-pub(super) fn normalized_extension(path: &Path) -> Option<String> {
+pub fn normalized_extension(path: &Path) -> Option<String> {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_ascii_lowercase())
 }
 
-pub(super) fn manifest_asset_field_path(kind: AssetImportKind, asset_name: &str) -> String {
+pub fn manifest_asset_field_path(kind: AssetImportKind, asset_name: &str) -> String {
     let table = match kind {
         AssetImportKind::Background => "backgrounds",
         AssetImportKind::Character => "characters",
@@ -117,7 +114,7 @@ pub(super) fn manifest_asset_field_path(kind: AssetImportKind, asset_name: &str)
     format!("manifest.assets.{table}[{asset_name}]")
 }
 
-pub(super) fn asset_node_field_path(node_id: u32, target: AssetFieldTarget) -> String {
+pub fn asset_node_field_path(node_id: u32, target: AssetFieldTarget) -> String {
     match target {
         AssetFieldTarget::SceneBackground => format!("graph.nodes[{node_id}].background"),
         AssetFieldTarget::SceneMusic => format!("graph.nodes[{node_id}].music"),
@@ -135,11 +132,11 @@ pub(super) fn asset_node_field_path(node_id: u32, target: AssetFieldTarget) -> S
     }
 }
 
-pub(super) fn stringify_optional_asset(value: &Option<String>) -> String {
+pub fn stringify_optional_asset(value: &Option<String>) -> String {
     value.clone().unwrap_or_else(|| "<none>".to_string())
 }
 
-pub(super) fn normalized_character_name(name: &str, asset_path: &str) -> String {
+pub fn normalized_character_name(name: &str, asset_path: &str) -> String {
     let trimmed = name.trim();
     if !trimmed.is_empty() {
         return trimmed.to_string();
@@ -164,8 +161,8 @@ fn sanitized_identifier(raw: &str) -> String {
     out.trim_matches('_').to_string()
 }
 
-pub(super) fn upsert_character_asset(
-    characters: &mut Vec<visual_novel_engine::CharacterPlacementRaw>,
+pub fn upsert_character_asset(
+    characters: &mut Vec<visual_novel_engine::runtime::CharacterPlacementRaw>,
     name: &str,
     imported: &str,
     x: i32,
@@ -183,7 +180,7 @@ pub(super) fn upsert_character_asset(
     }
 
     let idx = characters.len();
-    characters.push(visual_novel_engine::CharacterPlacementRaw {
+    characters.push(visual_novel_engine::runtime::CharacterPlacementRaw {
         name: name.to_string(),
         expression: Some(imported.to_string()),
         position: None,
@@ -195,7 +192,7 @@ pub(super) fn upsert_character_asset(
     (idx, "<none>".to_string(), after)
 }
 
-fn character_snapshot(character: &visual_novel_engine::CharacterPlacementRaw) -> String {
+fn character_snapshot(character: &visual_novel_engine::runtime::CharacterPlacementRaw) -> String {
     format!(
         "{}|{}|x={}|y={}|scale={}",
         character.name,

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 impl EditorWorkbench {
-    pub(super) fn ensure_player_audio_backend(&mut self) {
+    pub fn ensure_player_audio_backend(&mut self) {
         let project_root = self.project_root.clone();
         if self.player_audio_backend.is_some() && self.player_audio_root == project_root {
             return;
@@ -45,9 +45,9 @@ impl EditorWorkbench {
         }
     }
 
-    pub(super) fn apply_player_audio_commands(
+    pub fn apply_player_audio_commands(
         &mut self,
-        commands: Vec<visual_novel_engine::AudioCommand>,
+        commands: Vec<visual_novel_engine::runtime::AudioCommand>,
     ) {
         if commands.is_empty() {
             return;
@@ -58,7 +58,7 @@ impl EditorWorkbench {
         }
         for command in commands {
             match command {
-                visual_novel_engine::AudioCommand::PlayBgm {
+                visual_novel_engine::runtime::AudioCommand::PlayBgm {
                     path,
                     r#loop,
                     volume,
@@ -78,14 +78,14 @@ impl EditorWorkbench {
                         );
                     }
                 }
-                visual_novel_engine::AudioCommand::StopBgm { fade_out } => {
+                visual_novel_engine::runtime::AudioCommand::StopBgm { fade_out } => {
                     self.player_state.last_audio_event =
                         Some(format!("stop_bgm fade_out_ms={}", fade_out.as_millis()));
                     if let Some(audio_backend) = self.player_audio_backend.as_mut() {
                         audio_backend.stop_music_with_fade(Some(fade_out));
                     }
                 }
-                visual_novel_engine::AudioCommand::PlaySfx { path, volume, .. } => {
+                visual_novel_engine::runtime::AudioCommand::PlaySfx { path, volume, .. } => {
                     let playback_path = self.resolve_preview_audio_path("SFX", path.as_ref());
                     let output_volume = self.mix_volume(volume, AudioPreviewChannel::Sfx);
                     self.player_state.last_audio_event = Some(format!(
@@ -96,13 +96,13 @@ impl EditorWorkbench {
                         audio_backend.play_sfx_with_volume(playback_path.as_str(), output_volume);
                     }
                 }
-                visual_novel_engine::AudioCommand::StopSfx => {
+                visual_novel_engine::runtime::AudioCommand::StopSfx => {
                     self.player_state.last_audio_event = Some("stop_sfx".to_string());
                     if let Some(audio_backend) = self.player_audio_backend.as_mut() {
                         audio_backend.stop_sfx();
                     }
                 }
-                visual_novel_engine::AudioCommand::PlayVoice { path, volume, .. } => {
+                visual_novel_engine::runtime::AudioCommand::PlayVoice { path, volume, .. } => {
                     let playback_path = self.resolve_preview_audio_path("Voice", path.as_ref());
                     let output_volume = self.mix_volume(volume, AudioPreviewChannel::Voice);
                     self.player_state.last_audio_event = Some(format!(
@@ -113,7 +113,7 @@ impl EditorWorkbench {
                         audio_backend.play_voice_with_volume(playback_path.as_str(), output_volume);
                     }
                 }
-                visual_novel_engine::AudioCommand::StopVoice => {
+                visual_novel_engine::runtime::AudioCommand::StopVoice => {
                     self.player_state.last_audio_event = Some("stop_voice".to_string());
                     if let Some(audio_backend) = self.player_audio_backend.as_mut() {
                         audio_backend.stop_voice();
@@ -123,7 +123,7 @@ impl EditorWorkbench {
         }
     }
 
-    pub(crate) fn play_editor_audio_preview(
+    pub fn play_editor_audio_preview(
         &mut self,
         channel: &str,
         path: &str,
@@ -139,7 +139,7 @@ impl EditorWorkbench {
         );
     }
 
-    pub(crate) fn play_editor_audio_preview_from_offset(
+    pub fn play_editor_audio_preview_from_offset(
         &mut self,
         channel: &str,
         path: &str,
@@ -153,19 +153,19 @@ impl EditorWorkbench {
         }
 
         let command = match normalize_audio_channel(channel).as_str() {
-            "bgm" => visual_novel_engine::AudioCommand::PlayBgm {
+            "bgm" => visual_novel_engine::runtime::AudioCommand::PlayBgm {
                 resource: visual_novel_engine::AssetId::from_path(path),
                 path: path.into(),
                 r#loop: loop_playback,
                 volume,
                 fade_in: Duration::from_millis(0),
             },
-            "sfx" => visual_novel_engine::AudioCommand::PlaySfx {
+            "sfx" => visual_novel_engine::runtime::AudioCommand::PlaySfx {
                 resource: visual_novel_engine::AssetId::from_path(path),
                 path: path.into(),
                 volume,
             },
-            "voice" => visual_novel_engine::AudioCommand::PlayVoice {
+            "voice" => visual_novel_engine::runtime::AudioCommand::PlayVoice {
                 resource: visual_novel_engine::AssetId::from_path(path),
                 path: path.into(),
                 volume,
@@ -217,14 +217,14 @@ impl EditorWorkbench {
         }
     }
 
-    pub(crate) fn stop_editor_audio_preview(&mut self, channel: &str) {
+    pub fn stop_editor_audio_preview(&mut self, channel: &str) {
         let command = match normalize_audio_channel(channel).as_str() {
-            "bgm" => visual_novel_engine::AudioCommand::StopBgm {
+            "bgm" => visual_novel_engine::runtime::AudioCommand::StopBgm {
                 fade_out: Duration::from_millis(0),
             },
-            "sfx" => visual_novel_engine::AudioCommand::StopSfx,
-            "voice" => visual_novel_engine::AudioCommand::StopVoice,
-            _ => visual_novel_engine::AudioCommand::StopBgm {
+            "sfx" => visual_novel_engine::runtime::AudioCommand::StopSfx,
+            "voice" => visual_novel_engine::runtime::AudioCommand::StopVoice,
+            _ => visual_novel_engine::runtime::AudioCommand::StopBgm {
                 fade_out: Duration::from_millis(0),
             },
         };

@@ -1,4 +1,6 @@
-use visual_novel_engine::{LruCache, ResourceLimiter, ScriptRaw, VnError, SCRIPT_SCHEMA_VERSION};
+use visual_novel_engine::{
+    runtime::ScriptRaw, LruCache, ResourceLimiter, VnError, SCRIPT_SCHEMA_VERSION,
+};
 
 #[test]
 fn test_lru_eviction() {

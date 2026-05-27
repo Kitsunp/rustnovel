@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use visual_novel_engine::authoring::composer::LayerOverride;
 use visual_novel_engine::authoring::{
     parse_authoring_document_or_script, validate_authoring_graph, validate_authoring_graph_no_io,
-    validate_authoring_graph_with_project_root, AuthoringDocument, AuthoringPosition,
-    AuthoringValidationReport, NodeGraph, OperationKind, OperationLogEntry, VerificationRun,
-    NODE_VERTICAL_SPACING,
+    validate_authoring_graph_with_project_root, AuthoringCommand, AuthoringDelta,
+    AuthoringDocument, AuthoringPosition, AuthoringValidationReport, NodeGraph, OperationLogEntry,
+    VerificationRun, NODE_VERTICAL_SPACING,
 };
 
 use super::api_v2::{
@@ -15,7 +15,6 @@ use super::api_v2::{
 };
 use super::diagnostics::{PyLintIssue, PyQuickFixCandidate};
 use super::story_node::PyStoryNode;
-use operation_trace::{PythonOperation, PythonOperationTrace};
 
 /// A graph of story nodes with connections.
 #[pyclass(name = "NodeGraph")]
@@ -34,8 +33,6 @@ mod fragments;
 mod internal;
 #[path = "editor_node_graph/misc.rs"]
 mod misc;
-#[path = "editor_node_graph/operation_trace.rs"]
-mod operation_trace;
 
 #[pymethods]
 impl PyNodeGraph {
@@ -50,56 +47,31 @@ impl PyNodeGraph {
     }
 
     fn add_node(&mut self, node: PyStoryNode, x: f32, y: f32) -> u32 {
-        let before = self.trace_before_mutation();
+        let node_id = self.inner.next_node_id();
         let node = node.into_inner();
-        let after_value = serde_json::to_string(&node).ok();
-        let id = self.inner.add_node(node, AuthoringPosition::new(x, y));
-        self.record_python_operation(
-            PythonOperation::new(
-                OperationKind::NodeCreated,
-                format!("Created node {id} from Python"),
-            )
-            .with_field_path(format!("graph.nodes[{id}]"))
-            .with_values(None, after_value),
-            before,
-        );
-        id
+        self.apply_authoring_command(AuthoringCommand::CreateNode {
+            node_id,
+            node,
+            position: AuthoringPosition::new(x, y),
+        })
+        .expect("next Python node id should be accepted by AuthoringCommandBus");
+        node_id
     }
 
     fn connect(&mut self, from_id: u32, to_id: u32) {
-        let before_connections = self.connections();
-        let before = self.trace_before_mutation();
-        self.inner.connect(from_id, to_id);
-        if self.connections() != before_connections {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::NodeConnected,
-                    format!("Connected node {from_id} to node {to_id} from Python"),
-                )
-                .with_field_path(format!("graph.edges[{from_id}:0]"))
-                .with_values(None, Some(format!("{from_id}:0->{to_id}"))),
-                before,
-            );
-        }
+        let _ = self.apply_authoring_command(AuthoringCommand::Connect {
+            from: from_id,
+            from_port: 0,
+            to: to_id,
+        });
     }
 
     fn connect_port(&mut self, from_id: u32, from_port: usize, to_id: u32) {
-        let before_connections = self.connections();
-        let before = self.trace_before_mutation();
-        self.inner.connect_port(from_id, from_port, to_id);
-        if self.connections() != before_connections {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::NodeConnected,
-                    format!(
-                        "Connected node {from_id} port {from_port} to node {to_id} from Python"
-                    ),
-                )
-                .with_field_path(format!("graph.edges[{from_id}:{from_port}]"))
-                .with_values(None, Some(format!("{from_id}:{from_port}->{to_id}"))),
-                before,
-            );
-        }
+        let _ = self.apply_authoring_command(AuthoringCommand::Connect {
+            from: from_id,
+            from_port,
+            to: to_id,
+        });
     }
 
     #[pyo3(signature = (choice_id, to_id, text="New route"))]
@@ -109,25 +81,21 @@ impl PyNodeGraph {
         to_id: u32,
         text: &str,
     ) -> PyResult<usize> {
-        let before = self.trace_before_mutation();
-        self.inner
-            .connect_new_choice_option(choice_id, to_id, text)
-            .inspect(|port| {
-                self.record_python_operation(
-                    PythonOperation::new(
-                        OperationKind::NodeConnected,
-                        format!(
-                            "Connected choice {choice_id} option {port} to node {to_id} from Python"
-                        ),
-                    )
-                    .with_field_path(format!("graph.nodes[{choice_id}].options[{port}]"))
-                    .with_values(None, Some(text.to_string())),
-                    before,
-                );
+        let outcome = self
+            .apply_authoring_command(AuthoringCommand::ConnectNewChoiceOption {
+                choice_id,
+                to: to_id,
+                text: text.to_string(),
             })
-            .ok_or_else(|| {
+            .map_err(|_| {
                 PyValueError::new_err("source node is not a choice or target is invalid")
-            })
+            })?;
+        match outcome.delta {
+            AuthoringDelta::ChoiceOptionConnected { option_index, .. } => Ok(option_index),
+            _ => Err(PyValueError::new_err(
+                "command bus returned an unexpected choice connection delta",
+            )),
+        }
     }
 
     #[pyo3(signature = (from_id, from_port, to_id, branch_x=None, branch_y=None))]
@@ -147,45 +115,17 @@ impl PyNodeGraph {
                 .map(|pos| AuthoringPosition::new(pos.x, pos.y + NODE_VERTICAL_SPACING))
                 .unwrap_or_default(),
         };
-        let before = self.trace_before_mutation();
-        let changed = self
-            .inner
-            .connect_or_branch(from_id, from_port, to_id, branch_pos);
-        if changed {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::NodeConnected,
-                    format!(
-                        "Connected or branched node {from_id} port {from_port} to node {to_id} from Python"
-                    ),
-                )
-                .with_field_path(format!("graph.edges[{from_id}:{from_port}]"))
-                .with_values(None, Some(format!("{from_id}:{from_port}->{to_id}"))),
-                before,
-            );
-        }
-        changed
+        self.apply_authoring_command(AuthoringCommand::ConnectOrBranch {
+            from: from_id,
+            from_port,
+            to: to_id,
+            branch_position: branch_pos,
+        })
+        .is_ok()
     }
 
     fn remove_node(&mut self, node_id: u32) {
-        let before_value = self
-            .inner
-            .get_node(node_id)
-            .and_then(|node| serde_json::to_string(node).ok());
-        let before = self.trace_before_mutation();
-        let existed = before_value.is_some();
-        self.inner.remove_node(node_id);
-        if existed {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::NodeRemoved,
-                    format!("Removed node {node_id} from Python"),
-                )
-                .with_field_path(format!("graph.nodes[{node_id}]"))
-                .with_values(before_value, None),
-                before,
-            );
-        }
+        let _ = self.apply_authoring_command(AuthoringCommand::RemoveNode { node_id });
     }
 
     fn node_count(&self) -> usize {

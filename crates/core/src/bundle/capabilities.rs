@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::event::EventRaw;
-use crate::ScriptRaw;
+use crate::script::ScriptRaw;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExportCapabilityReport {

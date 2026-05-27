@@ -1,4 +1,4 @@
-use crate::CharacterPlacementRaw;
+use crate::event::CharacterPlacementRaw;
 
 use super::{CharacterPoseBinding, NodeGraph, SceneLayer, SceneProfile, StoryNode};
 

@@ -1,4 +1,4 @@
-use visual_novel_engine::UiState;
+use visual_novel_engine::runtime::UiState;
 
 /// Abstraction for the rendering backend (Software vs Hardware).
 pub trait RenderBackend {

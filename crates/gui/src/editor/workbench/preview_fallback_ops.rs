@@ -4,7 +4,7 @@ use super::*;
 use crate::editor::StoryNode;
 
 impl EditorWorkbench {
-    pub(super) fn refresh_scene_from_selected_node(&mut self) {
+    pub fn refresh_scene_from_selected_node(&mut self) {
         self.scene.clear();
         self.composer_entity_owners.clear();
         let Some(node_id) = self.selected_node.or(self.node_graph.selected) else {
@@ -66,7 +66,7 @@ impl EditorWorkbench {
                 spawn_audio_entity(&mut self.scene, &mut owners, Some(asset), node_id);
             }
             StoryNode::CharacterPlacement { name, x, y, scale } => {
-                let placement = visual_novel_engine::CharacterPlacementRaw {
+                let placement = visual_novel_engine::runtime::CharacterPlacementRaw {
                     name: name.clone(),
                     expression: None,
                     position: None,
@@ -99,7 +99,7 @@ fn spawn_background_entity(
     if let Some(entity_id) = scene.spawn_with_transform(
         transform,
         visual_novel_engine::EntityKind::Image(visual_novel_engine::ImageData {
-            path: visual_novel_engine::SharedStr::from(background),
+            path: visual_novel_engine::runtime::SharedStr::from(background),
             tint: None,
         }),
     ) {
@@ -121,7 +121,7 @@ fn spawn_audio_entity(
     if let Some(entity_id) = scene.spawn_with_transform(
         transform,
         visual_novel_engine::EntityKind::Audio(visual_novel_engine::AudioData {
-            path: visual_novel_engine::SharedStr::from(asset),
+            path: visual_novel_engine::runtime::SharedStr::from(asset),
             volume: 1000,
             looping: true,
         }),
@@ -133,7 +133,7 @@ fn spawn_audio_entity(
 fn spawn_character_entity(
     scene: &mut visual_novel_engine::SceneState,
     owners: &mut HashMap<u32, u32>,
-    character: &visual_novel_engine::CharacterPlacementRaw,
+    character: &visual_novel_engine::runtime::CharacterPlacementRaw,
     index: usize,
     node_id: u32,
 ) {
@@ -148,11 +148,11 @@ fn spawn_character_entity(
     if let Some(entity_id) = scene.spawn_with_transform(
         transform,
         visual_novel_engine::EntityKind::Character(visual_novel_engine::CharacterData {
-            name: visual_novel_engine::SharedStr::from(character.name.as_str()),
+            name: visual_novel_engine::runtime::SharedStr::from(character.name.as_str()),
             expression: character
                 .expression
                 .as_deref()
-                .map(visual_novel_engine::SharedStr::from),
+                .map(visual_novel_engine::runtime::SharedStr::from),
         }),
     ) {
         owners.insert(entity_id.raw(), node_id);
@@ -162,7 +162,7 @@ fn spawn_character_entity(
 fn spawn_character_patch_entity(
     scene: &mut visual_novel_engine::SceneState,
     owners: &mut HashMap<u32, u32>,
-    character: &visual_novel_engine::CharacterPatchRaw,
+    character: &visual_novel_engine::runtime::CharacterPatchRaw,
     index: usize,
     node_id: u32,
 ) {
@@ -173,11 +173,11 @@ fn spawn_character_patch_entity(
     if let Some(entity_id) = scene.spawn_with_transform(
         transform,
         visual_novel_engine::EntityKind::Character(visual_novel_engine::CharacterData {
-            name: visual_novel_engine::SharedStr::from(character.name.as_str()),
+            name: visual_novel_engine::runtime::SharedStr::from(character.name.as_str()),
             expression: character
                 .expression
                 .as_deref()
-                .map(visual_novel_engine::SharedStr::from),
+                .map(visual_novel_engine::runtime::SharedStr::from),
         }),
     ) {
         owners.insert(entity_id.raw(), node_id);

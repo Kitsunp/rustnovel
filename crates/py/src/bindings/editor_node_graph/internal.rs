@@ -1,10 +1,9 @@
-use visual_novel_engine::authoring::composer::{apply_layer_overrides, list_layered_objects};
 use visual_novel_engine::authoring::{
-    build_authoring_document_report_fingerprint, validate_authoring_graph_no_io, AuthoringDocument,
-    AuthoringReportFingerprint, OperationLogEntry, VerificationRun,
+    AuthoringCommand, AuthoringCommandBus, AuthoringCommandOutcome, AuthoringDocument,
+    AuthoringDocumentCommand, AuthoringDocumentCommandBus, AuthoringDocumentCommandOutcome,
 };
 
-use super::{PyNodeGraph, PythonOperation, PythonOperationTrace};
+use super::PyNodeGraph;
 
 impl PyNodeGraph {
     pub(crate) fn inner(&self) -> &visual_novel_engine::authoring::NodeGraph {
@@ -19,53 +18,34 @@ impl PyNodeGraph {
         document
     }
 
-    pub(super) fn current_fingerprint(&self) -> AuthoringReportFingerprint {
-        let script = self.inner.to_script_lossy_for_diagnostics();
-        build_authoring_document_report_fingerprint(&self.to_authoring_document(), &script)
-    }
-
-    pub(super) fn layered_object_json(&self, object_id: &str) -> Option<String> {
-        let mut objects = list_layered_objects(&self.inner, None);
-        apply_layer_overrides(&mut objects, &self.layer_overrides);
-        objects
-            .into_iter()
-            .find(|object| object.object_id == object_id)
-            .and_then(|object| serde_json::to_string(&object).ok())
-    }
-
-    pub(super) fn trace_before_mutation(&self) -> PythonOperationTrace {
-        PythonOperationTrace {
-            fingerprint: self.current_fingerprint(),
-            issues: validate_authoring_graph_no_io(&self.inner),
-        }
-    }
-
-    pub(super) fn record_python_operation(
+    pub(super) fn apply_authoring_command(
         &mut self,
-        operation: PythonOperation,
-        before: PythonOperationTrace,
-    ) {
-        let after_fingerprint = self.current_fingerprint();
-        let after_issues = validate_authoring_graph_no_io(&self.inner);
-        let mut entry = OperationLogEntry::new_typed(operation.kind, "applied", operation.details)
-            .with_before_after_fingerprints(&before.fingerprint, &after_fingerprint);
-        if let Some(issue) = &operation.diagnostic {
-            entry = entry.with_diagnostic(issue);
-        }
-        if let Some(field_path) = operation.field_path {
-            entry = entry.with_field_path(field_path);
-        }
-        entry.before_value = operation.before_value;
-        entry.after_value = operation.after_value;
-        let operation_id = entry.operation_id.clone();
-        self.operation_log.push(entry);
-        self.verification_runs
-            .push(VerificationRun::from_diagnostics(
-                operation_id,
-                "python-api",
-                &after_fingerprint,
-                &before.issues,
-                &after_issues,
-            ));
+        command: AuthoringCommand,
+    ) -> Result<AuthoringCommandOutcome, String> {
+        let mut bus = AuthoringCommandBus::with_history(
+            self.inner.clone(),
+            self.operation_log.clone(),
+            self.verification_runs.clone(),
+        );
+        let outcome = bus.apply(command)?;
+        let (graph, operation_log, verification_runs) = bus.into_parts();
+        self.inner = graph;
+        self.operation_log = operation_log;
+        self.verification_runs = verification_runs;
+        Ok(outcome)
+    }
+
+    pub(super) fn apply_document_command(
+        &mut self,
+        command: AuthoringDocumentCommand,
+    ) -> Result<AuthoringDocumentCommandOutcome, String> {
+        let mut bus = AuthoringDocumentCommandBus::new(self.to_authoring_document());
+        let outcome = bus.apply(command)?;
+        let document = bus.into_document();
+        self.inner = document.graph;
+        self.layer_overrides = document.composer_layer_overrides;
+        self.operation_log = document.operation_log;
+        self.verification_runs = document.verification_runs;
+        Ok(outcome)
     }
 }

@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{CharacterPlacementRaw, EventRaw, ScenePatchRaw, ScriptRaw};
+use crate::asset_refs::{
+    collect_character_assets, collect_event_asset_refs, collect_scene_patch_asset_refs, AssetRefSet,
+};
+use crate::script::ScriptRaw;
 
 use super::{
     AuthoringDocument, NodeGraph, SceneProfile, StoryNode, AUTHORING_DOCUMENT_SCHEMA_VERSION,
@@ -198,19 +201,17 @@ fn semantic_value(value: &serde_json::Value) -> Option<serde_json::Value> {
 }
 
 pub fn collect_authoring_asset_refs(graph: &NodeGraph) -> Vec<String> {
-    let mut refs = Vec::new();
+    let mut refs = AssetRefSet::default();
     for (_, node, _) in graph.nodes() {
         collect_node_asset_refs(node, &mut refs);
     }
     for (_, profile) in graph.scene_profiles() {
         collect_profile_asset_refs(profile, &mut refs);
     }
-    refs.sort();
-    refs.dedup();
-    refs
+    refs.into_vec()
 }
 
-fn collect_node_asset_refs(node: &StoryNode, refs: &mut Vec<String>) {
+fn collect_node_asset_refs(node: &StoryNode, refs: &mut AssetRefSet) {
     match node {
         StoryNode::Scene {
             background,
@@ -218,67 +219,29 @@ fn collect_node_asset_refs(node: &StoryNode, refs: &mut Vec<String>) {
             characters,
             ..
         } => {
-            push_optional(background, refs);
-            push_optional(music, refs);
+            refs.push_optional(background);
+            refs.push_optional(music);
             collect_character_assets(characters, refs);
         }
-        StoryNode::ScenePatch(patch) => collect_patch_asset_refs(patch, refs),
+        StoryNode::ScenePatch(patch) => collect_scene_patch_asset_refs(patch, refs),
         StoryNode::AudioAction {
             asset: Some(asset), ..
-        } => refs.push(asset.clone()),
+        } => refs.push(asset),
         StoryNode::Generic(event) => collect_event_asset_refs(event, refs),
         _ => {}
     }
 }
 
-fn collect_event_asset_refs(event: &EventRaw, refs: &mut Vec<String>) {
-    match event {
-        EventRaw::Scene(scene) => {
-            push_optional(&scene.background, refs);
-            push_optional(&scene.music, refs);
-            collect_character_assets(&scene.characters, refs);
-        }
-        EventRaw::Patch(patch) => collect_patch_asset_refs(patch, refs),
-        EventRaw::AudioAction(action) => push_optional(&action.asset, refs),
-        _ => {}
-    }
-}
-
-fn collect_patch_asset_refs(patch: &ScenePatchRaw, refs: &mut Vec<String>) {
-    push_optional(&patch.background, refs);
-    push_optional(&patch.music, refs);
-    collect_character_assets(&patch.add, refs);
-    for character in &patch.update {
-        push_optional(&character.expression, refs);
-    }
-}
-
-fn collect_profile_asset_refs(profile: &SceneProfile, refs: &mut Vec<String>) {
-    push_optional(&profile.background, refs);
-    push_optional(&profile.music, refs);
+fn collect_profile_asset_refs(profile: &SceneProfile, refs: &mut AssetRefSet) {
+    refs.push_optional(&profile.background);
+    refs.push_optional(&profile.music);
     collect_character_assets(&profile.characters, refs);
     for layer in &profile.layers {
-        push_optional(&layer.background, refs);
+        refs.push_optional(&layer.background);
         collect_character_assets(&layer.characters, refs);
     }
     for pose in &profile.poses {
-        refs.push(pose.image.clone());
-    }
-}
-
-fn collect_character_assets(characters: &[CharacterPlacementRaw], refs: &mut Vec<String>) {
-    for character in characters {
-        push_optional(&character.expression, refs);
-    }
-}
-
-fn push_optional(value: &Option<String>, refs: &mut Vec<String>) {
-    if let Some(value) = value
-        .as_ref()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    {
-        refs.push(value.to_string());
+        refs.push(&pose.image);
     }
 }
 

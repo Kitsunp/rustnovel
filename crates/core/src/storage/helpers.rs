@@ -1,19 +1,13 @@
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
-use super::{SaveData, SaveError, ScriptId, AUTH_SAVE_MAGIC};
+pub(super) use crate::clock::now_unix_ms;
+
+use super::{SaveData, SaveError, ScriptId};
 
 type HmacSha256 = Hmac<Sha256>;
-
-pub(super) fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
 
 pub(super) fn script_id_hex(script_id: &ScriptId) -> String {
     let mut output = String::with_capacity(script_id.len() * 2);
@@ -63,10 +57,6 @@ pub(super) fn backup_path(path: &Path) -> PathBuf {
     let mut output = path.as_os_str().to_os_string();
     output.push(".bak");
     PathBuf::from(output)
-}
-
-pub(super) fn is_authenticated_binary(input: &[u8]) -> bool {
-    input.starts_with(&AUTH_SAVE_MAGIC)
 }
 
 pub(super) fn compute_hmac_sha256(key: &[u8], payload: &[u8]) -> Result<[u8; 32], SaveError> {

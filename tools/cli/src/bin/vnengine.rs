@@ -6,16 +6,18 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use visual_novel_engine::{
-    compute_script_id, export_bundle, load_runtime_script_from_entry, run_repro_case,
-    BundleIntegrity, Engine, ExportBundleSpec, ExportTargetPlatform, ImportFallbackPolicy,
-    ImportProfile, ReproCase, ResourceLimiter, SaveData, ScriptCompiled, SecurityPolicy, UiTrace,
-    AUTH_SAVE_KEY, SCRIPT_SCHEMA_VERSION,
+    compute_script_id, load_runtime_script_from_entry, run_repro_case,
+    runtime::{Engine, ScriptCompiled, UiTrace},
+    BundleIntegrity, ExportBundleSpec, ExportTargetPlatform, ImportFallbackPolicy, ImportProfile,
+    ReproCase, ResourceLimiter, SaveData, SecurityPolicy, AUTH_SAVE_KEY, SCRIPT_SCHEMA_VERSION,
 };
 use vnengine_assets::{AssetEntry, AssetManifest};
 use walkdir::WalkDir;
 
 #[path = "vnengine/authoring.rs"]
 mod authoring;
+#[path = "vnengine/package.rs"]
+mod package;
 
 #[derive(Parser)]
 #[command(author, version, about = "Visual Novel Engine CLI")]
@@ -284,7 +286,7 @@ fn main() -> Result<()> {
             fallback_policy,
             entry_label,
             report,
-        } => import_renpy(ImportRenpyCliOptions {
+        } => package::import_renpy(package::ImportRenpyCliOptions {
             project: &project,
             output: &output,
             profile: profile.into(),
@@ -306,7 +308,7 @@ fn main() -> Result<()> {
             integrity,
             hmac_key,
             layout_version,
-        } => package_project(ExportBundleSpec {
+        } => package::package_project(ExportBundleSpec {
             project_root: project,
             output_root: output,
             target_platform: target.into(),
@@ -365,17 +367,17 @@ fn trace_script(
             Ok(event) => event,
             Err(_) => break,
         };
-        let view = visual_novel_engine::TraceUiView::from_event(&event);
-        let state = visual_novel_engine::StateDigest::from_state(
+        let view = visual_novel_engine::runtime::TraceUiView::from_event(&event);
+        let state = visual_novel_engine::runtime::StateDigest::from_state(
             engine.state(),
             engine.script().flag_count as usize,
         );
         trace.push(step as u32, view, state);
         match &event {
-            visual_novel_engine::EventCompiled::Choice(_) => {
+            visual_novel_engine::runtime::EventCompiled::Choice(_) => {
                 let _ = engine.choose(0);
             }
-            visual_novel_engine::EventCompiled::ExtCall { .. } => {
+            visual_novel_engine::runtime::EventCompiled::ExtCall { .. } => {
                 let _ = engine.resume();
             }
             _ => {
@@ -482,68 +484,6 @@ fn run_repro_bundle(path: &Path, output: Option<&Path>, strict: bool) -> Result<
 
     if strict && !report.oracle_triggered {
         anyhow::bail!("repro oracle was not triggered");
-    }
-    Ok(())
-}
-
-struct ImportRenpyCliOptions<'a> {
-    project: &'a Path,
-    output: &'a Path,
-    profile: ImportProfile,
-    include_patterns: Vec<String>,
-    exclude_patterns: Vec<String>,
-    include_tl: Option<bool>,
-    include_ui: Option<bool>,
-    strict_mode: bool,
-    fallback_policy: ImportFallbackPolicy,
-    entry_label: &'a str,
-    report: Option<&'a Path>,
-}
-
-fn import_renpy(options: ImportRenpyCliOptions<'_>) -> Result<()> {
-    let report_result =
-        visual_novel_engine::import_renpy_project(visual_novel_engine::ImportRenpyOptions {
-            project_root: options.project.to_path_buf(),
-            output_root: options.output.to_path_buf(),
-            entry_label: options.entry_label.to_string(),
-            report_path: options.report.map(Path::to_path_buf),
-            profile: options.profile,
-            include_tl: options.include_tl,
-            include_ui: options.include_ui,
-            include_patterns: options.include_patterns,
-            exclude_patterns: options.exclude_patterns,
-            strict_mode: options.strict_mode,
-            fallback_policy: options.fallback_policy,
-        })?;
-
-    println!(
-        "imported Ren'Py project => profile={} files={} events={} labels={} degraded={} issues={}",
-        report_result.profile,
-        report_result.files_parsed,
-        report_result.events_generated,
-        report_result.labels_generated,
-        report_result.degraded_events,
-        report_result.issues.len()
-    );
-
-    Ok(())
-}
-
-fn package_project(spec: ExportBundleSpec) -> Result<()> {
-    let report = export_bundle(spec)?;
-
-    println!(
-        "packaged project => target={} assets={} integrity={} launcher={} report=meta/package_report.json",
-        report.target_platform, report.assets_copied, report.integrity, report.launcher
-    );
-    if let Some(runtime) = report.runtime_artifact {
-        println!("runtime_artifact={runtime}");
-    }
-    if let Some(executable) = report.executable {
-        println!("executable={executable}");
-    }
-    if let Some(signature) = report.bundle_hmac_sha256 {
-        println!("bundle_hmac_sha256={signature}");
     }
     Ok(())
 }

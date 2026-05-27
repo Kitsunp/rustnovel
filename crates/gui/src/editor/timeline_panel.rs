@@ -5,7 +5,7 @@
 use eframe::egui;
 use visual_novel_engine::{Easing, EntityId, Keyframe, PropertyType, Timeline};
 
-const ANIMATABLE_PROPERTIES: [PropertyType; 6] = [
+pub const ANIMATABLE_PROPERTIES: [PropertyType; 6] = [
     PropertyType::PositionX,
     PropertyType::PositionY,
     PropertyType::ZOrder,
@@ -177,7 +177,7 @@ impl<'a> TimelinePanel<'a> {
     }
 }
 
-fn add_keyframe(
+pub fn add_keyframe(
     timeline: &mut Timeline,
     entity_id: u32,
     property: PropertyType,
@@ -189,7 +189,7 @@ fn add_keyframe(
         .and_then(|track| track.add_keyframe(Keyframe::new(time, value, Easing::Linear)))
 }
 
-fn property_label(property: PropertyType) -> &'static str {
+pub fn property_label(property: PropertyType) -> &'static str {
     match property {
         PropertyType::PositionX => "Position X",
         PropertyType::PositionY => "Position Y",
@@ -197,29 +197,5 @@ fn property_label(property: PropertyType) -> &'static str {
         PropertyType::Scale => "Scale",
         PropertyType::Opacity => "Opacity",
         PropertyType::Rotation => "Rotation",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn add_keyframe_creates_track_when_missing() {
-        let mut timeline = Timeline::new(60);
-        add_keyframe(&mut timeline, 7, PropertyType::PositionX, 12, 300).expect("add keyframe");
-
-        assert_eq!(timeline.track_count(), 1);
-        let track = timeline.get_track(0).expect("track exists");
-        assert_eq!(track.target, EntityId::new(7));
-        assert_eq!(track.property, PropertyType::PositionX);
-        assert_eq!(track.len(), 1);
-    }
-
-    #[test]
-    fn property_labels_cover_all_timeline_properties() {
-        for property in ANIMATABLE_PROPERTIES {
-            assert!(!property_label(property).is_empty());
-        }
     }
 }

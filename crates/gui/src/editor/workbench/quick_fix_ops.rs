@@ -1,6 +1,6 @@
 use super::*;
 use crate::editor::quick_fix::{apply_fix, suggest_fixes, QuickFixCandidate, QuickFixRisk};
-use visual_novel_engine::ScriptRaw;
+use visual_novel_engine::runtime::ScriptRaw;
 
 impl EditorWorkbench {
     pub fn apply_issue_fix(&mut self, issue_index: usize, fix_id: &str) -> Result<(), String> {
@@ -148,21 +148,14 @@ impl EditorWorkbench {
         self.node_graph = previous_graph;
         self.node_graph.mark_modified();
         let _ = self.sync_graph_to_script();
-        if let Some(after) = self.current_authoring_fingerprint() {
-            let mut entry = visual_novel_engine::authoring::OperationLogEntry::new(
-                format!("editor:revert_last_fix:{}", self.operation_log.len() + 1),
-                "revert_last_fix",
-                "applied",
-                "Reverted last quick-fix snapshot",
-            );
-            if let Some(before) = before.as_ref() {
-                entry = entry.with_before_after_fingerprints(before, &after);
-            } else {
-                entry = entry.with_fingerprint(&after);
-            }
-            self.last_operation_fingerprint = Some(after);
-            self.operation_log.push(entry);
-        }
+        self.record_editor_operation_now(
+            "revert",
+            "Reverted last quick-fix snapshot",
+            Some("graph".to_string()),
+            None,
+            None,
+            before,
+        );
         true
     }
 
@@ -203,28 +196,32 @@ impl EditorWorkbench {
 
     fn apply_issue_fix_for_issue(&mut self, issue: &LintIssue, fix_id: &str) -> Result<(), String> {
         let before_graph = self.node_graph.clone();
-        let before_sha256 =
-            visual_novel_engine::authoring::authoring_graph_sha256(before_graph.authoring_graph());
-        let before_script = before_graph.to_script();
-        let before_fingerprint = visual_novel_engine::authoring::build_authoring_report_fingerprint(
-            before_graph.authoring_graph(),
-            &before_script,
-        );
 
-        let changed = apply_fix(&mut self.node_graph, issue, fix_id)?;
-        if !changed {
-            return Err(format!("fix '{fix_id}' made no changes"));
-        }
-
-        let after_sha256 = visual_novel_engine::authoring::authoring_graph_sha256(
-            self.node_graph.authoring_graph(),
+        let mut bus = visual_novel_engine::authoring::AuthoringCommandBus::with_history(
+            self.node_graph.authoring_graph().clone(),
+            self.operation_log.clone(),
+            self.verification_runs.clone(),
         );
-        let operation_id = format!("quickfix:{}:{}", fix_id, self.quick_fix_audit.len() + 1);
-        let after_script = self.node_graph.to_script();
-        let after_fingerprint = visual_novel_engine::authoring::build_authoring_report_fingerprint(
-            self.node_graph.authoring_graph(),
-            &after_script,
-        );
+        let outcome = bus.apply(
+            visual_novel_engine::authoring::AuthoringCommand::ApplyQuickFix {
+                issue: Box::new(issue.clone()),
+                fix_id: fix_id.to_string(),
+            },
+        )?;
+        let (after_graph, operation_log, verification_runs) = bus.into_parts();
+        self.node_graph.replace_authoring_graph(after_graph);
+        self.operation_log = operation_log;
+        self.verification_runs = verification_runs;
+        let visual_novel_engine::authoring::AuthoringDelta::QuickFixApplied {
+            before_sha256,
+            after_sha256,
+            ..
+        } = outcome.delta
+        else {
+            return Err("command bus returned an unexpected quick-fix delta".to_string());
+        };
+        let operation_id = outcome.operation.operation_id.clone();
+        self.last_operation_fingerprint = self.current_authoring_fingerprint();
         self.last_fix_snapshot = Some(before_graph);
         self.quick_fix_audit.push(QuickFixAuditEntry {
             operation_id: operation_id.clone(),
@@ -235,17 +232,6 @@ impl EditorWorkbench {
             before_sha256,
             after_sha256,
         });
-        self.operation_log.push(
-            visual_novel_engine::authoring::OperationLogEntry::new(
-                operation_id,
-                "quick_fix",
-                "applied",
-                format!("Applied quick-fix '{fix_id}'"),
-            )
-            .with_diagnostic(issue)
-            .with_before_after_fingerprints(&before_fingerprint, &after_fingerprint),
-        );
-        self.last_operation_fingerprint = Some(after_fingerprint);
 
         let previous_diag_id = issue.diagnostic_id();
         let _ = self.sync_graph_to_script();

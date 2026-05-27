@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use super::node_graph::NodeGraph;
 
 /// Maximum number of undo states to keep in memory.
-const MAX_UNDO_STATES: usize = 50;
+pub const MAX_UNDO_STATES: usize = 50;
 
 /// Manages undo/redo history for a NodeGraph.
 ///
@@ -112,92 +112,5 @@ impl UndoStack {
     #[inline]
     pub fn undo_count(&self) -> usize {
         self.history.len()
-    }
-}
-
-// =============================================================================
-// Tests
-// =============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::editor::node_types::StoryNode;
-
-    fn create_graph_with_nodes(count: usize) -> NodeGraph {
-        let mut graph = NodeGraph::new();
-        for i in 0..count {
-            graph.add_node(StoryNode::Start, eframe::egui::pos2(i as f32 * 50.0, 0.0));
-        }
-        graph
-    }
-
-    #[test]
-    fn test_undo_stack_push_and_undo() {
-        let mut stack = UndoStack::new();
-
-        let state1 = create_graph_with_nodes(1);
-        let state2 = create_graph_with_nodes(2);
-        let state3 = create_graph_with_nodes(3);
-
-        stack.push(state1.clone());
-        stack.push(state2.clone());
-
-        assert!(stack.can_undo());
-        assert!(!stack.can_redo());
-
-        // Undo returns previous state
-        let restored = stack.undo(state3.clone()).unwrap();
-        assert_eq!(restored.len(), 2); // state2
-
-        assert!(stack.can_redo());
-    }
-
-    #[test]
-    fn test_undo_redo_cycle() {
-        let mut stack = UndoStack::new();
-
-        let state1 = create_graph_with_nodes(1);
-        let state2 = create_graph_with_nodes(2);
-
-        stack.push(state1.clone());
-
-        // Undo
-        let restored = stack.undo(state2.clone()).unwrap();
-        assert_eq!(restored.len(), 1);
-
-        // Redo
-        let redone = stack.redo(restored).unwrap();
-        assert_eq!(redone.len(), 2);
-    }
-
-    #[test]
-    fn test_new_action_clears_redo() {
-        let mut stack = UndoStack::new();
-
-        let state1 = create_graph_with_nodes(1);
-        let state2 = create_graph_with_nodes(2);
-        let state3 = create_graph_with_nodes(3);
-
-        stack.push(state1.clone());
-        stack.undo(state2.clone());
-
-        assert!(stack.can_redo());
-
-        // New action should clear redo
-        stack.push(state3);
-        assert!(!stack.can_redo());
-    }
-
-    #[test]
-    fn test_max_history_limit() {
-        let mut stack = UndoStack::new();
-
-        // Push more than max states
-        for i in 0..60 {
-            stack.push(create_graph_with_nodes(i));
-        }
-
-        assert_eq!(stack.undo_count(), MAX_UNDO_STATES);
     }
 }

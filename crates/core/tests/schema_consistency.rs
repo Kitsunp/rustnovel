@@ -3,8 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use schemars::schema_for;
-use visual_novel_engine::EventCompiled;
-use visual_novel_engine::ScriptRaw;
+use visual_novel_engine::runtime::EventCompiled;
+use visual_novel_engine::runtime::ScriptRaw;
 
 fn verify_schema<T: schemars::JsonSchema>(name: &str) {
     let schema = schema_for!(T);

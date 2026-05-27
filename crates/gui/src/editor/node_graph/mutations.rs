@@ -49,14 +49,26 @@ impl NodeGraph {
 
     /// Converts a node to a Choice node with default options.
     pub fn convert_to_choice(&mut self, node_id: u32) {
-        let Some(node) = self.get_node_mut(node_id) else {
+        if self.get_node(node_id).is_none() {
             return;
-        };
-        *node = StoryNode::Choice {
-            prompt: "Choose an option:".to_string(),
-            options: vec!["Option 1".to_string(), "Option 2".to_string()],
-        };
-        self.mark_modified();
+        }
+        let changed = self
+            .apply_authoring_command(AuthoringCommand::EditNode {
+                node_id,
+                replacement: StoryNode::Choice {
+                    prompt: "Choose an option:".to_string(),
+                    options: vec!["Option 1".to_string(), "Option 2".to_string()],
+                },
+            })
+            .is_some();
+        if changed {
+            self.queue_operation_hint(
+                "field_edited",
+                format!("Converted node {node_id} to choice"),
+                Some(format!("graph.nodes[{node_id}]")),
+                true,
+            );
+        }
     }
 
     /// Creates a branch from a node (adds a Choice with two paths).
@@ -173,18 +185,18 @@ fn choice_route_label_for_inserted_node(node: &StoryNode) -> String {
             format!("Talk to {speaker}")
         }
         StoryNode::Scene { background, .. }
-        | StoryNode::ScenePatch(visual_novel_engine::ScenePatchRaw { background, .. }) => {
-            background
-                .as_deref()
-                .and_then(|value| {
-                    std::path::Path::new(value)
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                })
-                .filter(|value| !value.trim().is_empty())
-                .map(|value| format!("Go to {value}"))
-                .unwrap_or_else(|| "New route".to_string())
-        }
+        | StoryNode::ScenePatch(visual_novel_engine::runtime::ScenePatchRaw {
+            background, ..
+        }) => background
+            .as_deref()
+            .and_then(|value| {
+                std::path::Path::new(value)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+            })
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| format!("Go to {value}"))
+            .unwrap_or_else(|| "New route".to_string()),
         _ => "New route".to_string(),
     }
 }

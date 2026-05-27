@@ -320,7 +320,7 @@ impl<'a> NodeEditorPanel<'a> {
         }
     }
 
-    fn apply_undo_shortcut(&mut self) -> bool {
+    pub fn apply_undo_shortcut(&mut self) -> bool {
         if let Some(previous) = self.undo_stack.undo(self.graph.clone()) {
             *self.graph = previous;
             self.graph.queue_operation_hint(
@@ -336,7 +336,7 @@ impl<'a> NodeEditorPanel<'a> {
         }
     }
 
-    fn apply_redo_shortcut(&mut self) -> bool {
+    pub fn apply_redo_shortcut(&mut self) -> bool {
         if let Some(next) = self.undo_stack.redo(self.graph.clone()) {
             *self.graph = next;
             self.graph.queue_operation_hint(
@@ -427,14 +427,11 @@ fn graph_shortcuts_enabled(ui: &egui::Ui, response: &egui::Response, graph: &Nod
         && graph_shortcut_scope_active(response.hovered(), graph.has_active_interaction())
 }
 
-fn graph_shortcut_scope_active(response_hovered: bool, interaction_active: bool) -> bool {
+pub fn graph_shortcut_scope_active(response_hovered: bool, interaction_active: bool) -> bool {
     response_hovered || interaction_active
 }
 
 mod palette;
-pub(crate) use palette::extended_node_palette_items;
+pub use palette::extended_node_palette_items;
 mod render;
 mod render_helpers;
-#[cfg(test)]
-#[path = "tests/node_editor_tests.rs"]
-mod tests;

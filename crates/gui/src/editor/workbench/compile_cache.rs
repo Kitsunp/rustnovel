@@ -22,14 +22,14 @@ struct CompilationCacheEntry {
 }
 
 #[derive(Clone, Default)]
-pub(super) struct CompilationCache {
+pub struct CompilationCache {
     entry: Option<CompilationCacheEntry>,
     hits: usize,
     misses: usize,
 }
 
 impl CompilationCache {
-    pub(super) fn invalidate(&mut self) {
+    pub fn invalidate(&mut self) {
         self.entry = None;
     }
 
@@ -56,8 +56,7 @@ impl CompilationCache {
         result
     }
 
-    #[cfg(test)]
-    fn stats(&self) -> (usize, usize) {
+    pub fn stats(&self) -> (usize, usize) {
         (self.hits, self.misses)
     }
 }
@@ -122,14 +121,13 @@ fn hash_referenced_asset_state(
 }
 
 impl EditorWorkbench {
-    pub(super) fn compile_current_graph(&mut self) -> CompilationResult {
+    pub fn compile_current_graph(&mut self) -> CompilationResult {
         let project_root = self.project_root.clone();
         self.compilation_cache
             .get_or_compile(&self.node_graph, project_root.as_deref())
     }
 
-    #[cfg(test)]
-    pub(crate) fn compilation_cache_stats(&self) -> (usize, usize) {
+    pub fn compilation_cache_stats(&self) -> (usize, usize) {
         self.compilation_cache.stats()
     }
 }

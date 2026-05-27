@@ -116,7 +116,6 @@ impl EditorWorkbench {
 
         let payload = json!({
             "schema": "vnengine.authoring_validation_report.v2",
-            "legacy_schema": "vneditor.diagnostic_report.v1",
             "generated_unix_ms": now_unix_ms(),
             "fingerprints": fingerprints,
             "verification_run": verification_run,
@@ -208,10 +207,7 @@ impl EditorWorkbench {
             .get("schema")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "missing report schema".to_string())?;
-        if schema != "vneditor.diagnostic_report.v1"
-            && schema != "vneditor.diagnostic_report.v2"
-            && schema != "vnengine.authoring_validation_report.v2"
-        {
+        if schema != "vnengine.authoring_validation_report.v2" {
             return Err(format!("unsupported report schema '{schema}'"));
         }
         let current_fingerprints = current_fingerprints_value(self)?;

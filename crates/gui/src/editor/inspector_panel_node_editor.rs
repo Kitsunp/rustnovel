@@ -20,7 +20,7 @@ struct NodeEditActions {
 }
 
 impl<'a> InspectorPanel<'a> {
-    pub(super) fn render_node_editor(&mut self, ui: &mut egui::Ui) -> Option<InspectorAction> {
+    pub fn render_node_editor(&mut self, ui: &mut egui::Ui) -> Option<InspectorAction> {
         let mut actions = NodeEditActions::default();
         let mut standard_changed = false;
         let scene_profile_names = self.graph.scene_profile_names();
@@ -30,153 +30,159 @@ impl<'a> InspectorPanel<'a> {
             return None;
         };
 
-        if let Some(node) = self.graph.get_node_mut(node_id) {
-            ui.label(format!("Node ID: {}", node_id));
-            ui.separator();
+        let Some(original_node) = self.graph.get_node(node_id).cloned() else {
+            ui.label("Node not found in editor graph.");
+            return None;
+        };
+        let mut edited_node = original_node.clone();
 
-            match node {
-                StoryNode::Dialogue { speaker, text } => {
-                    node_sections::render_dialogue_node(ui, speaker, text, &mut standard_changed);
-                }
-                StoryNode::Choice { prompt, options } => {
-                    node_sections::render_choice_node(
-                        ui,
-                        prompt,
-                        options,
-                        &mut standard_changed,
-                        &mut actions,
-                    );
-                }
-                StoryNode::Scene {
-                    profile,
-                    background,
-                    music,
-                    characters,
-                } => {
-                    node_sections::render_scene_node(
-                        ui,
-                        node_id,
-                        node_sections::SceneNodeRefs {
-                            profile,
-                            background,
-                            music,
-                            characters,
-                        },
-                        &scene_profile_names,
-                        &mut standard_changed,
-                        &mut actions,
-                    );
-                }
-                StoryNode::Jump { target } => {
-                    ui.label("Jump Target (Label):");
-                    standard_changed |= ui.text_edit_singleline(target).changed();
-                }
-                StoryNode::Start => {
-                    ui.label("Start Node (Entry Point)");
-                }
-                StoryNode::End => {
-                    ui.label("End Node (Termination)");
-                }
-                StoryNode::SetVariable { key, value } => {
-                    ui.label("Variable Name:");
-                    standard_changed |= ui.text_edit_singleline(key).changed();
-                    ui.label("Value (i32):");
-                    standard_changed |= ui.add(egui::DragValue::new(value)).changed();
-                }
-                StoryNode::SetFlag { key, value } => {
-                    ui.label("Flag Name:");
-                    standard_changed |= ui.text_edit_singleline(key).changed();
-                    standard_changed |= ui.checkbox(value, "Set").changed();
-                }
-                StoryNode::JumpIf { target, cond } => {
-                    node_sections::render_jump_if_node(ui, target, cond, &mut standard_changed);
-                }
-                StoryNode::ScenePatch(patch) => {
-                    node_sections::render_scene_patch_node(
-                        ui,
-                        node_id,
-                        patch,
-                        &mut standard_changed,
-                        &mut actions,
-                    );
-                }
-                StoryNode::Generic(event) => {
-                    render_generic_event_editor(ui, node_id, event, &mut standard_changed);
-                }
-                StoryNode::AudioAction {
-                    channel,
-                    action,
-                    asset,
-                    volume,
-                    fade_duration_ms,
-                    loop_playback,
-                } => {
-                    audio_section::render_audio_action_node(
-                        ui,
-                        node_id,
-                        audio_section::AudioActionRefs {
-                            channel,
-                            action,
-                            asset,
-                            volume,
-                            fade_duration_ms,
-                            loop_playback,
-                        },
-                        &mut standard_changed,
-                        &mut actions,
-                    );
-                }
-                StoryNode::Transition {
+        ui.label(format!("Node ID: {}", node_id));
+        ui.separator();
+
+        match &mut edited_node {
+            StoryNode::Dialogue { speaker, text } => {
+                node_sections::render_dialogue_node(ui, speaker, text, &mut standard_changed);
+            }
+            StoryNode::Choice { prompt, options } => {
+                node_sections::render_choice_node(
+                    ui,
+                    prompt,
+                    options,
+                    &mut standard_changed,
+                    &mut actions,
+                );
+            }
+            StoryNode::Scene {
+                profile,
+                background,
+                music,
+                characters,
+            } => {
+                node_sections::render_scene_node(
+                    ui,
+                    node_id,
+                    node_sections::SceneNodeRefs {
+                        profile,
+                        background,
+                        music,
+                        characters,
+                    },
+                    &scene_profile_names,
+                    &mut standard_changed,
+                    &mut actions,
+                );
+            }
+            StoryNode::Jump { target } => {
+                ui.label("Jump Target (Label):");
+                standard_changed |= ui.text_edit_singleline(target).changed();
+            }
+            StoryNode::Start => {
+                ui.label("Start Node (Entry Point)");
+            }
+            StoryNode::End => {
+                ui.label("End Node (Termination)");
+            }
+            StoryNode::SetVariable { key, value } => {
+                ui.label("Variable Name:");
+                standard_changed |= ui.text_edit_singleline(key).changed();
+                ui.label("Value (i32):");
+                standard_changed |= ui.add(egui::DragValue::new(value)).changed();
+            }
+            StoryNode::SetFlag { key, value } => {
+                ui.label("Flag Name:");
+                standard_changed |= ui.text_edit_singleline(key).changed();
+                standard_changed |= ui.checkbox(value, "Set").changed();
+            }
+            StoryNode::JumpIf { target, cond } => {
+                node_sections::render_jump_if_node(ui, target, cond, &mut standard_changed);
+            }
+            StoryNode::ScenePatch(patch) => {
+                node_sections::render_scene_patch_node(
+                    ui,
+                    node_id,
+                    patch,
+                    &mut standard_changed,
+                    &mut actions,
+                );
+            }
+            StoryNode::Generic(event) => {
+                render_generic_event_editor(ui, node_id, event, &mut standard_changed);
+            }
+            StoryNode::AudioAction {
+                channel,
+                action,
+                asset,
+                volume,
+                fade_duration_ms,
+                loop_playback,
+            } => {
+                audio_section::render_audio_action_node(
+                    ui,
+                    node_id,
+                    audio_section::AudioActionRefs {
+                        channel,
+                        action,
+                        asset,
+                        volume,
+                        fade_duration_ms,
+                        loop_playback,
+                    },
+                    &mut standard_changed,
+                    &mut actions,
+                );
+            }
+            StoryNode::Transition {
+                kind,
+                duration_ms,
+                color,
+            } => {
+                node_sections::render_transition_node(
+                    ui,
                     kind,
                     duration_ms,
                     color,
-                } => {
-                    node_sections::render_transition_node(
-                        ui,
-                        kind,
-                        duration_ms,
-                        color,
-                        &mut standard_changed,
-                    );
+                    &mut standard_changed,
+                );
+            }
+            StoryNode::CharacterPlacement { name, x, y, scale } => {
+                node_sections::render_character_placement_node(
+                    ui,
+                    name,
+                    x,
+                    y,
+                    scale,
+                    &mut standard_changed,
+                );
+            }
+            StoryNode::SubgraphCall {
+                fragment_id,
+                entry_port,
+                exit_port,
+            } => {
+                ui.label("Subgraph Fragment:");
+                standard_changed |= ui.text_edit_singleline(fragment_id).changed();
+                ui.label("Entry Port:");
+                let mut entry = entry_port.clone().unwrap_or_default();
+                if ui.text_edit_singleline(&mut entry).changed() {
+                    *entry_port = (!entry.trim().is_empty()).then_some(entry);
+                    standard_changed = true;
                 }
-                StoryNode::CharacterPlacement { name, x, y, scale } => {
-                    node_sections::render_character_placement_node(
-                        ui,
-                        name,
-                        x,
-                        y,
-                        scale,
-                        &mut standard_changed,
-                    );
-                }
-                StoryNode::SubgraphCall {
-                    fragment_id,
-                    entry_port,
-                    exit_port,
-                } => {
-                    ui.label("Subgraph Fragment:");
-                    standard_changed |= ui.text_edit_singleline(fragment_id).changed();
-                    ui.label("Entry Port:");
-                    let mut entry = entry_port.clone().unwrap_or_default();
-                    if ui.text_edit_singleline(&mut entry).changed() {
-                        *entry_port = (!entry.trim().is_empty()).then_some(entry);
-                        standard_changed = true;
-                    }
-                    ui.label("Exit Port:");
-                    let mut exit = exit_port.clone().unwrap_or_default();
-                    if ui.text_edit_singleline(&mut exit).changed() {
-                        *exit_port = (!exit.trim().is_empty()).then_some(exit);
-                        standard_changed = true;
-                    }
+                ui.label("Exit Port:");
+                let mut exit = exit_port.clone().unwrap_or_default();
+                if ui.text_edit_singleline(&mut exit).changed() {
+                    *exit_port = (!exit.trim().is_empty()).then_some(exit);
+                    standard_changed = true;
                 }
             }
-
-            if standard_changed {
-                self.graph.mark_modified();
-            }
-        } else {
-            ui.label("Node not found in editor graph.");
-            return None;
+        }
+        if standard_changed {
+            self.graph.replace_node_with_hint(
+                node_id,
+                edited_node,
+                format!("Edited node {node_id} from inspector"),
+                format!("graph.nodes[{node_id}]"),
+                true,
+            );
         }
 
         if let Some(idx) = actions.delete_option_idx {
@@ -184,9 +190,19 @@ impl<'a> InspectorPanel<'a> {
         }
 
         if actions.add_option_req {
-            if let Some(StoryNode::Choice { options, .. }) = self.graph.get_node_mut(node_id) {
+            if let Some(StoryNode::Choice {
+                prompt,
+                mut options,
+            }) = self.graph.get_node(node_id).cloned()
+            {
                 options.push("New Option".to_string());
-                self.graph.mark_modified();
+                self.graph.replace_node_with_hint(
+                    node_id,
+                    StoryNode::Choice { prompt, options },
+                    format!("Added choice option to node {node_id}"),
+                    format!("graph.nodes[{node_id}].choice.options"),
+                    true,
+                );
             }
         }
 
@@ -203,7 +219,7 @@ impl<'a> InspectorPanel<'a> {
 fn render_generic_event_editor(
     ui: &mut egui::Ui,
     node_id: u32,
-    event: &mut visual_novel_engine::EventRaw,
+    event: &mut visual_novel_engine::runtime::EventRaw,
     standard_changed: &mut bool,
 ) {
     ui.label("Generic Event JSON");
@@ -237,32 +253,8 @@ fn render_generic_event_editor(
     }
 }
 
-fn parse_generic_event_json(json: &str) -> Result<visual_novel_engine::EventRaw, String> {
+pub fn parse_generic_event_json(
+    json: &str,
+) -> Result<visual_novel_engine::runtime::EventRaw, String> {
     serde_json::from_str(json).map_err(|err| err.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generic_event_json_parser_accepts_extcall() {
-        let event = parse_generic_event_json(
-            r#"{"type":"ext_call","command":"show_overlay","args":["inventory"]}"#,
-        )
-        .expect("valid ext call");
-
-        match event {
-            visual_novel_engine::EventRaw::ExtCall { command, args } => {
-                assert_eq!(command, "show_overlay");
-                assert_eq!(args, vec!["inventory".to_string()]);
-            }
-            _ => panic!("expected ext call"),
-        }
-    }
-
-    #[test]
-    fn generic_event_json_parser_rejects_invalid_payload() {
-        assert!(parse_generic_event_json(r#"{"type":"unknown"}"#).is_err());
-    }
 }

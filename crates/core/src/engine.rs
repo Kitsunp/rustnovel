@@ -5,7 +5,3 @@ mod prefetch;
 mod runtime;
 
 pub use runtime::{ChoiceHistoryEntry, Engine, StateChange};
-
-#[cfg(test)]
-#[path = "tests/engine_tests.rs"]
-mod tests;

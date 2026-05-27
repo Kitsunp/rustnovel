@@ -7,16 +7,13 @@ mod flow;
 mod scene;
 mod trace;
 
-pub use assets::{
-    asset_exists_from_project_root, default_asset_exists, is_unsafe_asset_ref,
-    should_probe_asset_exists,
-};
+pub use assets::{asset_exists_from_project_root, is_unsafe_asset_ref, should_probe_asset_exists};
 use event_details::{validate_audio, validate_character, validate_transition, AudioValidation};
 use flow::unreachable_blocker_context;
 use scene::{validate_scene, validate_scene_patch, validate_scene_profiles};
 use trace::parse_import_trace_context;
 
-use crate::{CondRaw, EventRaw};
+use crate::event::{CondRaw, EventRaw};
 
 use super::{
     DiagnosticTarget, GraphConnection, LintCode, LintIssue, NodeGraph, SemanticValue,

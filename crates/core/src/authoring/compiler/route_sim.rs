@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use super::signatures::{event_kind_raw, raw_event_signature};
 use super::{ChoicePolicy, ChoiceStrategy};
-use crate::{CmpOp, CondRaw, EventRaw, ScriptRaw};
+use crate::event::{CmpOp, CondRaw, EventRaw};
+use crate::script::ScriptRaw;
 
 pub fn select_choice_index(
     policy: &ChoicePolicy,

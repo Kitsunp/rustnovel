@@ -88,24 +88,17 @@ pub(super) fn validate_asset_at<F>(
     }
 }
 
-pub fn default_asset_exists(path: &str) -> bool {
-    let candidate = Path::new(path.trim());
-    if candidate.is_absolute() {
-        return candidate.is_file();
-    }
-
-    match std::env::current_dir() {
-        Ok(cwd) => cwd.join(candidate).is_file(),
-        Err(_) => candidate.is_file(),
-    }
-}
-
 pub fn asset_exists_from_project_root(project_root: &Path, path: &str) -> bool {
-    let candidate = Path::new(path.trim());
-    if candidate.is_absolute() {
-        return candidate.is_file();
+    if is_unsafe_asset_ref(path) {
+        return false;
     }
-    project_root.join(candidate).is_file()
+    let Ok(root) = project_root.canonicalize() else {
+        return false;
+    };
+    let Ok(candidate) = root.join(path.trim()).canonicalize() else {
+        return false;
+    };
+    candidate.starts_with(&root) && candidate.is_file()
 }
 
 pub fn should_probe_asset_exists(path: &str) -> bool {
@@ -114,11 +107,7 @@ pub fn should_probe_asset_exists(path: &str) -> bool {
         return false;
     }
 
-    p.contains('/')
-        || p.contains('\\')
-        || Path::new(p).extension().is_some()
-        || p.starts_with("assets/")
-        || p.starts_with("assets\\")
+    p.contains('/') || Path::new(p).extension().is_some() || p.starts_with("assets/")
 }
 
 pub fn is_unsafe_asset_ref(path: &str) -> bool {
@@ -129,7 +118,11 @@ pub fn is_unsafe_asset_ref(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     path.starts_with('/')
         || path.starts_with('\\')
+        || path.contains('\\')
         || lower.contains("://")
+        || lower.contains("%2e")
+        || lower.contains("%2f")
+        || lower.contains("%5c")
         || path.chars().nth(1).is_some_and(|second| {
             second == ':' && path.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
         })

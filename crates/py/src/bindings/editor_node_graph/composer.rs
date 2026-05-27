@@ -1,15 +1,14 @@
 use visual_novel_engine::authoring::composer::{
     apply_layer_overrides, compose_scene_snapshot as build_composer_snapshot,
-    list_layered_objects as collect_layered_objects, move_scene_object as apply_scene_object_move,
-    set_layer_locked, set_layer_visible,
+    list_layered_objects as collect_layered_objects,
 };
-use visual_novel_engine::authoring::{OperationKind, StoryNode};
+use visual_novel_engine::authoring::{AuthoringCommand, AuthoringDocumentCommand, StoryNode};
 
 use super::super::api_v2::{
     stage_layer_names, PyComposerPreviewSession, PyComposerSnapshot, PyLayeredSceneObject,
     PyOperationLogEntry, PyVerificationRun,
 };
-use super::{PyNodeGraph, PythonOperation};
+use super::PyNodeGraph;
 
 impl PyNodeGraph {
     pub(super) fn py_operation_log(&self) -> Vec<PyOperationLogEntry> {
@@ -62,51 +61,17 @@ impl PyNodeGraph {
     }
 
     pub(super) fn py_set_layer_visible(&mut self, object_id: &str, visible: bool) {
-        let before_value = self
-            .layer_overrides
-            .get(object_id)
-            .and_then(|override_| serde_json::to_string(override_).ok());
-        let before = self.trace_before_mutation();
-        set_layer_visible(&mut self.layer_overrides, object_id, visible);
-        let after_value = self
-            .layer_overrides
-            .get(object_id)
-            .and_then(|override_| serde_json::to_string(override_).ok());
-        if before_value != after_value {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::LayerVisibilityChanged,
-                    format!("Set layer {object_id} visible={visible} from Python"),
-                )
-                .with_field_path(format!("composer.objects[{object_id}].visible"))
-                .with_values(before_value, after_value),
-                before,
-            );
-        }
+        let _ = self.apply_document_command(AuthoringDocumentCommand::SetLayerVisible {
+            object_id: object_id.to_string(),
+            visible,
+        });
     }
 
     pub(super) fn py_set_layer_locked(&mut self, object_id: &str, locked: bool) {
-        let before_value = self
-            .layer_overrides
-            .get(object_id)
-            .and_then(|override_| serde_json::to_string(override_).ok());
-        let before = self.trace_before_mutation();
-        set_layer_locked(&mut self.layer_overrides, object_id, locked);
-        let after_value = self
-            .layer_overrides
-            .get(object_id)
-            .and_then(|override_| serde_json::to_string(override_).ok());
-        if before_value != after_value {
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::LayerLockChanged,
-                    format!("Set layer {object_id} locked={locked} from Python"),
-                )
-                .with_field_path(format!("composer.objects[{object_id}].locked"))
-                .with_values(before_value, after_value),
-                before,
-            );
-        }
+        let _ = self.apply_document_command(AuthoringDocumentCommand::SetLayerLocked {
+            object_id: object_id.to_string(),
+            locked,
+        });
     }
 
     pub(super) fn py_move_scene_object(
@@ -123,22 +88,13 @@ impl PyNodeGraph {
         {
             return false;
         }
-        let before_value = self.layered_object_json(object_id);
-        let before = self.trace_before_mutation();
-        let changed = apply_scene_object_move(&mut self.inner, object_id, x, y, scale);
-        if changed {
-            let after_value = self.layered_object_json(object_id);
-            self.record_python_operation(
-                PythonOperation::new(
-                    OperationKind::ComposerObjectMoved,
-                    format!("Moved composer object {object_id} from Python"),
-                )
-                .with_field_path(format!("composer.objects[{object_id}].position"))
-                .with_values(before_value, after_value),
-                before,
-            );
-        }
-        changed
+        self.apply_authoring_command(AuthoringCommand::MoveLayer {
+            object_id: object_id.to_string(),
+            x,
+            y,
+            scale,
+        })
+        .is_ok()
     }
 
     pub(super) fn py_preview_start_from_node(
@@ -149,51 +105,20 @@ impl PyNodeGraph {
     }
 
     pub(super) fn py_edit_dialogue(&mut self, node_id: u32, speaker: &str, text: &str) -> bool {
-        let before_value = node_json(&self.inner, node_id);
-        let before = self.trace_before_mutation();
-        let Some(StoryNode::Dialogue {
-            speaker: current_speaker,
-            text: current_text,
-        }) = self.inner.get_node_mut(node_id)
-        else {
-            return false;
-        };
-        if current_speaker == speaker && current_text == text {
-            return false;
-        }
-        *current_speaker = speaker.to_string();
-        *current_text = text.to_string();
-        self.record_field_edit(
+        self.apply_authoring_command(AuthoringCommand::EditDialogue {
             node_id,
-            "dialogue",
-            "Edited dialogue overlay from Python",
-            before_value,
-            before,
-        );
-        true
+            speaker: speaker.to_string(),
+            text: text.to_string(),
+        })
+        .is_ok()
     }
 
     pub(super) fn py_edit_choice_prompt(&mut self, node_id: u32, prompt: &str) -> bool {
-        let before_value = node_json(&self.inner, node_id);
-        let before = self.trace_before_mutation();
-        let Some(StoryNode::Choice {
-            prompt: current, ..
-        }) = self.inner.get_node_mut(node_id)
-        else {
-            return false;
-        };
-        if current == prompt {
-            return false;
-        }
-        *current = prompt.to_string();
-        self.record_field_edit(
+        self.apply_authoring_command(AuthoringCommand::EditChoicePrompt {
             node_id,
-            "choice.prompt",
-            "Edited choice prompt from Python",
-            before_value,
-            before,
-        );
-        true
+            prompt: prompt.to_string(),
+        })
+        .is_ok()
     }
 
     pub(super) fn py_edit_choice_option_text(
@@ -202,26 +127,12 @@ impl PyNodeGraph {
         option_index: usize,
         text: &str,
     ) -> bool {
-        let before_value = node_json(&self.inner, node_id);
-        let before = self.trace_before_mutation();
-        let Some(StoryNode::Choice { options, .. }) = self.inner.get_node_mut(node_id) else {
-            return false;
-        };
-        let Some(option) = options.get_mut(option_index) else {
-            return false;
-        };
-        if option == text {
-            return false;
-        }
-        *option = text.to_string();
-        self.record_field_edit(
+        self.apply_authoring_command(AuthoringCommand::EditChoiceOptionText {
             node_id,
-            &format!("choice.options[{option_index}].text"),
-            "Edited choice option text from Python",
-            before_value,
-            before,
-        );
-        true
+            option_index,
+            text: text.to_string(),
+        })
+        .is_ok()
     }
 
     pub(super) fn py_reorder_choice_option(
@@ -230,31 +141,12 @@ impl PyNodeGraph {
         from_index: usize,
         to_index: usize,
     ) -> bool {
-        let before_value = node_json(&self.inner, node_id);
-        let before = self.trace_before_mutation();
-        let option_count = match self.inner.get_node_mut(node_id) {
-            Some(StoryNode::Choice { options, .. }) => {
-                if from_index >= options.len()
-                    || to_index >= options.len()
-                    || from_index == to_index
-                {
-                    return false;
-                }
-                let option = options.remove(from_index);
-                options.insert(to_index, option);
-                options.len()
-            }
-            _ => return false,
-        };
-        remap_choice_connections(&mut self.inner, node_id, option_count, from_index, to_index);
-        self.record_field_edit(
+        self.apply_authoring_command(AuthoringCommand::ReorderChoiceOption {
             node_id,
-            "choice.options",
-            "Reordered choice options from Python",
-            before_value,
-            before,
-        );
-        true
+            from_index,
+            to_index,
+        })
+        .is_ok()
     }
 
     pub(super) fn py_set_choice_option_target(
@@ -269,94 +161,11 @@ impl PyNodeGraph {
         if option_index >= options.len() {
             return false;
         }
-        let before_value = node_json(&self.inner, node_id);
-        let before_connections = self.connections_tuple();
-        let before = self.trace_before_mutation();
-        match target_node_id {
-            Some(target) if self.inner.get_node(target).is_some() => {
-                self.inner.connect_port(node_id, option_index, target);
-            }
-            Some(_) => return false,
-            None => self.inner.disconnect_port(node_id, option_index),
-        }
-        if self.connections_tuple() == before_connections {
-            return false;
-        }
-        self.record_field_edit(
+        self.apply_authoring_command(AuthoringCommand::SetChoiceOptionTarget {
             node_id,
-            &format!("choice.options[{option_index}].target"),
-            "Edited choice option target from Python",
-            before_value,
-            before,
-        );
-        true
-    }
-
-    fn record_field_edit(
-        &mut self,
-        node_id: u32,
-        field: &str,
-        details: &str,
-        before_value: Option<String>,
-        before: super::PythonOperationTrace,
-    ) {
-        self.record_python_operation(
-            PythonOperation::new(
-                OperationKind::FieldEdited,
-                format!("{details} on node {node_id}"),
-            )
-            .with_field_path(format!("graph.nodes[{node_id}].{field}"))
-            .with_values(before_value, node_json(&self.inner, node_id)),
-            before,
-        );
-    }
-
-    fn connections_tuple(&self) -> Vec<(u32, usize, u32)> {
-        self.inner
-            .connections()
-            .map(|connection| (connection.from, connection.from_port, connection.to))
-            .collect()
-    }
-}
-
-fn node_json(graph: &visual_novel_engine::authoring::NodeGraph, node_id: u32) -> Option<String> {
-    graph
-        .get_node(node_id)
-        .and_then(|node| serde_json::to_string(node).ok())
-}
-
-fn remap_choice_connections(
-    graph: &mut visual_novel_engine::authoring::NodeGraph,
-    node_id: u32,
-    option_count: usize,
-    from_index: usize,
-    to_index: usize,
-) {
-    let connections = graph
-        .connections()
-        .filter(|connection| connection.from == node_id && connection.from_port < option_count)
-        .map(|connection| (connection.from_port, connection.to))
-        .collect::<Vec<_>>();
-    for (port, _) in &connections {
-        graph.disconnect_port(node_id, *port);
-    }
-    for (old_port, target) in connections {
-        graph.connect_port(
-            node_id,
-            remapped_port(old_port, from_index, to_index),
-            target,
-        );
-    }
-}
-
-fn remapped_port(old_port: usize, from_index: usize, to_index: usize) -> usize {
-    match from_index.cmp(&to_index) {
-        std::cmp::Ordering::Less if old_port == from_index => to_index,
-        std::cmp::Ordering::Less if old_port > from_index && old_port <= to_index => old_port - 1,
-        std::cmp::Ordering::Greater if old_port == from_index => to_index,
-        std::cmp::Ordering::Greater if old_port >= to_index && old_port < from_index => {
-            old_port + 1
-        }
-        _ => old_port,
+            option_index,
+            target_node_id,
+        })
+        .is_ok()
     }
 }

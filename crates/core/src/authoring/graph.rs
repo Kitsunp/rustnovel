@@ -3,8 +3,10 @@ use std::collections::{HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::VnResult;
+use crate::event::CharacterPlacementRaw;
+use crate::script::ScriptRaw;
 use crate::{analyze_flow_graph, FlowGraphAnalysis};
-use crate::{CharacterPlacementRaw, ScriptRaw, VnResult};
 
 use super::script_sync;
 use super::{AuthoringPosition, StoryNode};
@@ -92,6 +94,10 @@ impl NodeGraph {
         self.nodes.push((id, node, pos));
         self.modified = true;
         id
+    }
+
+    pub fn next_node_id(&self) -> u32 {
+        self.next_id
     }
 
     pub fn add_node_with_id(&mut self, id: u32, node: StoryNode, pos: AuthoringPosition) -> bool {

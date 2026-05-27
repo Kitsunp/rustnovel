@@ -1,7 +1,7 @@
-use visual_novel_engine::EventCompiled;
+use visual_novel_engine::runtime::EventCompiled;
 
 pub fn history_bytes(
-    history: &std::collections::VecDeque<visual_novel_engine::DialogueCompiled>,
+    history: &std::collections::VecDeque<visual_novel_engine::runtime::DialogueCompiled>,
 ) -> usize {
     history
         .iter()

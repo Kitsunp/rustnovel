@@ -10,6 +10,3 @@ pub use report::{
     ReproMonitor, ReproMonitorResult, ReproOracle, ReproRunReport, ReproStepTrace, ReproStopReason,
 };
 pub use run::{run_repro_case, run_repro_case_with_limits};
-
-#[cfg(test)]
-mod tests;

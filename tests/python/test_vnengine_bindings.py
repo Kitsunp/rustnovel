@@ -143,6 +143,23 @@ class NativeBindingsTests(unittest.TestCase):
         if hasattr(engine, "last_ext_call_error"):
             self.assertIsNone(engine.last_ext_call_error())
 
+    def test_ext_call_handler_is_denied_without_explicit_capability(self):
+        if not self._supports_ext_call():
+            self.fail("Native engine without ext_call support")
+
+        engine = self.native.Engine(self._ext_call_script_json())
+        calls = []
+
+        def handler(command, args):
+            calls.append((command, args))
+
+        engine.register_handler(handler)
+        result = engine.step()
+        self.assertEqual(result.event["type"], "ext_call")
+        self.assertEqual(calls, [])
+        if hasattr(engine, "last_ext_call_error"):
+            self.assertIn("denied", engine.last_ext_call_error())
+
     def test_audio_controller_and_prefetch_api(self):
         engine = self.native.Engine(self._dialogue_script_json())
         if not hasattr(engine, "set_prefetch_depth"):

@@ -1,6 +1,6 @@
 use visual_novel_engine::{
-    Engine, ResourceLimiter, ScriptCompiled, ScriptRaw, SecurityPolicy, StateDigest, TraceUiView,
-    UiTrace, SCRIPT_SCHEMA_VERSION,
+    runtime::{Engine, ScriptCompiled, ScriptRaw, StateDigest, TraceUiView, UiTrace},
+    ResourceLimiter, SecurityPolicy, SCRIPT_SCHEMA_VERSION,
 };
 
 fn run_engine(mut engine: Engine, max_steps: usize) -> UiTrace {
@@ -14,7 +14,7 @@ fn run_engine(mut engine: Engine, max_steps: usize) -> UiTrace {
         let state = StateDigest::from_state(engine.state(), engine.script().flag_count as usize);
         trace.push(step as u32, view, state);
         match &event {
-            visual_novel_engine::EventCompiled::Choice(_) => {
+            visual_novel_engine::runtime::EventCompiled::Choice(_) => {
                 let _ = engine.choose(0);
             }
             _ => {

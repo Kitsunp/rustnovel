@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::asset_refs::collect_script_asset_refs;
 use crate::authoring::is_unsafe_asset_ref;
 use crate::error::VnResult;
-use crate::event::{CharacterPatchRaw, CharacterPlacementRaw, EventRaw, ScenePatchRaw};
-use crate::ScriptRaw;
+use crate::script::ScriptRaw;
 
 use super::helpers::{
     canonicalize_within_root, invalid_bundle, normalize_path_display, sanitize_relative_path,
@@ -87,54 +87,4 @@ fn resolve_asset_reference(project_root: &Path, asset_ref: &str) -> VnResult<(Pa
         )));
     }
     Ok((source, source_rel))
-}
-
-fn collect_script_asset_refs(script: &ScriptRaw) -> Vec<String> {
-    let mut refs = BTreeSet::new();
-    for event in &script.events {
-        collect_event_asset_refs(event, &mut refs);
-    }
-    refs.into_iter().collect()
-}
-
-fn collect_event_asset_refs(event: &EventRaw, refs: &mut BTreeSet<String>) {
-    match event {
-        EventRaw::Scene(scene) => {
-            push_optional_asset_ref(&scene.background, refs);
-            push_optional_asset_ref(&scene.music, refs);
-            collect_character_assets(&scene.characters, refs);
-        }
-        EventRaw::Patch(patch) => collect_patch_asset_refs(patch, refs),
-        EventRaw::AudioAction(action) => push_optional_asset_ref(&action.asset, refs),
-        _ => {}
-    }
-}
-
-fn collect_patch_asset_refs(patch: &ScenePatchRaw, refs: &mut BTreeSet<String>) {
-    push_optional_asset_ref(&patch.background, refs);
-    push_optional_asset_ref(&patch.music, refs);
-    collect_character_assets(&patch.add, refs);
-    collect_character_patch_assets(&patch.update, refs);
-}
-
-fn collect_character_assets(characters: &[CharacterPlacementRaw], refs: &mut BTreeSet<String>) {
-    for character in characters {
-        push_optional_asset_ref(&character.expression, refs);
-    }
-}
-
-fn collect_character_patch_assets(characters: &[CharacterPatchRaw], refs: &mut BTreeSet<String>) {
-    for character in characters {
-        push_optional_asset_ref(&character.expression, refs);
-    }
-}
-
-fn push_optional_asset_ref(value: &Option<String>, refs: &mut BTreeSet<String>) {
-    if let Some(value) = value
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        refs.insert(value.to_string());
-    }
 }

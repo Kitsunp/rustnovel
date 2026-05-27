@@ -1,5 +1,5 @@
 use super::render::byte_index_for_char;
-use visual_novel_engine::{Engine, EventCompiled};
+use visual_novel_engine::runtime::{Engine, EventCompiled};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SkipMode {
@@ -54,7 +54,7 @@ impl Default for PlayerSessionState {
 }
 
 impl PlayerSessionState {
-    pub(crate) fn on_position_changed(&mut self, position: u32, now_sec: f64) -> bool {
+    pub fn on_position_changed(&mut self, position: u32, now_sec: f64) -> bool {
         if self.current_ip != Some(position) {
             self.current_ip = Some(position);
             self.line_started_at_sec = now_sec;
@@ -69,17 +69,17 @@ impl PlayerSessionState {
         self.last_auto_step_at_sec = None;
     }
 
-    pub(crate) fn reset_for_restart(&mut self, now_sec: f64) {
+    pub fn reset_for_restart(&mut self, now_sec: f64) {
         self.reset_runtime_progress(now_sec);
     }
 
-    pub(crate) fn reveal_current_line(&mut self, text: &str, now_sec: f64) {
+    pub fn reveal_current_line(&mut self, text: &str, now_sec: f64) {
         let cps = self.text_chars_per_second.max(1.0) as f64;
         let needed = (text.chars().count() as f64) / cps;
         self.line_started_at_sec = now_sec - needed;
     }
 
-    pub(crate) fn visible_text<'a>(&self, text: &'a str, now_sec: f64) -> &'a str {
+    pub fn visible_text<'a>(&self, text: &'a str, now_sec: f64) -> &'a str {
         if text.is_empty() {
             return text;
         }
@@ -94,11 +94,11 @@ impl PlayerSessionState {
         &text[..byte_end]
     }
 
-    pub(crate) fn is_text_fully_revealed(&self, text: &str, now_sec: f64) -> bool {
+    pub fn is_text_fully_revealed(&self, text: &str, now_sec: f64) -> bool {
         self.visible_text(text, now_sec).len() == text.len()
     }
 
-    pub(crate) fn should_skip_current(&self, event: &EventCompiled, engine: &Engine) -> bool {
+    pub fn should_skip_current(&self, event: &EventCompiled, engine: &Engine) -> bool {
         match self.skip_mode {
             SkipMode::Off => false,
             SkipMode::ReadOnly => {
@@ -108,7 +108,7 @@ impl PlayerSessionState {
         }
     }
 
-    pub(crate) fn autoplay_ready(&self, now_sec: f64) -> bool {
+    pub fn autoplay_ready(&self, now_sec: f64) -> bool {
         if !self.autoplay_enabled {
             return false;
         }
@@ -118,7 +118,7 @@ impl PlayerSessionState {
         }
     }
 
-    pub(crate) fn mark_auto_step(&mut self, now_sec: f64) {
+    pub fn mark_auto_step(&mut self, now_sec: f64) {
         self.last_auto_step_at_sec = Some(now_sec);
     }
 }

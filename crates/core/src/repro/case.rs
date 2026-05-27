@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::clock::now_unix_ms;
 use crate::error::{VnError, VnResult};
 use crate::script::ScriptRaw;
 
@@ -110,13 +110,6 @@ impl ReproCase {
 
 fn default_max_steps() -> usize {
     DEFAULT_REPRO_MAX_STEPS
-}
-
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 fn default_environment_snapshot() -> BTreeMap<String, String> {

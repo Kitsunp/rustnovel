@@ -108,9 +108,10 @@ fn engine_emits_audio_command_on_scene_start() {
     .unwrap();
     let (audio_commands, change) = engine.step().unwrap();
     assert!(matches!(change.event, EventCompiled::Scene(_)));
-    assert!(audio_commands
-        .iter()
-        .any(|command| matches!(command, visual_novel_engine::AudioCommand::PlayBgm { .. })));
+    assert!(audio_commands.iter().any(|command| matches!(
+        command,
+        visual_novel_engine::runtime::AudioCommand::PlayBgm { .. }
+    )));
 }
 
 #[test]

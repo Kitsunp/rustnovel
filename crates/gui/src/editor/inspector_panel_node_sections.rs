@@ -1,19 +1,19 @@
 use eframe::egui;
-use visual_novel_engine::{
+use visual_novel_engine::runtime::{
     CharacterPatchRaw, CharacterPlacementRaw, CmpOp, CondRaw, ScenePatchRaw,
 };
 
 use super::{asset_fields, NodeEditActions};
 use crate::editor::{inspector_panel::InspectorAction, AssetFieldTarget, AssetImportKind};
 
-pub(super) struct SceneNodeRefs<'a> {
+pub struct SceneNodeRefs<'a> {
     pub profile: &'a mut Option<String>,
     pub background: &'a mut Option<String>,
     pub music: &'a mut Option<String>,
     pub characters: &'a mut Vec<CharacterPlacementRaw>,
 }
 
-pub(super) fn render_dialogue_node(
+pub fn render_dialogue_node(
     ui: &mut egui::Ui,
     speaker: &mut String,
     text: &mut String,
@@ -25,7 +25,7 @@ pub(super) fn render_dialogue_node(
     *standard_changed |= ui.text_edit_multiline(text).changed();
 }
 
-pub(super) fn render_choice_node(
+pub fn render_choice_node(
     ui: &mut egui::Ui,
     prompt: &mut String,
     options: &mut [String],
@@ -52,7 +52,7 @@ pub(super) fn render_choice_node(
     }
 }
 
-pub(super) fn render_scene_node(
+pub fn render_scene_node(
     ui: &mut egui::Ui,
     node_id: u32,
     scene: SceneNodeRefs<'_>,
@@ -185,7 +185,7 @@ pub(super) fn render_scene_node(
     }
 }
 
-pub(super) fn render_jump_if_node(
+pub fn render_jump_if_node(
     ui: &mut egui::Ui,
     target: &mut String,
     cond: &mut CondRaw,
@@ -273,7 +273,7 @@ pub(super) fn render_jump_if_node(
     }
 }
 
-pub(super) fn render_scene_patch_node(
+pub fn render_scene_patch_node(
     ui: &mut egui::Ui,
     node_id: u32,
     patch: &mut ScenePatchRaw,
@@ -374,7 +374,7 @@ pub(super) fn render_scene_patch_node(
     );
 }
 
-pub(super) fn render_transition_node(
+pub fn render_transition_node(
     ui: &mut egui::Ui,
     kind: &mut String,
     duration_ms: &mut u32,
@@ -393,7 +393,7 @@ pub(super) fn render_transition_node(
     edit_optional_text(ui, "Color (Hex/Name):", color, standard_changed);
 }
 
-pub(super) fn render_character_placement_node(
+pub fn render_character_placement_node(
     ui: &mut egui::Ui,
     name: &mut String,
     x: &mut i32,

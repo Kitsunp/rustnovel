@@ -2,12 +2,12 @@ use std::time::Duration;
 
 use eframe::egui;
 use tracing::info;
-use visual_novel_engine::{AudioCommand, ChoiceOptionCompiled, Engine};
+use visual_novel_engine::runtime::{AudioCommand, ChoiceOptionCompiled, Engine};
 
 use super::super::super::node_types::ToastState;
 use super::super::state::PlayerSessionState;
 
-pub(super) fn transition_kind_label(kind: u8) -> &'static str {
+pub fn transition_kind_label(kind: u8) -> &'static str {
     match kind {
         0 => "fade",
         1 => "dissolve",
@@ -16,7 +16,7 @@ pub(super) fn transition_kind_label(kind: u8) -> &'static str {
     }
 }
 
-pub(super) fn render_transition(
+pub fn render_transition(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
     engine: &mut Engine,
@@ -60,7 +60,7 @@ pub(super) fn render_transition(
     }
 }
 
-pub(super) fn render_dialogue(
+pub fn render_dialogue(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
     player: &mut PlayerSessionState,
@@ -118,7 +118,7 @@ pub(super) fn render_dialogue(
     should_advance
 }
 
-pub(super) fn render_choice(
+pub fn render_choice(
     ui: &mut egui::Ui,
     engine: &mut Engine,
     toast: &mut Option<ToastState>,
@@ -157,11 +157,7 @@ pub(super) fn render_choice(
     }
 }
 
-pub(super) fn render_scene(
-    ui: &mut egui::Ui,
-    player: &mut PlayerSessionState,
-    now_sec: f64,
-) -> bool {
+pub fn render_scene(ui: &mut egui::Ui, player: &mut PlayerSessionState, now_sec: f64) -> bool {
     if ui.button("Continue").clicked() {
         return true;
     }
@@ -172,7 +168,7 @@ pub(super) fn render_scene(
     false
 }
 
-pub(super) fn render_end(
+pub fn render_end(
     ui: &mut egui::Ui,
     engine: &mut Engine,
     toast: &mut Option<ToastState>,

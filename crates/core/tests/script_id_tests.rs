@@ -1,4 +1,4 @@
-use visual_novel_engine::{compute_script_id, ScriptRaw, SCRIPT_SCHEMA_VERSION};
+use visual_novel_engine::{compute_script_id, runtime::ScriptRaw, SCRIPT_SCHEMA_VERSION};
 
 #[test]
 fn compiled_script_id_is_deterministic() {

@@ -1,5 +1,6 @@
 use visual_novel_engine::{
-    Engine, ResourceLimiter, ScriptRaw, SecurityPolicy, StateDigest, TraceUiView, UiTrace,
+    runtime::{Engine, ScriptRaw, StateDigest, TraceUiView, UiTrace},
+    ResourceLimiter, SecurityPolicy,
 };
 
 /// Helper to execute a script and capture its trace.
@@ -28,7 +29,7 @@ pub fn run_headless(script_json: &str, max_steps: usize) -> UiTrace {
 
         // Auto-advance (for choices, pick option 0)
         match &event {
-            visual_novel_engine::EventCompiled::Choice(_) => {
+            visual_novel_engine::runtime::EventCompiled::Choice(_) => {
                 let _ = engine.choose(0);
             }
             _ => {

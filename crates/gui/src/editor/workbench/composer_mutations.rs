@@ -1,6 +1,8 @@
 use super::*;
 use crate::editor::StoryNode;
-use visual_novel_engine::authoring::{composer, AuthoringCommand, AuthoringCommandBus};
+use visual_novel_engine::authoring::{
+    composer, AuthoringCommand, AuthoringCommandBus, AuthoringDelta,
+};
 
 struct MutationRecord {
     kind: &'static str,
@@ -19,7 +21,7 @@ struct CharacterPositionEdit {
 }
 
 impl EditorWorkbench {
-    pub(crate) fn apply_composer_node_mutation(
+    pub fn apply_composer_node_mutation(
         &mut self,
         node_id: u32,
         mutation: crate::editor::visual_composer::ComposerNodeMutation,
@@ -98,18 +100,11 @@ impl EditorWorkbench {
         speaker: String,
         text: String,
     ) -> Option<MutationRecord> {
-        let Some(StoryNode::Dialogue {
-            speaker: current_speaker,
-            text: current_text,
-        }) = self.node_graph.get_node_mut(node_id)
-        else {
-            return None;
-        };
-        if *current_speaker == speaker && *current_text == text {
-            return None;
-        }
-        *current_speaker = speaker;
-        *current_text = text;
+        self.apply_node_graph_command(AuthoringCommand::EditDialogue {
+            node_id,
+            speaker,
+            text,
+        })?;
         Some(field_record(
             node_id,
             "dialogue",
@@ -122,16 +117,7 @@ impl EditorWorkbench {
         node_id: u32,
         prompt: String,
     ) -> Option<MutationRecord> {
-        let Some(StoryNode::Choice {
-            prompt: current, ..
-        }) = self.node_graph.get_node_mut(node_id)
-        else {
-            return None;
-        };
-        if *current == prompt {
-            return None;
-        }
-        *current = prompt;
+        self.apply_node_graph_command(AuthoringCommand::EditChoicePrompt { node_id, prompt })?;
         Some(field_record(
             node_id,
             "choice.prompt",
@@ -145,14 +131,11 @@ impl EditorWorkbench {
         option_index: usize,
         text: String,
     ) -> Option<MutationRecord> {
-        let Some(StoryNode::Choice { options, .. }) = self.node_graph.get_node_mut(node_id) else {
-            return None;
-        };
-        let option = options.get_mut(option_index)?;
-        if *option == text {
-            return None;
-        }
-        *option = text;
+        self.apply_node_graph_command(AuthoringCommand::EditChoiceOptionText {
+            node_id,
+            option_index,
+            text,
+        })?;
         Some(field_record(
             node_id,
             &format!("choice.options[{option_index}].text"),
@@ -166,21 +149,11 @@ impl EditorWorkbench {
         from_index: usize,
         to_index: usize,
     ) -> Option<MutationRecord> {
-        let option_count = match self.node_graph.get_node_mut(node_id)? {
-            StoryNode::Choice { options, .. } => {
-                if from_index >= options.len()
-                    || to_index >= options.len()
-                    || from_index == to_index
-                {
-                    return None;
-                }
-                let option = options.remove(from_index);
-                options.insert(to_index, option);
-                options.len()
-            }
-            _ => return None,
-        };
-        self.remap_choice_connections_after_move(node_id, option_count, from_index, to_index);
+        self.apply_node_graph_command(AuthoringCommand::ReorderChoiceOption {
+            node_id,
+            from_index,
+            to_index,
+        })?;
         Some(field_record(
             node_id,
             "choice.options",
@@ -208,7 +181,11 @@ impl EditorWorkbench {
                 if already_connected {
                     return None;
                 }
-                self.connect_choice_target_with_command_bus(node_id, option_index, target);
+                self.apply_node_graph_command(AuthoringCommand::SetChoiceOptionTarget {
+                    node_id,
+                    option_index,
+                    target_node_id: Some(target),
+                })?;
             }
             Some(_) => return None,
             None => {
@@ -219,26 +196,14 @@ impl EditorWorkbench {
                 if !had_connection {
                     return None;
                 }
-                self.node_graph.disconnect_port(node_id, option_index);
+                self.apply_node_graph_command(AuthoringCommand::SetChoiceOptionTarget {
+                    node_id,
+                    option_index,
+                    target_node_id: None,
+                })?;
             }
         }
         Some(choice_target_record(node_id, option_index, target_node_id))
-    }
-
-    fn connect_choice_target_with_command_bus(
-        &mut self,
-        node_id: u32,
-        option_index: usize,
-        target: u32,
-    ) {
-        let mut bus = AuthoringCommandBus::new(self.node_graph.authoring_graph().clone());
-        bus.apply(AuthoringCommand::Connect {
-            from: node_id,
-            from_port: option_index,
-            to: target,
-        })
-        .expect("valid composer choice target should connect through AuthoringCommandBus");
-        self.node_graph.replace_authoring_graph(bus.graph().clone());
     }
 
     fn apply_character_position_mutation(
@@ -254,32 +219,12 @@ impl EditorWorkbench {
             CommandBusMoveResult::Unsupported => {}
         }
 
-        let node = self.node_graph.get_node_mut(node_id)?;
-        let changed = match node {
-            StoryNode::CharacterPlacement {
-                name: node_name,
-                x: node_x,
-                y: node_y,
-                scale: node_scale,
-            } => update_character_placement_node(node_name, node_x, node_y, node_scale, edit),
-            StoryNode::Scene { characters, .. } => update_character_list_position(characters, edit),
-            StoryNode::ScenePatch(patch) => update_character_list_position(&mut patch.add, edit),
-            StoryNode::Generic(visual_novel_engine::EventRaw::SetCharacterPosition(pos)) => {
-                let changed = pos.name != edit.name
-                    || pos.x != edit.x
-                    || pos.y != edit.y
-                    || pos.scale != edit.scale;
-                if changed {
-                    pos.name = edit.name;
-                    pos.x = edit.x;
-                    pos.y = edit.y;
-                    pos.scale = edit.scale;
-                }
-                changed
-            }
-            _ => false,
-        };
-        changed.then(|| character_position_record(node_id))
+        let replacement = character_position_replacement(self.node_graph.get_node(node_id)?, edit)?;
+        self.apply_node_graph_command(AuthoringCommand::EditNode {
+            node_id,
+            replacement,
+        })?;
+        Some(character_position_record(node_id))
     }
 
     fn apply_character_position_with_command_bus(
@@ -314,27 +259,11 @@ impl EditorWorkbench {
         CommandBusMoveResult::Applied
     }
 
-    fn remap_choice_connections_after_move(
-        &mut self,
-        node_id: u32,
-        option_count: usize,
-        from_index: usize,
-        to_index: usize,
-    ) {
-        let mut connections = self
-            .node_graph
-            .connections()
-            .filter(|conn| conn.from == node_id && conn.from_port < option_count)
-            .map(|conn| (conn.from_port, conn.to))
-            .collect::<Vec<_>>();
-        connections.sort_unstable();
-        for (port, _) in &connections {
-            self.node_graph.disconnect_port(node_id, *port);
-        }
-        for (old_port, target) in connections {
-            let new_port = remapped_port(old_port, from_index, to_index);
-            self.node_graph.connect_port(node_id, new_port, target);
-        }
+    fn apply_node_graph_command(&mut self, command: AuthoringCommand) -> Option<AuthoringDelta> {
+        let mut bus = AuthoringCommandBus::new(self.node_graph.authoring_graph().clone());
+        let outcome = bus.apply(command).ok()?;
+        self.node_graph.replace_authoring_graph(bus.graph().clone());
+        Some(outcome.delta)
     }
 }
 
@@ -389,7 +318,7 @@ fn update_character_placement_node(
 }
 
 fn update_character_list_position(
-    characters: &mut Vec<visual_novel_engine::CharacterPlacementRaw>,
+    characters: &mut Vec<visual_novel_engine::runtime::CharacterPlacementRaw>,
     edit: CharacterPositionEdit,
 ) -> bool {
     if let Some(character) = find_character_placement_mut(
@@ -408,7 +337,7 @@ fn update_character_list_position(
         }
         return changed;
     }
-    characters.push(visual_novel_engine::CharacterPlacementRaw {
+    characters.push(visual_novel_engine::runtime::CharacterPlacementRaw {
         name: edit.name,
         expression: edit.expression,
         position: None,
@@ -419,12 +348,41 @@ fn update_character_list_position(
     true
 }
 
+fn character_position_replacement(
+    node: &StoryNode,
+    edit: CharacterPositionEdit,
+) -> Option<StoryNode> {
+    let mut replacement = node.clone();
+    let changed = match &mut replacement {
+        StoryNode::CharacterPlacement { name, x, y, scale } => {
+            update_character_placement_node(name, x, y, scale, edit)
+        }
+        StoryNode::Scene { characters, .. } => update_character_list_position(characters, edit),
+        StoryNode::ScenePatch(patch) => update_character_list_position(&mut patch.add, edit),
+        StoryNode::Generic(visual_novel_engine::runtime::EventRaw::SetCharacterPosition(pos)) => {
+            let changed = pos.name != edit.name
+                || pos.x != edit.x
+                || pos.y != edit.y
+                || pos.scale != edit.scale;
+            if changed {
+                pos.name = edit.name;
+                pos.x = edit.x;
+                pos.y = edit.y;
+                pos.scale = edit.scale;
+            }
+            changed
+        }
+        _ => false,
+    };
+    changed.then_some(replacement)
+}
+
 fn find_character_placement_mut<'a>(
-    characters: &'a mut [visual_novel_engine::CharacterPlacementRaw],
+    characters: &'a mut [visual_novel_engine::runtime::CharacterPlacementRaw],
     name: &str,
     expression: Option<&str>,
     source_instance_index: usize,
-) -> Option<&'a mut visual_novel_engine::CharacterPlacementRaw> {
+) -> Option<&'a mut visual_novel_engine::runtime::CharacterPlacementRaw> {
     let mut seen = 0usize;
     for character in characters {
         if character.name == name && character.expression.as_deref() == expression {
@@ -435,18 +393,6 @@ fn find_character_placement_mut<'a>(
         }
     }
     None
-}
-
-fn remapped_port(old_port: usize, from_index: usize, to_index: usize) -> usize {
-    match from_index.cmp(&to_index) {
-        std::cmp::Ordering::Less if old_port == from_index => to_index,
-        std::cmp::Ordering::Less if old_port > from_index && old_port <= to_index => old_port - 1,
-        std::cmp::Ordering::Greater if old_port == from_index => to_index,
-        std::cmp::Ordering::Greater if old_port >= to_index && old_port < from_index => {
-            old_port + 1
-        }
-        _ => old_port,
-    }
 }
 
 fn field_record(node_id: u32, field: &str, details: &str) -> MutationRecord {

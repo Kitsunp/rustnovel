@@ -1,14 +1,14 @@
 use super::*;
 
 impl EditorWorkbench {
-    pub(crate) fn player_visual_preferences(&self) -> crate::editor::PlayerVisualPreferences {
+    pub fn player_visual_preferences(&self) -> crate::editor::PlayerVisualPreferences {
         crate::editor::PlayerVisualPreferences {
             preview_quality: self.composer_preview_quality,
             stage_fit: self.composer_stage_fit,
         }
     }
 
-    pub(super) fn render_player_mode(&mut self, ctx: &egui::Context) {
+    pub fn render_player_mode(&mut self, ctx: &egui::Context) {
         self.ensure_player_audio_backend();
         let stage_resolution = self
             .manifest

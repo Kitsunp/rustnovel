@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 
 use visual_novel_engine::{
-    CharacterPatchRaw, CharacterPlacementRaw, Engine, EventCompiled, EventRaw, RenderBackend,
-    ResourceLimiter, ScenePatchRaw, SceneUpdateRaw, ScriptRaw, SecurityPolicy,
-    SetCharacterPositionRaw, TextRenderer,
+    runtime::{
+        CharacterPatchRaw, CharacterPlacementRaw, Engine, EventCompiled, EventRaw, ScenePatchRaw,
+        SceneUpdateRaw, ScriptRaw, SetCharacterPositionRaw,
+    },
+    RenderBackend, ResourceLimiter, SecurityPolicy, TextRenderer,
 };
 
 fn sample_script() -> ScriptRaw {
@@ -20,24 +22,24 @@ fn sample_script() -> ScriptRaw {
                 scale: None,
             }],
         }),
-        EventRaw::Dialogue(visual_novel_engine::DialogueRaw {
+        EventRaw::Dialogue(visual_novel_engine::runtime::DialogueRaw {
             speaker: "Ava".to_string(),
             text: "Hola".to_string(),
         }),
-        EventRaw::Choice(visual_novel_engine::ChoiceRaw {
+        EventRaw::Choice(visual_novel_engine::runtime::ChoiceRaw {
             prompt: "Ir?".to_string(),
             options: vec![
-                visual_novel_engine::ChoiceOptionRaw {
+                visual_novel_engine::runtime::ChoiceOptionRaw {
                     text: "Si".to_string(),
                     target: "end".to_string(),
                 },
-                visual_novel_engine::ChoiceOptionRaw {
+                visual_novel_engine::runtime::ChoiceOptionRaw {
                     text: "No".to_string(),
                     target: "start".to_string(),
                 },
             ],
         }),
-        EventRaw::Dialogue(visual_novel_engine::DialogueRaw {
+        EventRaw::Dialogue(visual_novel_engine::runtime::DialogueRaw {
             speaker: "Ava".to_string(),
             text: "Fin".to_string(),
         }),
@@ -49,18 +51,20 @@ fn sample_script() -> ScriptRaw {
 }
 
 fn script_without_start_label() -> ScriptRaw {
-    let events = vec![EventRaw::Dialogue(visual_novel_engine::DialogueRaw {
-        speaker: "Ava".to_string(),
-        text: "Hola".to_string(),
-    })];
+    let events = vec![EventRaw::Dialogue(
+        visual_novel_engine::runtime::DialogueRaw {
+            speaker: "Ava".to_string(),
+            text: "Hola".to_string(),
+        },
+    )];
     let labels = BTreeMap::new();
     ScriptRaw::new(events, labels)
 }
 
 fn script_with_invalid_choice_target() -> ScriptRaw {
-    let events = vec![EventRaw::Choice(visual_novel_engine::ChoiceRaw {
+    let events = vec![EventRaw::Choice(visual_novel_engine::runtime::ChoiceRaw {
         prompt: "Ir?".to_string(),
-        options: vec![visual_novel_engine::ChoiceOptionRaw {
+        options: vec![visual_novel_engine::runtime::ChoiceOptionRaw {
             text: "Si".to_string(),
             target: "missing".to_string(),
         }],

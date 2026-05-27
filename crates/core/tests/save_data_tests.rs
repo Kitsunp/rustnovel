@@ -1,4 +1,4 @@
-use visual_novel_engine::{EngineState, SaveData, SaveError, SAVE_FORMAT_VERSION};
+use visual_novel_engine::{runtime::EngineState, SaveData, SaveError, SAVE_FORMAT_VERSION};
 
 #[test]
 fn save_data_roundtrip_binary_v2() {

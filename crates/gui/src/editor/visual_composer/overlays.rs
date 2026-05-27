@@ -1,13 +1,13 @@
 use eframe::egui;
 use std::collections::HashMap;
-use visual_novel_engine::{Engine, EventCompiled};
+use visual_novel_engine::runtime::{Engine, EventCompiled};
 
 use super::LayerOverride;
 use super::VisualComposerAction;
 use crate::editor::{ComposerPreviewMode, StoryNode};
 
 #[derive(Clone, Debug)]
-pub(crate) struct ChoiceOverlayLayout {
+pub struct ChoiceOverlayLayout {
     pub panel: egui::Rect,
     pub prompt_height: f32,
     pub options_viewport_height: f32,
@@ -15,7 +15,7 @@ pub(crate) struct ChoiceOverlayLayout {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum OverlaySource {
+pub enum OverlaySource {
     Dialogue {
         speaker: String,
         text: String,
@@ -29,7 +29,7 @@ pub(crate) enum OverlaySource {
     },
 }
 
-pub(crate) fn render_runtime_controls(
+pub fn render_runtime_controls(
     ui: &mut egui::Ui,
     engine: &Option<Engine>,
     action: &mut Option<VisualComposerAction>,
@@ -58,7 +58,7 @@ pub(crate) fn render_runtime_controls(
     }
 }
 
-pub(crate) fn render_runtime_overlay(
+pub fn render_runtime_overlay(
     ui: &mut egui::Ui,
     geometry: crate::editor::scene_stage::StageGeometry,
     engine: &Option<Engine>,
@@ -93,7 +93,7 @@ pub(crate) fn render_runtime_overlay(
     }
 }
 
-pub(crate) fn selected_overlay_source(
+pub fn selected_overlay_source(
     engine: Option<&Engine>,
     selected_authoring_node: Option<&StoryNode>,
     preview_mode: ComposerPreviewMode,
@@ -111,7 +111,7 @@ pub(crate) fn selected_overlay_source(
     }
 }
 
-pub(crate) fn runtime_overlay_visible(
+pub fn runtime_overlay_visible(
     event: &EventCompiled,
     layer_overrides: &HashMap<String, LayerOverride>,
 ) -> bool {
@@ -120,7 +120,7 @@ pub(crate) fn runtime_overlay_visible(
         .is_none_or(|override_state| override_state.visible)
 }
 
-pub(crate) fn runtime_overlay_object_id(event: &EventCompiled) -> Option<&'static str> {
+pub fn runtime_overlay_object_id(event: &EventCompiled) -> Option<&'static str> {
     match event {
         EventCompiled::Dialogue(_) => Some("overlay:dialogue"),
         EventCompiled::Choice(_) => Some("overlay:choice"),
@@ -305,7 +305,7 @@ fn render_choice_overlay(
     });
 }
 
-pub(crate) fn choice_overlay_layout(
+pub fn choice_overlay_layout(
     stage_rect: egui::Rect,
     prompt: &str,
     options: &[String],
@@ -354,7 +354,7 @@ fn estimate_wrapped_height(text: &str, width: f32, font_size: f32, min: f32, max
     (lines * (font_size + 6.0) + 12.0).clamp(min, max)
 }
 
-fn soft_wrap_long_tokens(text: &str, max_run: usize) -> String {
+pub fn soft_wrap_long_tokens(text: &str, max_run: usize) -> String {
     if max_run == 0 {
         return text.to_string();
     }
@@ -375,7 +375,3 @@ fn soft_wrap_long_tokens(text: &str, max_run: usize) -> String {
     }
     out
 }
-
-#[cfg(test)]
-#[path = "overlays_tests.rs"]
-mod tests;

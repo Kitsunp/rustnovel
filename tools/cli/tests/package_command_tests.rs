@@ -5,7 +5,8 @@ use std::process::Command;
 use tempfile::TempDir;
 use visual_novel_engine::{
     authoring::{AuthoringDocument, AuthoringPosition, NodeGraph, StoryNode},
-    AudioActionRaw, DialogueRaw, EventRaw, ProjectManifest, ScriptRaw,
+    runtime::{AudioActionRaw, DialogueRaw, EventRaw, ScriptRaw},
+    ProjectManifest,
 };
 
 fn build_project_fixture() -> (TempDir, std::path::PathBuf) {

@@ -1,7 +1,7 @@
-use std::collections::BTreeSet;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+
+use crate::clock::now_unix_ms;
 
 use super::{AuthoringReportFingerprint, DiagnosticTarget, FieldPath, LintIssue};
 
@@ -32,7 +32,6 @@ pub enum OperationKind {
     Redo,
     Revert,
     ReportImported,
-    Legacy(String),
 }
 
 impl OperationKind {
@@ -59,7 +58,6 @@ impl OperationKind {
             Self::Redo => "redo",
             Self::Revert => "revert",
             Self::ReportImported => "report_imported",
-            Self::Legacy(value) => value.as_str(),
         }
         .to_string()
     }
@@ -74,7 +72,6 @@ pub enum OperationStatus {
     Failed,
     NoOp,
     Stale,
-    Legacy(String),
 }
 
 impl OperationStatus {
@@ -86,20 +83,19 @@ impl OperationStatus {
             Self::Failed => "failed",
             Self::NoOp => "no_op",
             Self::Stale => "stale",
-            Self::Legacy(value) => value.as_str(),
         }
         .to_string()
     }
 
-    pub fn from_label(value: &str) -> Self {
+    pub fn from_label(value: &str) -> Option<Self> {
         match value {
-            "applied" => Self::Applied,
-            "applied_with_warnings" => Self::AppliedWithWarnings,
-            "rejected" => Self::Rejected,
-            "failed" => Self::Failed,
-            "no_op" => Self::NoOp,
-            "stale" => Self::Stale,
-            other => Self::Legacy(other.to_string()),
+            "applied" => Some(Self::Applied),
+            "applied_with_warnings" => Some(Self::AppliedWithWarnings),
+            "rejected" => Some(Self::Rejected),
+            "failed" => Some(Self::Failed),
+            "no_op" => Some(Self::NoOp),
+            "stale" => Some(Self::Stale),
+            _ => None,
         }
     }
 }
@@ -135,8 +131,7 @@ pub struct OperationLogEntry {
     #[serde(default)]
     pub after_value: Option<String>,
     pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status_v2: Option<OperationStatus>,
+    pub status_v2: OperationStatus,
     pub details: String,
 }
 
@@ -202,11 +197,11 @@ impl VerificationRun {
 impl OperationLogEntry {
     pub fn new_typed(
         operation_kind: OperationKind,
-        status: impl Into<String>,
+        status: OperationStatus,
         details: impl Into<String>,
     ) -> Self {
         let label = operation_kind.label();
-        let status = status.into();
+        let status_label = status.label();
         Self {
             schema: OPERATION_LOG_SCHEMA_V2.to_string(),
             operation_id: new_operation_id(),
@@ -225,27 +220,28 @@ impl OperationLogEntry {
             diagnostic_target: None,
             before_value: None,
             after_value: None,
-            status_v2: Some(OperationStatus::from_label(&status)),
-            status,
+            status_v2: status,
+            status: status_label,
             details: details.into(),
         }
     }
 
     pub fn new(
         operation_id: impl Into<String>,
-        operation_kind: impl Into<String>,
-        status: impl Into<String>,
+        operation_kind: OperationKind,
+        status: OperationStatus,
         details: impl Into<String>,
     ) -> Self {
-        let status = status.into();
+        let label = operation_kind.label();
+        let status_label = status.label();
         Self {
             schema: OPERATION_LOG_SCHEMA_V2.to_string(),
             operation_id: operation_id.into(),
             session_id: None,
             author_id: None,
             created_unix_ms: now_unix_ms(),
-            operation_kind: operation_kind.into(),
-            operation_kind_v2: None,
+            operation_kind: label,
+            operation_kind_v2: Some(operation_kind),
             diagnostic_id: None,
             repro_id: None,
             semantic_fingerprint_sha256: None,
@@ -256,8 +252,8 @@ impl OperationLogEntry {
             diagnostic_target: None,
             before_value: None,
             after_value: None,
-            status_v2: Some(OperationStatus::from_label(&status)),
-            status,
+            status_v2: status,
+            status: status_label,
             details: details.into(),
         }
     }
@@ -324,20 +320,13 @@ impl OperationLogEntry {
 
     pub fn with_status(mut self, status: OperationStatus) -> Self {
         self.status = status.label();
-        self.status_v2 = Some(status);
+        self.status_v2 = status;
         self
     }
 }
 
 fn diagnostic_id_set(issues: &[LintIssue]) -> BTreeSet<String> {
     issues.iter().map(LintIssue::diagnostic_id).collect()
-}
-
-fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 fn new_operation_id() -> String {

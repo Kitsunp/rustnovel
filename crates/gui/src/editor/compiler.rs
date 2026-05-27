@@ -20,7 +20,3 @@ pub fn compile_project_with_project_root(
     let authoring = to_authoring_graph(graph);
     compile_authoring_graph(&authoring, project_root)
 }
-
-#[cfg(test)]
-#[path = "tests/compiler_tests.rs"]
-mod tests;

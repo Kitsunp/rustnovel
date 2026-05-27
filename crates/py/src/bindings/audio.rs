@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
-use visual_novel_engine::{AssetId, AudioCommand};
+use visual_novel_engine::{runtime::AudioCommand, AssetId};
 
 use super::engine::PyEngine;
 

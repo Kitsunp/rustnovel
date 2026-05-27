@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{VnError, VnResult};
-use crate::FidelityClass;
+use crate::execution_contract::FidelityClass;
 
 pub const REPRO_RUN_REPORT_SCHEMA: &str = "vnengine.repro_run_report.v1";
 

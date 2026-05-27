@@ -3,7 +3,7 @@ use eframe::egui;
 use super::NodeEditActions;
 use crate::editor::{inspector_panel::InspectorAction, AssetFieldTarget, AssetImportKind};
 
-pub(super) struct AudioActionRefs<'a> {
+pub struct AudioActionRefs<'a> {
     pub channel: &'a mut String,
     pub action: &'a mut String,
     pub asset: &'a mut Option<String>,
@@ -12,7 +12,7 @@ pub(super) struct AudioActionRefs<'a> {
     pub loop_playback: &'a mut Option<bool>,
 }
 
-pub(super) fn render_audio_action_node(
+pub fn render_audio_action_node(
     ui: &mut egui::Ui,
     node_id: u32,
     audio: AudioActionRefs<'_>,

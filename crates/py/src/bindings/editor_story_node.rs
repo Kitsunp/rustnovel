@@ -1,7 +1,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use visual_novel_engine::authoring::StoryNode;
-use visual_novel_engine::{
+use visual_novel_engine::runtime::{
     CharacterPatchRaw, CharacterPlacementRaw, CondRaw, EventRaw, ScenePatchRaw,
 };
 

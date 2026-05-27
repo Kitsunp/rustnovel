@@ -8,18 +8,15 @@ use visual_novel_engine::authoring::NodeGraph as AuthoringGraph;
 
 use super::node_graph::NodeGraph;
 
-pub(crate) fn to_authoring_graph(graph: &NodeGraph) -> AuthoringGraph {
+pub fn to_authoring_graph(graph: &NodeGraph) -> AuthoringGraph {
     graph.authoring_graph().clone()
 }
 
-pub(crate) fn from_authoring_graph(authoring: &AuthoringGraph) -> NodeGraph {
+pub fn from_authoring_graph(authoring: &AuthoringGraph) -> NodeGraph {
     NodeGraph::from_authoring_graph(authoring.clone())
 }
 
-pub(crate) fn replace_gui_semantics_from_authoring(
-    graph: &mut NodeGraph,
-    authoring: &AuthoringGraph,
-) {
+pub fn replace_gui_semantics_from_authoring(graph: &mut NodeGraph, authoring: &AuthoringGraph) {
     let selected = graph.selected;
     let selected_node = selected.and_then(|id| graph.get_node(id).cloned());
     let pan = graph.pan;
@@ -61,48 +58,4 @@ fn same_node(graph: &NodeGraph, node_id: u32, previous: Option<&crate::editor::S
     graph
         .get_node(node_id)
         .is_some_and(|current| Some(current) == previous)
-}
-
-#[cfg(test)]
-mod tests {
-    use eframe::egui;
-    use visual_novel_engine::{authoring::NodeGraph as AuthoringGraph, CharacterPlacementRaw};
-
-    use super::*;
-    use crate::editor::StoryNode;
-
-    #[test]
-    fn adapter_preserves_view_state_while_replacing_semantics() {
-        let mut graph = NodeGraph::new();
-        let old = graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
-        graph.selected = Some(old);
-        graph.selected_nodes.insert(old);
-        graph.pan = egui::vec2(8.0, 9.0);
-        graph.zoom = 1.7;
-
-        let mut next = AuthoringGraph::new();
-        let scene = next.add_node(
-            StoryNode::Scene {
-                profile: None,
-                background: Some("bg/room.png".to_string()),
-                music: None,
-                characters: vec![CharacterPlacementRaw {
-                    name: "Ava".to_string(),
-                    ..Default::default()
-                }],
-            },
-            visual_novel_engine::authoring::AuthoringPosition::new(4.0, 5.0),
-        );
-
-        replace_gui_semantics_from_authoring(&mut graph, &next);
-
-        assert_eq!(graph.selected, None);
-        assert!(graph.selected_nodes.is_empty());
-        assert_eq!(graph.pan, egui::vec2(8.0, 9.0));
-        assert_eq!(graph.zoom, 1.7);
-        assert!(matches!(
-            graph.get_node(scene),
-            Some(StoryNode::Scene { .. })
-        ));
-    }
 }

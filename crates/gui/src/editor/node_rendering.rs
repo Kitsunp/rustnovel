@@ -14,8 +14,7 @@ mod inline;
 use inline::*;
 #[path = "node_rendering_edges.rs"]
 mod edges;
-#[cfg(test)]
-pub(crate) use edges::bezier_control_points;
+pub use edges::bezier_control_points;
 pub use edges::draw_bezier_connection;
 
 /// Renders a toast notification if one is active.
@@ -213,7 +212,7 @@ fn render_canvas_context_menu(
         });
 }
 
-pub(crate) fn add_canvas_node_from_palette(
+pub fn add_canvas_node_from_palette(
     graph: &mut NodeGraph,
     node: StoryNode,
     insert_pos: egui::Pos2,
@@ -230,7 +229,7 @@ pub(crate) fn add_canvas_node_from_palette(
     id
 }
 
-fn canvas_node_palette_items() -> Vec<(&'static str, StoryNode)> {
+pub fn canvas_node_palette_items() -> Vec<(&'static str, StoryNode)> {
     let mut items = vec![
         ("Dialogue", StoryNode::default()),
         (
@@ -262,7 +261,7 @@ fn canvas_node_palette_items() -> Vec<(&'static str, StoryNode)> {
     items
 }
 
-pub(crate) fn default_context_connect_port(node: &StoryNode) -> usize {
+pub fn default_context_connect_port(node: &StoryNode) -> usize {
     match node {
         StoryNode::Choice { options, .. } => options.len(),
         _ => 0,
@@ -399,7 +398,7 @@ pub fn render_inline_editor(graph: &mut NodeGraph, ui: &egui::Ui) {
                     ui.label("This node has no editable properties.");
                 }
                 StoryNode::Generic(event) => match event {
-                    visual_novel_engine::EventRaw::ExtCall { command, args } => {
+                    visual_novel_engine::runtime::EventRaw::ExtCall { command, args } => {
                         ui.label("External Action");
                         ui.horizontal(|ui| {
                             ui.label("Command:");
@@ -476,25 +475,16 @@ pub fn render_inline_editor(graph: &mut NodeGraph, ui: &egui::Ui) {
 
     // Apply changes
     if changed {
-        if let Some(node) = graph.get_node_mut(editing_id) {
-            *node = node_clone.clone();
-        }
-        graph.queue_operation_hint_with_values(
-            "field_edited",
+        graph.replace_node_with_hint(
+            editing_id,
+            node_clone.clone(),
             format!("Edited node {editing_id}"),
-            Some(format!("graph.nodes[{editing_id}]")),
-            serde_json::to_string(&original_node).ok(),
-            serde_json::to_string(&node_clone).ok(),
+            format!("graph.nodes[{editing_id}]"),
             true,
         );
-        graph.mark_modified();
     }
 
     if close_editor {
         graph.editing = None;
     }
 }
-
-#[cfg(test)]
-#[path = "node_rendering_tests.rs"]
-mod tests;

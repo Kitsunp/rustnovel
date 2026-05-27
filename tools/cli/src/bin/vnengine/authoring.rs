@@ -4,10 +4,9 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde::Serialize;
 use visual_novel_engine::authoring::{
-    build_authoring_document_report_fingerprint, load_authoring_document_or_script,
-    validate_authoring_graph_no_io, validate_authoring_graph_with_project_root, AuthoringDocument,
-    AuthoringValidationReport, LintSeverity, NodeGraph, OperationKind, OperationLogEntry,
-    VerificationRun,
+    load_authoring_document_or_script, validate_authoring_graph_with_project_root,
+    AuthoringCommand as CoreAuthoringCommand, AuthoringCommandBus, AuthoringDocument,
+    AuthoringValidationReport, LintSeverity,
 };
 use visual_novel_engine::{run_repro_case, ReproCase};
 
@@ -194,21 +193,15 @@ fn run_fragment_command(command: FragmentCommand) -> Result<()> {
         }
         FragmentCommand::Create(args) => {
             let mut document = load_authoring_document(&args.project)?;
-            let before_graph = document.graph.clone();
-            if !document.graph.create_fragment(
-                args.id.clone(),
-                args.title.clone(),
-                args.nodes.clone(),
-            ) {
-                anyhow::bail!("could not create fragment '{}'", args.id);
-            }
-            append_document_operation(
+            apply_document_command(
                 &mut document,
-                &before_graph,
-                OperationKind::FragmentCreated,
-                format!("Created fragment '{}'", args.id),
-                Some(format!("graph.fragments[{}]", args.id)),
-            );
+                CoreAuthoringCommand::CreateFragment {
+                    fragment_id: args.id.clone(),
+                    title: args.title.clone(),
+                    node_ids: args.nodes.clone(),
+                },
+            )
+            .with_context(|| format!("could not create fragment '{}'", args.id))?;
             write_mutated_document(
                 &args.project,
                 args.output.as_deref(),
@@ -218,17 +211,13 @@ fn run_fragment_command(command: FragmentCommand) -> Result<()> {
         }
         FragmentCommand::Refresh(args) => {
             let mut document = load_authoring_document(&args.project)?;
-            let before_graph = document.graph.clone();
-            if !document.graph.refresh_fragment_ports(&args.id) {
-                anyhow::bail!("fragment '{}' not found", args.id);
-            }
-            append_document_operation(
+            apply_document_command(
                 &mut document,
-                &before_graph,
-                OperationKind::FieldEdited,
-                format!("Refreshed ports for fragment '{}'", args.id),
-                Some(format!("graph.fragments[{}].ports", args.id)),
-            );
+                CoreAuthoringCommand::RefreshFragmentPorts {
+                    fragment_id: args.id.clone(),
+                },
+            )
+            .with_context(|| format!("could not refresh fragment '{}'", args.id))?;
             write_mutated_document(
                 &args.project,
                 args.output.as_deref(),
@@ -386,36 +375,21 @@ fn write_mutated_document(
     write_json(path, document)
 }
 
-fn append_document_operation(
+fn apply_document_command(
     document: &mut AuthoringDocument,
-    before_graph: &NodeGraph,
-    operation_kind: OperationKind,
-    details: impl Into<String>,
-    field_path: Option<String>,
-) {
-    let before_script = before_graph.to_script_lossy_for_diagnostics();
-    let after_script = document.graph.to_script_lossy_for_diagnostics();
-    let mut before_document = document.clone();
-    before_document.graph = before_graph.clone();
-    let before_fingerprint =
-        build_authoring_document_report_fingerprint(&before_document, &before_script);
-    let after_fingerprint = build_authoring_document_report_fingerprint(document, &after_script);
-    let before_issues = validate_authoring_graph_no_io(before_graph);
-    let after_issues = validate_authoring_graph_no_io(&document.graph);
-    let mut entry = OperationLogEntry::new_typed(operation_kind, "applied", details)
-        .with_before_after_fingerprints(&before_fingerprint, &after_fingerprint);
-    if let Some(field_path) = field_path {
-        entry = entry.with_field_path(field_path);
-    }
-    let verification = VerificationRun::from_diagnostics(
-        entry.operation_id.clone(),
-        "cli_authoring_no_io",
-        &after_fingerprint,
-        &before_issues,
-        &after_issues,
+    command: CoreAuthoringCommand,
+) -> Result<()> {
+    let mut bus = AuthoringCommandBus::with_history(
+        document.graph.clone(),
+        document.operation_log.clone(),
+        document.verification_runs.clone(),
     );
-    document.operation_log.push(entry);
-    document.verification_runs.push(verification);
+    bus.apply(command).map_err(anyhow::Error::msg)?;
+    let (graph, operation_log, verification_runs) = bus.into_parts();
+    document.graph = graph;
+    document.operation_log = operation_log;
+    document.verification_runs = verification_runs;
+    Ok(())
 }
 
 fn write_report(output: &Path, report: &AuthoringValidationReport) -> Result<()> {

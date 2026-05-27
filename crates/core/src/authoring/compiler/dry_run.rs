@@ -3,7 +3,10 @@ use super::{
     signatures::event_kind_compiled, ChoicePolicy, DryRunReport, DryRunStepTrace, DryRunStopReason,
 };
 use crate::authoring::{LintCode, LintIssue, ValidationPhase};
-use crate::{Engine, EventCompiled, FidelityClass, VnError};
+use crate::engine::Engine;
+use crate::error::VnError;
+use crate::event::EventCompiled;
+use crate::execution_contract::FidelityClass;
 
 #[derive(Debug, Clone)]
 pub struct DryRunOutcome {

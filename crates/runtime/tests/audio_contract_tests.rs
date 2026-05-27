@@ -4,8 +4,11 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use visual_novel_engine::{
-    AudioActionRaw, ChoiceOptionRaw, ChoiceRaw, DialogueRaw, Engine, EventRaw, ResourceLimiter,
-    SceneUpdateRaw, ScriptRaw, SecurityPolicy,
+    runtime::{
+        AudioActionRaw, ChoiceOptionRaw, ChoiceRaw, DialogueRaw, Engine, EventRaw, SceneUpdateRaw,
+        ScriptRaw,
+    },
+    ResourceLimiter, SecurityPolicy,
 };
 use vnengine_runtime::{AssetStore, Audio, Input, InputAction, RuntimeApp, SilentAudio};
 

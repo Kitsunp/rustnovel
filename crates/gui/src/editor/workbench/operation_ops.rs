@@ -1,7 +1,7 @@
 use super::*;
 
 impl EditorWorkbench {
-    pub(crate) fn queue_editor_operation(
+    pub fn queue_editor_operation(
         &mut self,
         kind: impl Into<String>,
         details: impl Into<String>,
@@ -10,7 +10,7 @@ impl EditorWorkbench {
         self.queue_editor_operation_with_values(kind, details, field_path, None, None);
     }
 
-    pub(crate) fn queue_editor_operation_with_values(
+    pub fn queue_editor_operation_with_values(
         &mut self,
         kind: impl Into<String>,
         details: impl Into<String>,
@@ -27,11 +27,11 @@ impl EditorWorkbench {
         });
     }
 
-    pub(crate) fn refresh_operation_fingerprint(&mut self) {
+    pub fn refresh_operation_fingerprint(&mut self) {
         self.last_operation_fingerprint = self.current_authoring_fingerprint();
     }
 
-    pub(crate) fn record_pending_editor_operation(&mut self) {
+    pub fn record_pending_editor_operation(&mut self) {
         let after = match self.current_authoring_fingerprint() {
             Some(after) => after,
             None => return,
@@ -60,7 +60,7 @@ impl EditorWorkbench {
         self.append_editor_operation(operation, self.last_operation_fingerprint.clone(), after);
     }
 
-    pub(crate) fn record_editor_operation_now(
+    pub fn record_editor_operation_now(
         &mut self,
         kind: &str,
         details: impl Into<String>,
@@ -82,7 +82,7 @@ impl EditorWorkbench {
         self.append_editor_operation(operation, before, after);
     }
 
-    pub(crate) fn commit_modified_graph(&mut self, mut undo_snapshot: NodeGraph) {
+    pub fn commit_modified_graph(&mut self, mut undo_snapshot: NodeGraph) {
         if !self.node_graph.is_modified() {
             return;
         }
@@ -96,7 +96,7 @@ impl EditorWorkbench {
         let _ = self.sync_graph_to_script();
     }
 
-    pub(crate) fn apply_graph_undo(&mut self) -> bool {
+    pub fn apply_graph_undo(&mut self) -> bool {
         let before = self.node_graph.clone();
         let Some(previous) = self.undo_stack.undo(self.node_graph.clone()) else {
             return false;
@@ -113,7 +113,7 @@ impl EditorWorkbench {
         true
     }
 
-    pub(crate) fn apply_graph_redo(&mut self) -> bool {
+    pub fn apply_graph_redo(&mut self) -> bool {
         let before = self.node_graph.clone();
         let Some(next) = self.undo_stack.redo(self.node_graph.clone()) else {
             return false;
@@ -130,7 +130,7 @@ impl EditorWorkbench {
         true
     }
 
-    pub(crate) fn handle_global_editor_shortcuts(&mut self, ctx: &egui::Context) -> bool {
+    pub fn handle_global_editor_shortcuts(&mut self, ctx: &egui::Context) -> bool {
         if ctx.wants_keyboard_input() {
             return false;
         }
@@ -143,7 +143,7 @@ impl EditorWorkbench {
         false
     }
 
-    pub(crate) fn current_authoring_fingerprint(
+    pub fn current_authoring_fingerprint(
         &self,
     ) -> Option<visual_novel_engine::authoring::AuthoringReportFingerprint> {
         let script = self.node_graph.to_script();
@@ -155,9 +155,7 @@ impl EditorWorkbench {
         )
     }
 
-    pub(crate) fn current_authoring_document(
-        &self,
-    ) -> visual_novel_engine::authoring::AuthoringDocument {
+    pub fn current_authoring_document(&self) -> visual_novel_engine::authoring::AuthoringDocument {
         let mut document = visual_novel_engine::authoring::AuthoringDocument::new(
             self.node_graph.authoring_graph().clone(),
         );
@@ -201,11 +199,16 @@ fn operation_kind_from_label(label: &str) -> visual_novel_engine::authoring::Ope
         "redo" => OperationKind::Redo,
         "revert" => OperationKind::Revert,
         "report_imported" => OperationKind::ReportImported,
-        other => OperationKind::Legacy(other.to_string()),
+        other => {
+            tracing::warn!("unknown editor operation kind '{other}', recording as field_edited");
+            OperationKind::FieldEdited
+        }
     }
 }
 
 impl EditorWorkbench {
+    // Approved legacy sink: queued graph/editor operations still pass through this
+    // adapter until each concrete mutation has a typed core command bus contract.
     fn append_editor_operation(
         &mut self,
         operation: PendingEditorOperation,
@@ -215,7 +218,7 @@ impl EditorWorkbench {
         let operation_kind = operation_kind_from_label(&operation.kind);
         let mut entry = visual_novel_engine::authoring::OperationLogEntry::new_typed(
             operation_kind,
-            "applied",
+            visual_novel_engine::authoring::OperationStatus::Applied,
             operation.details,
         )
         .with_session("local-editor")

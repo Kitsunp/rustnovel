@@ -1,10 +1,13 @@
 use eframe::egui;
-use visual_novel_engine::{AudioCommand, ChoiceHistoryEntry, Engine, LocalizationCatalog};
+use visual_novel_engine::{
+    runtime::{AudioCommand, ChoiceHistoryEntry, Engine},
+    LocalizationCatalog,
+};
 
 use super::super::super::node_types::ToastState;
 use super::super::state::{PlayerSessionState, SkipMode};
 
-pub(super) fn render_header_bar(
+pub fn render_header_bar(
     ui: &mut egui::Ui,
     engine: &mut Engine,
     toast: &mut Option<ToastState>,
@@ -28,7 +31,7 @@ pub(super) fn render_header_bar(
     });
 }
 
-pub(super) fn render_player_controls(
+pub fn render_player_controls(
     ui: &mut egui::Ui,
     player: &mut PlayerSessionState,
     player_locale: &mut String,
@@ -90,7 +93,7 @@ pub(super) fn render_player_controls(
     }
 }
 
-pub(super) fn render_backlog_window(
+pub fn render_backlog_window(
     ctx: &egui::Context,
     engine: &Engine,
     player: &mut PlayerSessionState,
@@ -120,7 +123,7 @@ pub(super) fn render_backlog_window(
     player.show_backlog = open;
 }
 
-pub(super) fn render_choice_history_window(
+pub fn render_choice_history_window(
     ctx: &egui::Context,
     engine: &Engine,
     player: &mut PlayerSessionState,

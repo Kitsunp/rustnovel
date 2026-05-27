@@ -1,11 +1,12 @@
 use pyo3::prelude::*;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use visual_novel_engine::{
+use visual_novel_engine::runtime::{
     AudioActionRaw, CharacterPatchRaw, CharacterPlacementRaw, ChoiceOptionRaw, ChoiceRaw, CmpOp,
     CondRaw, DialogueRaw, EventRaw, ScenePatchRaw, SceneTransitionRaw, SceneUpdateRaw,
-    SetCharacterPositionRaw, SCRIPT_SCHEMA_VERSION,
+    SetCharacterPositionRaw,
 };
+use visual_novel_engine::SCRIPT_SCHEMA_VERSION;
 
 #[pyclass(name = "ScriptBuilder")]
 pub struct PyScriptBuilder {

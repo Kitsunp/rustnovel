@@ -2,7 +2,7 @@ use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use visual_novel_engine::{
-    EngineState, SaveData, SaveSlotStore, SaveStoreError, SAVE_FORMAT_VERSION,
+    runtime::EngineState, SaveData, SaveSlotStore, SaveStoreError, SAVE_FORMAT_VERSION,
 };
 
 fn unique_root(prefix: &str) -> std::path::PathBuf {
@@ -96,7 +96,7 @@ fn corrupted_save_handling() {
 }
 
 #[test]
-fn load_slot_accepts_legacy_plain_payloads() {
+fn load_slot_rejects_legacy_plain_payloads() {
     let root = unique_root("vn_legacy_slot_payload");
     let store = SaveSlotStore::new(root.clone());
     store.ensure_layout().expect("layout must be creatable");
@@ -122,8 +122,13 @@ fn load_slot_accepts_legacy_plain_payloads() {
     )
     .expect("write metadata");
 
-    let loaded = store.load_slot(1).expect("legacy slot should still load");
-    assert_eq!(loaded.state.position, 12);
+    let err = store
+        .load_slot(1)
+        .expect_err("legacy slot payload must be rejected");
+    assert!(matches!(
+        err,
+        SaveStoreError::RecoveryFailed { backup: None, .. }
+    ));
 
     let _ = fs::remove_dir_all(root);
 }

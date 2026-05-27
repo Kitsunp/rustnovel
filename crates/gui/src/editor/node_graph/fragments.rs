@@ -3,9 +3,13 @@ use super::*;
 impl NodeGraph {
     pub fn create_fragment_from_selection(&mut self, fragment_id: &str, title: &str) -> bool {
         let node_ids = self.selected_node_ids();
-        let changed =
-            self.authoring
-                .create_fragment(fragment_id.to_string(), title.to_string(), node_ids);
+        let changed = self
+            .apply_authoring_command(AuthoringCommand::CreateFragment {
+                fragment_id: fragment_id.to_string(),
+                title: title.to_string(),
+                node_ids,
+            })
+            .is_some();
         if changed {
             self.queue_operation_hint(
                 "fragment_created",
@@ -18,7 +22,11 @@ impl NodeGraph {
     }
 
     pub fn remove_fragment(&mut self, fragment_id: &str) -> bool {
-        let changed = self.authoring.remove_fragment(fragment_id).is_some();
+        let changed = self
+            .apply_authoring_command(AuthoringCommand::RemoveFragment {
+                fragment_id: fragment_id.to_string(),
+            })
+            .is_some();
         if changed {
             self.queue_operation_hint(
                 "fragment_removed",
@@ -31,7 +39,11 @@ impl NodeGraph {
     }
 
     pub fn refresh_fragment_ports(&mut self, fragment_id: &str) -> bool {
-        let changed = self.authoring.refresh_fragment_ports(fragment_id);
+        let changed = self
+            .apply_authoring_command(AuthoringCommand::RefreshFragmentPorts {
+                fragment_id: fragment_id.to_string(),
+            })
+            .is_some();
         if changed {
             self.queue_operation_hint(
                 "field_edited",
@@ -44,7 +56,11 @@ impl NodeGraph {
     }
 
     pub fn enter_fragment(&mut self, fragment_id: &str) -> bool {
-        let changed = self.authoring.enter_fragment(fragment_id);
+        let changed = self
+            .apply_authoring_command(AuthoringCommand::EnterFragment {
+                fragment_id: fragment_id.to_string(),
+            })
+            .is_some();
         if changed {
             self.queue_operation_hint(
                 "fragment_entered",
@@ -58,7 +74,9 @@ impl NodeGraph {
     }
 
     pub fn leave_fragment(&mut self) -> bool {
-        let changed = self.authoring.leave_fragment();
+        let changed = self
+            .apply_authoring_command(AuthoringCommand::LeaveFragment)
+            .is_some();
         if changed {
             self.queue_operation_hint(
                 "fragment_left",

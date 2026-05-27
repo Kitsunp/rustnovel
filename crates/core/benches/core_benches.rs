@@ -4,8 +4,11 @@ use std::sync::Arc;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 
 use visual_novel_engine::{
-    CharacterPlacementCompiled, ChoiceOptionRaw, ChoiceRaw, DialogueRaw, Engine, EventRaw,
-    ResourceLimiter, SceneUpdateCompiled, SceneUpdateRaw, ScriptRaw, SecurityPolicy, VisualState,
+    runtime::{
+        CharacterPlacementCompiled, ChoiceOptionRaw, ChoiceRaw, DialogueRaw, Engine, EventRaw,
+        SceneUpdateCompiled, SceneUpdateRaw, ScriptRaw, VisualState,
+    },
+    ResourceLimiter, SecurityPolicy,
 };
 
 fn sample_raw_script() -> ScriptRaw {

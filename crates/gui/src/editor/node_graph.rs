@@ -9,8 +9,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub use visual_novel_engine::authoring::{GraphConnection, SceneProfile};
 use visual_novel_engine::{
-    authoring::{AuthoringPosition, NodeGraph as AuthoringGraph},
-    ScriptRaw,
+    authoring::{
+        AuthoringCommand, AuthoringCommandBus, AuthoringDelta, AuthoringPosition,
+        NodeGraph as AuthoringGraph,
+    },
+    runtime::ScriptRaw,
 };
 
 use super::node_types::{
@@ -28,7 +31,7 @@ mod search;
 mod view;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct GraphOperationHint {
+pub struct GraphOperationHint {
     pub kind: String,
     pub details: String,
     pub field_path: Option<String>,
@@ -42,7 +45,7 @@ pub(crate) struct GraphOperationHint {
 pub struct NodeGraph {
     /// Headless semantic graph. GUI state below is view/interaction only.
     #[serde(flatten)]
-    pub(crate) authoring: AuthoringGraph,
+    pub authoring: AuthoringGraph,
     /// Currently selected node
     #[serde(skip)]
     pub selected: Option<u32>,
@@ -51,10 +54,10 @@ pub struct NodeGraph {
     pub selected_nodes: BTreeSet<u32>,
     /// Pan offset (world-space translation)
     #[serde(default)]
-    pub(crate) pan: egui::Vec2,
+    pub pan: egui::Vec2,
     /// Zoom level
     #[serde(default = "default_zoom")]
-    pub(crate) zoom: f32,
+    pub zoom: f32,
     /// Node being edited inline
     #[serde(skip)]
     pub editing: Option<u32>,
@@ -78,7 +81,7 @@ pub struct NodeGraph {
     pub context_menu: Option<ContextMenu>,
     /// Last semantic editor operation inferred at graph level.
     #[serde(skip)]
-    pub(crate) operation_hint: Option<GraphOperationHint>,
+    pub operation_hint: Option<GraphOperationHint>,
 }
 
 impl Default for NodeGraph {
@@ -108,9 +111,13 @@ impl NodeGraph {
 
     /// Adds a node at the specified position. Returns the node ID.
     pub fn add_node(&mut self, node: StoryNode, pos: egui::Pos2) -> u32 {
-        let id = self
-            .authoring
-            .add_node(node, AuthoringPosition::new(pos.x, pos.y));
+        let id = self.authoring.next_node_id();
+        self.apply_authoring_command(AuthoringCommand::CreateNode {
+            node_id: id,
+            node,
+            position: AuthoringPosition::new(pos.x, pos.y),
+        })
+        .expect("next GUI node id should be accepted by AuthoringCommandBus");
         self.queue_operation_hint(
             "node_created",
             format!("Created node {id}"),
@@ -123,7 +130,13 @@ impl NodeGraph {
     /// Removes a node and all its connections.
     pub fn remove_node(&mut self, id: u32) {
         let existed = self.get_node(id).is_some();
-        self.authoring.remove_node(id);
+        if existed
+            && self
+                .apply_authoring_command(AuthoringCommand::RemoveNode { node_id: id })
+                .is_none()
+        {
+            return;
+        }
 
         if self.selected == Some(id) {
             self.selected = None;
@@ -218,6 +231,42 @@ impl NodeGraph {
         self.authoring.get_node_mut(id)
     }
 
+    pub fn replace_node_with_hint(
+        &mut self,
+        id: u32,
+        replacement: StoryNode,
+        details: impl Into<String>,
+        field_path: impl Into<String>,
+        push_undo_snapshot: bool,
+    ) -> bool {
+        let Some(before) = self.get_node(id).cloned() else {
+            return false;
+        };
+        if before == replacement {
+            return false;
+        }
+        let before_value = serde_json::to_string(&before).ok();
+        let after_value = serde_json::to_string(&replacement).ok();
+        let changed = self
+            .apply_authoring_command(AuthoringCommand::EditNode {
+                node_id: id,
+                replacement,
+            })
+            .is_some();
+        if changed {
+            self.queue_operation_hint_with_values(
+                "field_edited",
+                details,
+                Some(field_path.into()),
+                before_value,
+                after_value,
+                push_undo_snapshot,
+            );
+            self.mark_modified();
+        }
+        changed
+    }
+
     pub fn get_node_pos(&self, id: u32) -> Option<egui::Pos2> {
         self.authoring
             .get_node_pos(id)
@@ -255,7 +304,7 @@ impl NodeGraph {
         self.set_node_pos(id, pos + delta)
     }
 
-    pub(crate) fn translate_node_for_drag(&mut self, id: u32, delta: egui::Vec2) -> bool {
+    pub fn translate_node_for_drag(&mut self, id: u32, delta: egui::Vec2) -> bool {
         let Some(pos) = self.get_node_pos(id) else {
             return false;
         };
@@ -266,7 +315,7 @@ impl NodeGraph {
         self.translate_selected_or_node_impl(anchor_id, delta, false)
     }
 
-    pub(crate) fn translate_selected_or_node_for_drag(
+    pub fn translate_selected_or_node_for_drag(
         &mut self,
         anchor_id: u32,
         delta: egui::Vec2,
@@ -311,19 +360,26 @@ impl NodeGraph {
         self.authoring.connections().cloned()
     }
 
-    pub(crate) fn from_authoring_graph(authoring: AuthoringGraph) -> Self {
+    pub fn from_authoring_graph(authoring: AuthoringGraph) -> Self {
         Self {
             authoring,
             ..Self::default()
         }
     }
 
-    pub(crate) fn authoring_graph(&self) -> &AuthoringGraph {
+    pub fn authoring_graph(&self) -> &AuthoringGraph {
         &self.authoring
     }
 
-    pub(crate) fn replace_authoring_graph(&mut self, authoring: AuthoringGraph) {
+    pub fn replace_authoring_graph(&mut self, authoring: AuthoringGraph) {
         self.authoring = authoring;
+    }
+
+    fn apply_authoring_command(&mut self, command: AuthoringCommand) -> Option<AuthoringDelta> {
+        let mut bus = AuthoringCommandBus::new(self.authoring.clone());
+        let outcome = bus.apply(command).ok()?;
+        self.authoring = bus.graph().clone();
+        Some(outcome.delta)
     }
 
     pub fn toggle_multi_selection(&mut self, node_id: u32) {
@@ -378,7 +434,7 @@ impl NodeGraph {
         self.context_menu = None;
     }
 
-    pub(crate) fn has_active_interaction(&self) -> bool {
+    pub fn has_active_interaction(&self) -> bool {
         self.dragging_node.is_some()
             || self.connecting_from.is_some()
             || self.marquee_start.is_some()
@@ -386,7 +442,7 @@ impl NodeGraph {
             || self.editing.is_some()
     }
 
-    pub(crate) fn queue_operation_hint(
+    pub fn queue_operation_hint(
         &mut self,
         kind: impl Into<String>,
         details: impl Into<String>,
@@ -403,7 +459,7 @@ impl NodeGraph {
         );
     }
 
-    pub(crate) fn queue_operation_hint_with_values(
+    pub fn queue_operation_hint_with_values(
         &mut self,
         kind: impl Into<String>,
         details: impl Into<String>,
@@ -422,18 +478,18 @@ impl NodeGraph {
         });
     }
 
-    pub(crate) fn operation_hint_pushes_undo(&self) -> bool {
+    pub fn operation_hint_pushes_undo(&self) -> bool {
         self.operation_hint
             .as_ref()
             .map(|hint| hint.push_undo_snapshot)
             .unwrap_or(true)
     }
 
-    pub(crate) fn take_operation_hint(&mut self) -> Option<GraphOperationHint> {
+    pub fn take_operation_hint(&mut self) -> Option<GraphOperationHint> {
         self.operation_hint.take()
     }
 
-    pub(crate) fn clear_operation_hint(&mut self) {
+    pub fn clear_operation_hint(&mut self) {
         self.operation_hint = None;
     }
 
@@ -449,19 +505,3 @@ impl NodeGraph {
 fn default_zoom() -> f32 {
     ZOOM_DEFAULT
 }
-
-#[cfg(test)]
-#[path = "tests/node_graph_scene_profile_tests.rs"]
-mod scene_profile_tests;
-
-#[cfg(test)]
-#[path = "tests/node_graph_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "tests/node_graph_interaction_tests.rs"]
-mod interaction_tests;
-
-#[cfg(test)]
-#[path = "tests/node_graph_fragment_view_tests.rs"]
-mod fragment_view_tests;

@@ -4,7 +4,7 @@
 //! in Python-based editors and tools.
 
 use pyo3::prelude::*;
-use visual_novel_engine::{GraphStats, ScriptRaw, StoryGraph};
+use visual_novel_engine::{runtime::ScriptRaw, GraphStats, StoryGraph};
 
 /// Python wrapper for GraphStats.
 #[pyclass(name = "GraphStats")]

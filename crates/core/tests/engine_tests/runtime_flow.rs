@@ -60,7 +60,8 @@ fn engine_state_round_trip() {
     let _ = engine.step().unwrap();
     let _ = engine.step().unwrap();
     let serialized = serde_json::to_string(engine.state()).unwrap();
-    let parsed = serde_json::from_str::<visual_novel_engine::EngineState>(&serialized).unwrap();
+    let parsed =
+        serde_json::from_str::<visual_novel_engine::runtime::EngineState>(&serialized).unwrap();
     assert_eq!(parsed.position, engine.state().position);
     assert_eq!(parsed.history.len(), engine.state().history.len());
 }

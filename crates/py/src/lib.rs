@@ -39,7 +39,7 @@ fn visual_novel_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[pyfunction]
 fn run_visual_novel(script_json: String, _config: Option<PyVnConfig>) -> PyResult<()> {
-    serde_json::from_str::<::visual_novel_engine::ScriptRaw>(&script_json)
+    serde_json::from_str::<::visual_novel_engine::runtime::ScriptRaw>(&script_json)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     Err(pyo3::exceptions::PyRuntimeError::new_err(
         "GUI launch is not available in the headless Python extension; use the Rust GUI binary.",

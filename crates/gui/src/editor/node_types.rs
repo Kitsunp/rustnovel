@@ -35,7 +35,7 @@ impl StoryNodeVisualExt for StoryNode {
             StoryNode::Transition { .. } => "T",
             StoryNode::CharacterPlacement { .. } => "C",
             StoryNode::SubgraphCall { .. } => "SG",
-            StoryNode::Generic(visual_novel_engine::EventRaw::ExtCall { .. }) => "EXT",
+            StoryNode::Generic(visual_novel_engine::runtime::EventRaw::ExtCall { .. }) => "EXT",
             StoryNode::Generic(_) => "G",
         }
     }
@@ -57,7 +57,7 @@ impl StoryNodeVisualExt for StoryNode {
             StoryNode::Transition { .. } => egui::Color32::from_rgb(60, 100, 100),
             StoryNode::CharacterPlacement { .. } => egui::Color32::from_rgb(100, 60, 100),
             StoryNode::SubgraphCall { .. } => egui::Color32::from_rgb(85, 95, 140),
-            StoryNode::Generic(visual_novel_engine::EventRaw::ExtCall { .. }) => {
+            StoryNode::Generic(visual_novel_engine::runtime::EventRaw::ExtCall { .. }) => {
                 egui::Color32::from_rgb(90, 85, 110)
             }
             StoryNode::Generic(_) => egui::Color32::from_rgb(80, 80, 80),
@@ -156,58 +156,5 @@ impl ToastState {
 
     pub fn error(message: impl Into<String>) -> Self {
         Self::new(message, ToastKind::Error)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn story_node_type_name_comes_from_core() {
-        assert_eq!(StoryNode::Start.type_name(), "Start");
-        assert_eq!(StoryNode::End.type_name(), "End");
-        assert_eq!(
-            StoryNode::Dialogue {
-                speaker: "A".to_string(),
-                text: "B".to_string(),
-            }
-            .type_name(),
-            "Dialogue"
-        );
-    }
-
-    #[test]
-    fn story_node_connection_rules_come_from_core() {
-        assert!(StoryNode::Start.can_connect_from());
-        assert!(!StoryNode::Start.can_connect_to());
-        assert!(!StoryNode::End.can_connect_from());
-        assert!(StoryNode::End.can_connect_to());
-        assert!(StoryNode::default().can_connect_from());
-        assert!(StoryNode::default().can_connect_to());
-    }
-
-    #[test]
-    fn story_node_visual_extension_is_gui_only() {
-        assert_eq!(StoryNode::Start.icon(), ">");
-        assert_eq!(
-            StoryNode::Dialogue {
-                speaker: "A".to_string(),
-                text: "B".to_string(),
-            }
-            .color(),
-            egui::Color32::from_rgb(60, 80, 100)
-        );
-    }
-
-    #[test]
-    fn context_menu_distinguishes_node_and_canvas_targets() {
-        let node_menu = ContextMenu::for_node(7, egui::pos2(10.0, 20.0));
-        assert_eq!(node_menu.node_id, Some(7));
-        assert_eq!(node_menu.graph_position, None);
-
-        let canvas_menu = ContextMenu::for_canvas(egui::pos2(10.0, 20.0), egui::pos2(30.0, 40.0));
-        assert_eq!(canvas_menu.node_id, None);
-        assert_eq!(canvas_menu.graph_position, Some(egui::pos2(30.0, 40.0)));
     }
 }

@@ -15,13 +15,16 @@ pub use route_sim::{
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::FidelityClass;
-use crate::{Engine, ResourceLimiter, ScriptRaw, SecurityPolicy, StoryGraph};
+use crate::engine::Engine;
+use crate::execution_contract::FidelityClass;
+use crate::graph::StoryGraph;
+use crate::resource::ResourceLimiter;
+use crate::script::{ScriptCompiled, ScriptRaw};
+use crate::security::SecurityPolicy;
 
 use super::{
-    default_asset_exists, validate_authoring_graph_with_project_root,
-    validate_authoring_graph_with_resolver, LintCode, LintIssue, LintSeverity, NodeGraph,
-    ValidationPhase,
+    validate_authoring_graph_no_io, validate_authoring_graph_with_project_root, LintCode,
+    LintIssue, LintSeverity, NodeGraph, ValidationPhase,
 };
 
 const REPRO_DEFAULT_RADIUS: usize = 12;
@@ -154,7 +157,7 @@ impl DryRunReport {
 #[derive(Clone)]
 pub struct CompilationResult {
     pub script: ScriptRaw,
-    pub engine_result: Result<crate::Engine, String>,
+    pub engine_result: Result<Engine, String>,
     pub issues: Vec<super::LintIssue>,
     pub phase_trace: Vec<PhaseTrace>,
     pub dry_run_report: Option<DryRunReport>,
@@ -184,7 +187,7 @@ pub fn compile_authoring_graph(
     let mut issues = if let Some(root) = project_root {
         validate_authoring_graph_with_project_root(graph, root)
     } else {
-        validate_authoring_graph_with_resolver(graph, default_asset_exists)
+        validate_authoring_graph_no_io(graph)
     };
     phase_trace.push(PhaseTrace {
         phase: CompilationPhase::GraphValidation,
@@ -377,7 +380,7 @@ pub fn compile_authoring_graph(
 
 fn append_route_dry_run_issues(
     script: &ScriptRaw,
-    compiled: &crate::ScriptCompiled,
+    compiled: &ScriptCompiled,
     policy: &ChoicePolicy,
     issues: &mut Vec<LintIssue>,
     dry_run_report: &mut Option<DryRunReport>,

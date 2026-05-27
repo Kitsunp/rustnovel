@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyDictMethods, PyList, PyListMethods};
-use visual_novel_engine::{
+use visual_novel_engine::runtime::{
     CharacterPatchCompiled, CharacterPlacementCompiled, EventCompiled, SharedStr, UiState, UiView,
 };
 

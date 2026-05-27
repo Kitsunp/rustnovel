@@ -1,6 +1,6 @@
 use pixels::{Pixels, SurfaceTexture};
 use std::sync::Arc;
-use visual_novel_engine::{UiState, UiView};
+use visual_novel_engine::runtime::{UiState, UiView};
 use winit::window::Window;
 
 use super::backend::RenderBackend;

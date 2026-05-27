@@ -136,15 +136,8 @@ impl SaveData {
         SaveData::from_binary(payload)
     }
 
-    /// Parses either authenticated or legacy save payloads.
-    ///
-    /// Authenticated payloads are verified with `key`; legacy payloads remain
-    /// supported for backwards compatibility.
     pub fn from_any_binary(input: &[u8], key: &[u8]) -> Result<Self, SaveError> {
-        if is_authenticated_binary(input) {
-            return Self::from_authenticated_binary(input, key);
-        }
-        Self::from_binary(input)
+        Self::from_authenticated_binary(input, key)
     }
 
     /// Validates that this save matches the given script_id.
@@ -459,7 +452,3 @@ impl SaveSlotStore {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "tests/storage_tests.rs"]
-mod tests;

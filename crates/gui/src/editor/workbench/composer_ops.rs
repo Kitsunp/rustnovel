@@ -1,13 +1,9 @@
 use super::*;
 use crate::editor::StoryNode;
-use visual_novel_engine::EventCompiled;
+use visual_novel_engine::runtime::EventCompiled;
 
 impl EditorWorkbench {
-    pub(crate) fn add_composer_created_node(
-        &mut self,
-        node: StoryNode,
-        pos: eframe::egui::Pos2,
-    ) -> u32 {
+    pub fn add_composer_created_node(&mut self, node: StoryNode, pos: eframe::egui::Pos2) -> u32 {
         let source = self.node_graph.selected;
         let new_id = self.node_graph.add_node(node, pos);
         if let Some(source_id) = source {
@@ -41,7 +37,7 @@ impl EditorWorkbench {
         self.node_graph.connect_or_branch(source_id, port, new_id);
     }
 
-    pub(super) fn build_entity_node_map(&self) -> std::collections::HashMap<u32, u32> {
+    pub fn build_entity_node_map(&self) -> std::collections::HashMap<u32, u32> {
         let mut map = std::collections::HashMap::new();
         use crate::editor::node_types::StoryNode;
         use std::collections::{HashMap, VecDeque};
@@ -155,7 +151,9 @@ impl EditorWorkbench {
                     // Keep scene/patch ownership when already resolved.
                     bind_matches(&mut map, audio_by_path.get(asset.as_str()), nid, true);
                 }
-                StoryNode::Generic(visual_novel_engine::EventRaw::SetCharacterPosition(pos)) => {
+                StoryNode::Generic(
+                    visual_novel_engine::runtime::EventRaw::SetCharacterPosition(pos),
+                ) => {
                     bind_one_character(
                         &mut map,
                         &mut characters_by_key,
@@ -170,14 +168,13 @@ impl EditorWorkbench {
         map
     }
 
-    #[cfg(test)]
-    pub(crate) fn start_composer_runtime_preview_from_selection(&mut self) {
+    pub fn start_composer_runtime_preview_from_selection(&mut self) {
         self.start_composer_runtime_preview_from_node(
             self.selected_node.or(self.node_graph.selected),
         );
     }
 
-    pub(crate) fn start_composer_runtime_preview_from_node(&mut self, selected_node: Option<u32>) {
+    pub fn start_composer_runtime_preview_from_node(&mut self, selected_node: Option<u32>) {
         if let Err(err) = self.sync_graph_to_script() {
             self.toast = Some(ToastState::error(format!("Composer test failed: {err}")));
             return;
@@ -194,7 +191,7 @@ impl EditorWorkbench {
         self.jump_composer_runtime_preview(&target_label);
     }
 
-    pub(crate) fn restart_composer_runtime_preview(&mut self) {
+    pub fn restart_composer_runtime_preview(&mut self) {
         if self.engine.is_none() {
             if let Err(err) = self.sync_graph_to_script() {
                 self.toast = Some(ToastState::error(format!("Composer restart failed: {err}")));
@@ -204,7 +201,7 @@ impl EditorWorkbench {
         self.jump_composer_runtime_preview("start");
     }
 
-    pub(crate) fn advance_composer_runtime_preview(&mut self, choice: Option<usize>) {
+    pub fn advance_composer_runtime_preview(&mut self, choice: Option<usize>) {
         if self.engine.is_none() {
             if let Err(err) = self.sync_graph_to_script() {
                 self.toast = Some(ToastState::error(format!("Composer test failed: {err}")));
@@ -273,7 +270,7 @@ impl EditorWorkbench {
 
     fn apply_composer_audio_commands(
         &mut self,
-        audio_commands: Vec<visual_novel_engine::AudioCommand>,
+        audio_commands: Vec<visual_novel_engine::runtime::AudioCommand>,
     ) {
         if audio_commands.is_empty() {
             return;

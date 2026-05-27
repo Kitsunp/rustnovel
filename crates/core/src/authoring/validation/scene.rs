@@ -1,4 +1,4 @@
-use crate::{CharacterPlacementRaw, ScenePatchRaw};
+use crate::event::{CharacterPlacementRaw, ScenePatchRaw};
 
 use super::assets::validate_asset_at;
 use super::{LintCode, LintIssue, NodeGraph, ValidationPhase};

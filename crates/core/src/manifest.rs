@@ -6,8 +6,6 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const MANIFEST_SCHEMA_VERSION: &str = "1.0";
-const LEGACY_MANIFEST_VERSION: &str = "0.x";
-const MANIFEST_MIGRATION_GUARD_LIMIT: usize = 8;
 
 fn default_manifest_schema_version() -> String {
     MANIFEST_SCHEMA_VERSION.to_string()
@@ -31,7 +29,7 @@ fn default_entry_point() -> String {
 /// Anything not strictly declared here is considered non-existent.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectManifest {
-    #[serde(default = "default_manifest_schema_version", alias = "schema_version")]
+    #[serde(default = "default_manifest_schema_version")]
     pub manifest_schema_version: String,
     pub metadata: ProjectMetadata,
     pub settings: ProjectSettings,
@@ -162,21 +160,6 @@ pub enum ManifestError {
     MigrationError(String),
 }
 
-#[derive(Clone, Copy)]
-struct ManifestMigrationStep {
-    from_version: &'static str,
-    to_version: &'static str,
-    step_id: &'static str,
-    apply: fn(&mut toml::Value) -> Result<bool, String>,
-}
-
-const MANIFEST_MIGRATION_STEPS: &[ManifestMigrationStep] = &[ManifestMigrationStep {
-    from_version: LEGACY_MANIFEST_VERSION,
-    to_version: MANIFEST_SCHEMA_VERSION,
-    step_id: "manifest_legacy_to_1_0",
-    apply: migrate_manifest_legacy_to_1_0,
-}];
-
 pub fn migrate_manifest_toml_to_current(
     input: &str,
 ) -> Result<(String, ManifestMigrationReport), ManifestMigrationError> {
@@ -214,58 +197,7 @@ fn migrate_manifest_value_to_current_inner(
         });
     }
 
-    if !from_version.starts_with("0.") {
-        return Ok(ManifestMigrationReport {
-            from_version: from_version.clone(),
-            to_version: from_version,
-            entries: Vec::new(),
-        });
-    }
-
-    let mut current_version = from_version.clone();
-    let mut entries = Vec::new();
-    let mut guard = 0usize;
-
-    while current_version != MANIFEST_SCHEMA_VERSION {
-        guard += 1;
-        if guard > MANIFEST_MIGRATION_GUARD_LIMIT {
-            return Err(ManifestMigrationError::UnsupportedVersion(current_version));
-        }
-
-        let step = select_manifest_step_for(&current_version)
-            .ok_or_else(|| ManifestMigrationError::UnsupportedVersion(current_version.clone()))?;
-        let changed =
-            (step.apply)(value).map_err(|message| ManifestMigrationError::StepFailed {
-                step_id: step.step_id.to_string(),
-                from_version: current_version.clone(),
-                to_version: step.to_version.to_string(),
-                message,
-            })?;
-
-        let root = value.as_table_mut().ok_or_else(|| {
-            ManifestMigrationError::InvalidEnvelope(
-                "manifest payload must be a TOML table".to_string(),
-            )
-        })?;
-        root.insert(
-            "manifest_schema_version".to_string(),
-            toml::Value::String(step.to_version.to_string()),
-        );
-
-        entries.push(ManifestMigrationTraceEntry {
-            step_id: step.step_id.to_string(),
-            from_version: current_version.clone(),
-            to_version: step.to_version.to_string(),
-            changed,
-        });
-        current_version = step.to_version.to_string();
-    }
-
-    Ok(ManifestMigrationReport {
-        from_version,
-        to_version: current_version,
-        entries,
-    })
+    Err(ManifestMigrationError::UnsupportedVersion(from_version))
 }
 
 fn detect_manifest_version(value: &toml::Value) -> Result<String, ManifestMigrationError> {
@@ -273,10 +205,7 @@ fn detect_manifest_version(value: &toml::Value) -> Result<String, ManifestMigrat
         ManifestMigrationError::InvalidEnvelope("manifest payload must be a TOML table".to_string())
     })?;
 
-    if let Some(raw) = root
-        .get("manifest_schema_version")
-        .or_else(|| root.get("schema_version"))
-    {
+    if let Some(raw) = root.get("manifest_schema_version") {
         let version = raw.as_str().ok_or_else(|| {
             ManifestMigrationError::InvalidEnvelope(
                 "manifest schema version field must be a string".to_string(),
@@ -285,103 +214,9 @@ fn detect_manifest_version(value: &toml::Value) -> Result<String, ManifestMigrat
         return Ok(version.to_string());
     }
 
-    Ok("0.9".to_string())
-}
-
-fn select_manifest_step_for(version: &str) -> Option<&'static ManifestMigrationStep> {
-    MANIFEST_MIGRATION_STEPS
-        .iter()
-        .find(|step| step.from_version == version)
-        .or_else(|| {
-            if version.starts_with("0.") {
-                MANIFEST_MIGRATION_STEPS
-                    .iter()
-                    .find(|step| step.from_version == LEGACY_MANIFEST_VERSION)
-            } else {
-                None
-            }
-        })
-}
-
-fn migrate_manifest_legacy_to_1_0(value: &mut toml::Value) -> Result<bool, String> {
-    let root = value
-        .as_table_mut()
-        .ok_or_else(|| "manifest payload must be a TOML table".to_string())?;
-    let mut changed = false;
-
-    if let Some(old) = root.remove("schema_version") {
-        root.insert("manifest_schema_version".to_string(), old);
-        changed = true;
-    }
-
-    if !root.contains_key("manifest_schema_version") {
-        root.insert(
-            "manifest_schema_version".to_string(),
-            toml::Value::String(MANIFEST_SCHEMA_VERSION.to_string()),
-        );
-        changed = true;
-    }
-
-    if !root.contains_key("assets") {
-        root.insert(
-            "assets".to_string(),
-            toml::Value::Table(toml::map::Map::new()),
-        );
-        changed = true;
-    }
-
-    if !root.contains_key("settings") {
-        let mut settings = toml::map::Map::new();
-        settings.insert(
-            "resolution".to_string(),
-            toml::Value::Array(vec![toml::Value::Integer(1280), toml::Value::Integer(720)]),
-        );
-        settings.insert(
-            "default_language".to_string(),
-            toml::Value::String(default_language()),
-        );
-        settings.insert(
-            "supported_languages".to_string(),
-            toml::Value::Array(vec![toml::Value::String("en".to_string())]),
-        );
-        settings.insert(
-            "entry_point".to_string(),
-            toml::Value::String(default_entry_point()),
-        );
-        root.insert("settings".to_string(), toml::Value::Table(settings));
-        changed = true;
-    }
-
-    if let Some(settings) = root.get_mut("settings").and_then(toml::Value::as_table_mut) {
-        if !settings.contains_key("default_language") {
-            settings.insert(
-                "default_language".to_string(),
-                toml::Value::String(default_language()),
-            );
-            changed = true;
-        }
-        if !settings.contains_key("supported_languages") {
-            let default_lang = settings
-                .get("default_language")
-                .and_then(toml::Value::as_str)
-                .unwrap_or("en")
-                .to_string();
-            settings.insert(
-                "supported_languages".to_string(),
-                toml::Value::Array(vec![toml::Value::String(default_lang)]),
-            );
-            changed = true;
-        }
-        if !settings.contains_key("entry_point") {
-            settings.insert(
-                "entry_point".to_string(),
-                toml::Value::String(default_entry_point()),
-            );
-            changed = true;
-        }
-    }
-
-    Ok(changed)
+    Err(ManifestMigrationError::InvalidEnvelope(
+        "missing manifest_schema_version".to_string(),
+    ))
 }
 
 impl ProjectManifest {
@@ -431,7 +266,3 @@ impl ProjectManifest {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "tests/manifest_tests.rs"]
-mod tests;

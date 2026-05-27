@@ -1,6 +1,6 @@
 use eframe::egui;
 
-pub(super) fn paint_caption(ui: &egui::Ui, rect: egui::Rect, label: &str) {
+pub fn paint_caption(ui: &egui::Ui, rect: egui::Rect, label: &str) {
     ui.painter().text(
         rect.center_bottom() - egui::vec2(0.0, 8.0),
         egui::Align2::CENTER_BOTTOM,
@@ -10,7 +10,7 @@ pub(super) fn paint_caption(ui: &egui::Ui, rect: egui::Rect, label: &str) {
     );
 }
 
-pub(super) fn paint_asset_fallback(
+pub fn paint_asset_fallback(
     ui: &egui::Ui,
     rect: egui::Rect,
     is_selected: bool,
@@ -37,7 +37,7 @@ pub(super) fn paint_asset_fallback(
     );
 }
 
-pub(super) fn paint_character_fallback(
+pub fn paint_character_fallback(
     ui: &egui::Ui,
     rect: egui::Rect,
     is_selected: bool,
@@ -73,7 +73,7 @@ pub(super) fn paint_character_fallback(
     }
 }
 
-pub(super) fn paint_audio_surface(
+pub fn paint_audio_surface(
     ui: &egui::Ui,
     rect: egui::Rect,
     is_selected: bool,
@@ -96,7 +96,7 @@ pub(super) fn paint_audio_surface(
     );
 }
 
-pub(super) fn paint_video_surface(
+pub fn paint_video_surface(
     ui: &egui::Ui,
     rect: egui::Rect,
     is_selected: bool,
@@ -123,7 +123,7 @@ pub(super) fn paint_video_surface(
     paint_caption(ui, rect, &format!("{label}{suffix}"));
 }
 
-pub(super) fn paint_text_surface(
+pub fn paint_text_surface(
     ui: &egui::Ui,
     rect: egui::Rect,
     is_selected: bool,

@@ -4,7 +4,7 @@ use crate::editor::StoryNode;
 pub use visual_novel_engine::authoring::composer::{
     LayerOverride, LayeredSceneObject, StageLayerKind,
 };
-use visual_novel_engine::{Engine, Entity, EntityKind, SceneState};
+use visual_novel_engine::{runtime::Engine, Entity, EntityKind, SceneState};
 
 pub fn layered_scene_objects(
     scene: &SceneState,
@@ -41,17 +41,13 @@ pub fn layered_scene_objects(
     if let Some(engine) = engine {
         if let Ok(event) = engine.current_event() {
             match event {
-                visual_novel_engine::EventCompiled::Dialogue(_) => objects.push(overlay_object(
-                    "dialogue",
-                    StageLayerKind::DialogueUi,
-                    10_000,
-                )),
-                visual_novel_engine::EventCompiled::Choice(_) => objects.push(overlay_object(
-                    "choice",
-                    StageLayerKind::InteractionUi,
-                    10_100,
-                )),
-                visual_novel_engine::EventCompiled::Transition(_) => {
+                visual_novel_engine::runtime::EventCompiled::Dialogue(_) => objects.push(
+                    overlay_object("dialogue", StageLayerKind::DialogueUi, 10_000),
+                ),
+                visual_novel_engine::runtime::EventCompiled::Choice(_) => objects.push(
+                    overlay_object("choice", StageLayerKind::InteractionUi, 10_100),
+                ),
+                visual_novel_engine::runtime::EventCompiled::Transition(_) => {
                     objects.push(overlay_object("transition", StageLayerKind::Effects, 9_900))
                 }
                 _ => {}
@@ -78,7 +74,7 @@ pub fn layered_scene_objects_with_authoring_overlay(
     objects
 }
 
-pub(crate) fn scene_entity_object_id(
+pub fn scene_entity_object_id(
     entity: &Entity,
     source_node_id: Option<u32>,
     index: usize,

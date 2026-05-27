@@ -1,10 +1,6 @@
 use eframe::egui;
 
-pub(super) fn edit_optional_text(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut Option<String>,
-) -> bool {
+pub fn edit_optional_text(ui: &mut egui::Ui, label: &str, value: &mut Option<String>) -> bool {
     let mut changed = false;
     let mut text = value.clone().unwrap_or_default();
     ui.horizontal(|ui| {
@@ -21,9 +17,9 @@ pub(super) fn edit_optional_text(
     changed
 }
 
-pub(super) fn edit_scene_patch_inline(
+pub fn edit_scene_patch_inline(
     ui: &mut egui::Ui,
-    patch: &mut visual_novel_engine::ScenePatchRaw,
+    patch: &mut visual_novel_engine::runtime::ScenePatchRaw,
 ) -> bool {
     let mut changed = false;
     ui.label("Scene Patch");
@@ -42,7 +38,7 @@ pub(super) fn edit_scene_patch_inline(
     if ui.button("Add Character").clicked() {
         patch
             .add
-            .push(visual_novel_engine::CharacterPlacementRaw::default());
+            .push(visual_novel_engine::runtime::CharacterPlacementRaw::default());
         changed = true;
     }
     ui.label("Remove character names:");
@@ -56,7 +52,7 @@ pub(super) fn edit_scene_patch_inline(
     changed
 }
 
-pub(super) fn edit_audio_action_inline(
+pub fn edit_audio_action_inline(
     ui: &mut egui::Ui,
     channel: &mut String,
     action: &mut String,
@@ -97,7 +93,7 @@ pub(super) fn edit_audio_action_inline(
     changed
 }
 
-pub(super) fn edit_transition_inline(
+pub fn edit_transition_inline(
     ui: &mut egui::Ui,
     kind: &mut String,
     duration_ms: &mut u32,
@@ -114,9 +110,9 @@ pub(super) fn edit_transition_inline(
     changed
 }
 
-pub(super) fn edit_generic_event_inline(
+pub fn edit_generic_event_inline(
     ui: &mut egui::Ui,
-    event: &mut visual_novel_engine::EventRaw,
+    event: &mut visual_novel_engine::runtime::EventRaw,
 ) -> bool {
     let mut json = event.to_json_string();
     let mut changed = false;
@@ -129,7 +125,7 @@ pub(super) fn edit_generic_event_inline(
         )
         .changed()
     {
-        match serde_json::from_str::<visual_novel_engine::EventRaw>(&json) {
+        match serde_json::from_str::<visual_novel_engine::runtime::EventRaw>(&json) {
             Ok(updated) => {
                 *event = updated;
                 changed = true;

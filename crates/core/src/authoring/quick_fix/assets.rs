@@ -1,3 +1,4 @@
+use super::super::validation::is_unsafe_asset_ref;
 use super::super::{LintIssue, NodeGraph, StoryNode};
 use super::{candidate, QuickFixCandidate, QuickFixRisk};
 
@@ -260,12 +261,4 @@ fn require_node(issue: &LintIssue, fix_id: &str) -> Result<u32, String> {
     issue
         .node_id
         .ok_or_else(|| format!("quick-fix {fix_id} requires node_id"))
-}
-
-fn is_unsafe_asset_ref(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    path.starts_with('/')
-        || path.starts_with('\\')
-        || lower.contains("://")
-        || path.split(['/', '\\']).any(|part| part == "..")
 }

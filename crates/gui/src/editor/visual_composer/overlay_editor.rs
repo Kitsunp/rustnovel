@@ -3,7 +3,7 @@ use eframe::egui;
 use super::{ComposerNodeMutation, VisualComposerAction};
 use crate::editor::StoryNode;
 
-pub(super) fn render_overlay_editor(
+pub fn render_overlay_editor(
     ui: &mut egui::Ui,
     selected_node_id: Option<u32>,
     selected_node: Option<&StoryNode>,

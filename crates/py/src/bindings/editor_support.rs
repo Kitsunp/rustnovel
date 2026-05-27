@@ -1,10 +1,8 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use visual_novel_engine::authoring::quick_fix::{
-    apply_fix, suggest_fixes, QuickFixCandidate, QuickFixRisk,
-};
-use visual_novel_engine::authoring::{validate_authoring_graph, LintIssue, NodeGraph};
-use visual_novel_engine::CmpOp;
+use visual_novel_engine::authoring::quick_fix::{suggest_fixes, QuickFixCandidate, QuickFixRisk};
+use visual_novel_engine::authoring::{LintIssue, NodeGraph};
+use visual_novel_engine::runtime::CmpOp;
 
 pub(super) fn parse_cmp_op(op: &str) -> PyResult<CmpOp> {
     match op {
@@ -37,35 +35,4 @@ pub(super) fn select_fix_candidate(
             .into_iter()
             .find(|candidate| candidate.risk == QuickFixRisk::Safe)
     }
-}
-
-pub(super) fn apply_autofix_pass(
-    graph: &mut NodeGraph,
-    include_review: bool,
-) -> Result<usize, String> {
-    let mut applied = 0usize;
-    let mut guard = 0usize;
-
-    while guard < 128 {
-        guard += 1;
-        let issues = validate_authoring_graph(graph);
-        let mut applied_this_round = false;
-
-        for issue in issues {
-            let Some(candidate) = select_fix_candidate(&issue, graph, include_review) else {
-                continue;
-            };
-            if apply_fix(graph, &issue, candidate.fix_id)? {
-                applied += 1;
-                applied_this_round = true;
-                break;
-            }
-        }
-
-        if !applied_this_round {
-            break;
-        }
-    }
-
-    Ok(applied)
 }

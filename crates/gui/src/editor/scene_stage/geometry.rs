@@ -1,16 +1,19 @@
 use eframe::egui;
-use visual_novel_engine::{EntityKind, EventCompiled, SceneState, Transform, VisualState};
+use visual_novel_engine::{
+    runtime::{EventCompiled, VisualState},
+    EntityKind, SceneState, Transform,
+};
 
 use crate::editor::{BackgroundFit, StageFit};
 
 #[derive(Clone, Copy)]
-pub(crate) struct StageGeometry {
+pub struct StageGeometry {
     pub viewport_rect: egui::Rect,
     pub stage_rect: egui::Rect,
     pub scale: f32,
 }
 
-pub(crate) fn stage_geometry(
+pub fn stage_geometry(
     viewport_rect: egui::Rect,
     stage_size: (f32, f32),
     stage_fit: StageFit,
@@ -28,10 +31,7 @@ pub(crate) fn stage_geometry(
     }
 }
 
-pub(crate) fn display_visual_for_event(
-    current: &VisualState,
-    event: &EventCompiled,
-) -> VisualState {
+pub fn display_visual_for_event(current: &VisualState, event: &EventCompiled) -> VisualState {
     let mut visual = current.clone();
     match event {
         EventCompiled::Scene(scene) => visual.apply_scene(scene),
@@ -42,7 +42,7 @@ pub(crate) fn display_visual_for_event(
     visual
 }
 
-pub(crate) fn scene_from_visual_state(visual: &VisualState) -> SceneState {
+pub fn scene_from_visual_state(visual: &VisualState) -> SceneState {
     let mut scene = SceneState::new();
     if let Some(background) = &visual.background {
         let mut transform = Transform::at(0, 0);
@@ -75,11 +75,11 @@ pub(crate) fn scene_from_visual_state(visual: &VisualState) -> SceneState {
     scene
 }
 
-pub(crate) fn is_background_image(kind: &EntityKind, z_order: i32) -> bool {
+pub fn is_background_image(kind: &EntityKind, z_order: i32) -> bool {
     matches!(kind, EntityKind::Image(_)) && z_order <= -50
 }
 
-pub(crate) fn clamp_transform_to_stage(
+pub fn clamp_transform_to_stage(
     transform: &mut Transform,
     kind: &EntityKind,
     geometry: &StageGeometry,
@@ -100,7 +100,7 @@ pub(crate) fn clamp_transform_to_stage(
     transform.y = transform.y.clamp(0, max_y);
 }
 
-pub(crate) fn entity_rect_with_background_fit(
+pub fn entity_rect_with_background_fit(
     kind: &EntityKind,
     transform: &Transform,
     geometry: &StageGeometry,

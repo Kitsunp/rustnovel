@@ -2,6 +2,7 @@ use std::path::Path;
 
 use super::*;
 use crate::editor::{AssetFieldTarget, AssetImportKind, StoryNode};
+use visual_novel_engine::authoring::{AuthoringCommand, AuthoringCommandBus};
 
 #[path = "asset_import_helpers.rs"]
 mod asset_import_helpers;
@@ -34,7 +35,7 @@ impl EditorWorkbench {
         }
     }
 
-    pub(crate) fn import_asset_for_node_dialog(
+    pub fn import_asset_for_node_dialog(
         &mut self,
         node_id: u32,
         kind: AssetImportKind,
@@ -76,7 +77,7 @@ impl EditorWorkbench {
         }
     }
 
-    pub(crate) fn import_asset_file(
+    pub fn import_asset_file(
         &mut self,
         source: &Path,
         kind: AssetImportKind,
@@ -186,7 +187,7 @@ impl EditorWorkbench {
         Ok(rel_string)
     }
 
-    pub(crate) fn remove_asset_from_manifest(
+    pub fn remove_asset_from_manifest(
         &mut self,
         kind: AssetImportKind,
         name: &str,
@@ -235,20 +236,22 @@ impl EditorWorkbench {
         Ok(())
     }
 
-    pub(crate) fn apply_imported_asset_to_node(
+    pub fn apply_imported_asset_to_node(
         &mut self,
         node_id: u32,
         target: AssetFieldTarget,
         imported: String,
     ) -> Result<(), String> {
-        let Some(node) = self.node_graph.get_node_mut(node_id) else {
-            return Err(format!("node {node_id} no longer exists"));
-        };
+        let mut replacement = self
+            .node_graph
+            .get_node(node_id)
+            .cloned()
+            .ok_or_else(|| format!("node {node_id} no longer exists"))?;
 
         let field_path = asset_node_field_path(node_id, target);
         let before_value;
 
-        match (target, node) {
+        match (target, &mut replacement) {
             (AssetFieldTarget::SceneBackground, StoryNode::Scene { background, .. }) => {
                 before_value = stringify_optional_asset(background);
                 *background = Some(imported.clone());
@@ -269,21 +272,26 @@ impl EditorWorkbench {
             }
             (
                 AssetFieldTarget::ScenePatchBackground,
-                StoryNode::ScenePatch(visual_novel_engine::ScenePatchRaw { background, .. }),
+                StoryNode::ScenePatch(visual_novel_engine::runtime::ScenePatchRaw {
+                    background,
+                    ..
+                }),
             ) => {
                 before_value = stringify_optional_asset(background);
                 *background = Some(imported.clone());
             }
             (
                 AssetFieldTarget::ScenePatchMusic,
-                StoryNode::ScenePatch(visual_novel_engine::ScenePatchRaw { music, .. }),
+                StoryNode::ScenePatch(visual_novel_engine::runtime::ScenePatchRaw {
+                    music, ..
+                }),
             ) => {
                 before_value = stringify_optional_asset(music);
                 *music = Some(imported.clone());
             }
             (
                 AssetFieldTarget::ScenePatchAddCharacterExpression(idx),
-                StoryNode::ScenePatch(visual_novel_engine::ScenePatchRaw { add, .. }),
+                StoryNode::ScenePatch(visual_novel_engine::runtime::ScenePatchRaw { add, .. }),
             ) => {
                 let Some(character) = add.get_mut(idx) else {
                     return Err(format!(
@@ -299,6 +307,7 @@ impl EditorWorkbench {
             }
             _ => return Err("selected node does not support that asset field".to_string()),
         }
+        self.apply_node_replacement_with_command_bus(node_id, replacement)?;
 
         self.queue_editor_operation_with_values(
             "field_edited",
@@ -311,7 +320,7 @@ impl EditorWorkbench {
         Ok(())
     }
 
-    pub(crate) fn assign_manifest_asset_to_selected_node(
+    pub fn assign_manifest_asset_to_selected_node(
         &mut self,
         kind: AssetImportKind,
         name: &str,
@@ -379,7 +388,7 @@ impl EditorWorkbench {
         Ok(node_id)
     }
 
-    pub(crate) fn add_character_asset_to_node(
+    pub fn add_character_asset_to_node(
         &mut self,
         node_id: u32,
         name: String,
@@ -387,12 +396,14 @@ impl EditorWorkbench {
         x: i32,
         y: i32,
     ) -> Result<(), String> {
-        let Some(node) = self.node_graph.get_node_mut(node_id) else {
-            return Err(format!("node {node_id} no longer exists"));
-        };
+        let mut replacement = self
+            .node_graph
+            .get_node(node_id)
+            .cloned()
+            .ok_or_else(|| format!("node {node_id} no longer exists"))?;
 
         let character_name = normalized_character_name(&name, &imported);
-        let (field_path, before_value, after_value) = match node {
+        let (field_path, before_value, after_value) = match &mut replacement {
             StoryNode::Scene { characters, .. } => {
                 let (idx, before, after) =
                     upsert_character_asset(characters, &character_name, &imported, x, y);
@@ -402,7 +413,7 @@ impl EditorWorkbench {
                     after,
                 )
             }
-            StoryNode::ScenePatch(visual_novel_engine::ScenePatchRaw { add, .. }) => {
+            StoryNode::ScenePatch(visual_novel_engine::runtime::ScenePatchRaw { add, .. }) => {
                 let (idx, before, after) =
                     upsert_character_asset(add, &character_name, &imported, x, y);
                 (
@@ -413,6 +424,7 @@ impl EditorWorkbench {
             }
             _ => return Err("selected node does not accept character placement".to_string()),
         };
+        self.apply_node_replacement_with_command_bus(node_id, replacement)?;
 
         self.queue_editor_operation_with_values(
             "field_edited",
@@ -422,6 +434,20 @@ impl EditorWorkbench {
             Some(after_value),
         );
         self.node_graph.mark_modified();
+        Ok(())
+    }
+
+    fn apply_node_replacement_with_command_bus(
+        &mut self,
+        node_id: u32,
+        replacement: StoryNode,
+    ) -> Result<(), String> {
+        let mut bus = AuthoringCommandBus::new(self.node_graph.authoring_graph().clone());
+        bus.apply(AuthoringCommand::EditNode {
+            node_id,
+            replacement,
+        })?;
+        self.node_graph.replace_authoring_graph(bus.graph().clone());
         Ok(())
     }
 }

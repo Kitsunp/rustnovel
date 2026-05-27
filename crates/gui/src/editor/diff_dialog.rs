@@ -3,7 +3,7 @@
 //! Visualizes changes before saving script.
 
 use eframe::egui;
-use visual_novel_engine::ScriptRaw;
+use visual_novel_engine::runtime::ScriptRaw;
 
 pub struct DiffDialog {
     previous_script: Option<ScriptRaw>,

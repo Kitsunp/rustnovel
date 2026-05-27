@@ -17,7 +17,3 @@ pub fn apply_fix(graph: &mut NodeGraph, issue: &LintIssue, fix_id: &str) -> Resu
     }
     Ok(changed)
 }
-
-#[cfg(test)]
-#[path = "tests/quick_fix_tests.rs"]
-mod tests;

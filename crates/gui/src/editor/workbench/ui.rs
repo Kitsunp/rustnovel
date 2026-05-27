@@ -1,7 +1,7 @@
 use super::*;
 
 impl EditorWorkbench {
-    pub(super) fn render_editor_mode(&mut self, ctx: &egui::Context) {
+    pub fn render_editor_mode(&mut self, ctx: &egui::Context) {
         self.handle_global_editor_shortcuts(ctx);
         let selected_before = self.selected_node;
         let graph_before_editor_interaction = self.node_graph.clone();
@@ -374,7 +374,7 @@ impl EditorWorkbench {
                     image_failures: &mut self.composer_image_failures,
                     resource_service: &mut self.resource_service,
                     selected_entity_id: &mut self.selected_entity,
-                    layer_overrides: &mut self.composer_layer_overrides,
+                    layer_overrides: &self.composer_layer_overrides,
                     active_event_node_id,
                     selected_authoring_node_id: composer_selected_node,
                     selected_authoring_node: selected_authoring_node.as_ref(),

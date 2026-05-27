@@ -6,8 +6,9 @@ use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use visual_novel_engine::{
-    compute_script_id, Engine, ResourceLimiter, ScriptId, ScriptRaw, SecurityPolicy, UiState,
-    UiView, VnError,
+    compute_script_id,
+    runtime::{Engine, ScriptRaw, UiState, UiView},
+    ResourceLimiter, ScriptId, SecurityPolicy, VnError,
 };
 
 use crate::assets::{AssetManager, AssetStore, SecurityMode};

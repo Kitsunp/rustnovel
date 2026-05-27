@@ -143,6 +143,35 @@ impl NodeGraph {
         true
     }
 
+    pub(crate) fn replace_fragment_for_command_bus(&mut self, fragment: GraphFragment) -> bool {
+        if !self.fragments.contains_key(&fragment.fragment_id) {
+            return false;
+        }
+        self.fragments
+            .insert(fragment.fragment_id.clone(), fragment);
+        self.modified = true;
+        true
+    }
+
+    pub(crate) fn insert_fragment_for_command_bus(&mut self, fragment: GraphFragment) -> bool {
+        if self.fragments.contains_key(&fragment.fragment_id) {
+            return false;
+        }
+        self.fragments
+            .insert(fragment.fragment_id.clone(), fragment);
+        self.modified = true;
+        true
+    }
+
+    pub(crate) fn graph_stack_for_command_bus(&self) -> super::GraphStack {
+        self.graph_stack.clone()
+    }
+
+    pub(crate) fn replace_graph_stack_for_command_bus(&mut self, stack: super::GraphStack) {
+        self.graph_stack = stack;
+        self.modified = true;
+    }
+
     pub fn validate_fragments(&self) -> Vec<LintIssue> {
         let mut issues = Vec::new();
         let mut ownership = BTreeMap::<u32, String>::new();

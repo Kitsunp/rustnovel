@@ -4,6 +4,16 @@ This page is the stable docs target for authoring, dry-run and runtime-validatio
 Each heading maps directly to a `LintCode::label()` value and is used by exported reports,
 CLI JSON, GUI imports and Python bindings.
 
+## Persistent Authoring Document Mutations
+
+`AuthoringDocumentCommandBus` is the only supported API for persistent
+`AuthoringDocument` mutations. GUI, Python and CLI authoring clients should
+send typed document commands for composer layer visibility, layer locking,
+background fit overrides and future document-level state that needs operation
+logs, fingerprints or verification runs. Transient UI state such as selection,
+hover, viewport and drag previews should remain local and must not write
+`operation_log`.
+
 ## val-start-missing
 
 The graph must contain one connected Start node so all clients agree on the entry point.

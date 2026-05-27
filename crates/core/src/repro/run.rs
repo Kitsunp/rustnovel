@@ -1,6 +1,8 @@
 use crate::event::EventCompiled;
-
-use crate::{Engine, FidelityClass, ResourceLimiter, SecurityPolicy};
+use crate::execution_contract::FidelityClass;
+use crate::resource::ResourceLimiter;
+use crate::runtime::Engine;
+use crate::security::SecurityPolicy;
 
 use super::report::{ReproRunReport, ReproStepTrace, ReproStopReason, REPRO_RUN_REPORT_SCHEMA};
 use super::signatures::{

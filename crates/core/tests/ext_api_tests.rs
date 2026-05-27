@@ -1,8 +1,11 @@
 use std::collections::BTreeMap;
 
 use visual_novel_engine::{
-    AssetId, AudioActionRaw, CharacterPatchRaw, CharacterPlacementRaw, Engine, EventRaw,
-    ScenePatchRaw, SceneUpdateRaw, ScriptRaw, SecurityPolicy,
+    runtime::{
+        AudioActionRaw, CharacterPatchRaw, CharacterPlacementRaw, Engine, EventRaw, ScenePatchRaw,
+        SceneUpdateRaw, ScriptRaw,
+    },
+    AssetId, SecurityPolicy,
 };
 
 #[test]
@@ -12,7 +15,7 @@ fn ext_call_requires_resume_to_advance() {
             command: "minigame_start".to_string(),
             args: vec!["poker".to_string()],
         },
-        EventRaw::Dialogue(visual_novel_engine::DialogueRaw {
+        EventRaw::Dialogue(visual_novel_engine::runtime::DialogueRaw {
             speaker: "Ava".to_string(),
             text: "Hola".to_string(),
         }),
@@ -30,19 +33,19 @@ fn ext_call_requires_resume_to_advance() {
     let (_audio, change) = engine.step().unwrap();
     assert!(matches!(
         change.event,
-        visual_novel_engine::EventCompiled::ExtCall { .. }
+        visual_novel_engine::runtime::EventCompiled::ExtCall { .. }
     ));
     let event = engine.current_event().unwrap();
     assert!(matches!(
         event,
-        visual_novel_engine::EventCompiled::ExtCall { .. }
+        visual_novel_engine::runtime::EventCompiled::ExtCall { .. }
     ));
 
     engine.resume().unwrap();
     let event = engine.current_event().unwrap();
     assert!(matches!(
         event,
-        visual_novel_engine::EventCompiled::Dialogue(_)
+        visual_novel_engine::runtime::EventCompiled::Dialogue(_)
     ));
 }
 

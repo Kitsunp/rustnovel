@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{CharacterPlacementRaw, CondRaw, EventRaw, ScenePatchRaw};
+use crate::event::{CharacterPlacementRaw, CondRaw, EventRaw, ScenePatchRaw};
 
 pub const NODE_VERTICAL_SPACING: f32 = 90.0;
 

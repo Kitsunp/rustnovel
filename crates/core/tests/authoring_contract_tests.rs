@@ -6,8 +6,11 @@ use visual_novel_engine::authoring::{
     AuthoringValidationReport, LintCode, LintSeverity, NodeGraph, SceneProfile, StoryNode,
 };
 use visual_novel_engine::{
-    AssetId, CharacterPlacementRaw, CondRaw, DialogueRaw, Engine, EventRaw, ReproCase,
-    ResourceLimiter, SceneTransitionRaw, SceneUpdateRaw, ScriptRaw, SecurityPolicy,
+    runtime::{
+        CharacterPlacementRaw, CondRaw, DialogueRaw, Engine, EventRaw, SceneTransitionRaw,
+        SceneUpdateRaw, ScriptRaw,
+    },
+    AssetId, ReproCase, ResourceLimiter, SecurityPolicy,
 };
 
 fn pos(x: f32, y: f32) -> AuthoringPosition {
@@ -346,15 +349,17 @@ fn repro_and_dry_run_simulate_extcall_without_hitting_step_limit() {
 #[test]
 fn prefetch_uses_expression_asset_not_character_name() {
     let script = ScriptRaw::new(
-        vec![EventRaw::Scene(visual_novel_engine::SceneUpdateRaw {
-            background: Some("bg/room.png".to_string()),
-            music: None,
-            characters: vec![CharacterPlacementRaw {
-                name: "Ava".to_string(),
-                expression: Some("characters/ava.png".to_string()),
-                ..Default::default()
-            }],
-        })],
+        vec![EventRaw::Scene(
+            visual_novel_engine::runtime::SceneUpdateRaw {
+                background: Some("bg/room.png".to_string()),
+                music: None,
+                characters: vec![CharacterPlacementRaw {
+                    name: "Ava".to_string(),
+                    expression: Some("characters/ava.png".to_string()),
+                    ..Default::default()
+                }],
+            },
+        )],
         BTreeMap::from([("start".to_string(), 0)]),
     );
     let engine = Engine::new(
@@ -393,7 +398,7 @@ fn transition_is_observable_from_ui_and_engine() {
     )
     .expect("engine");
     let event = engine.current_event().expect("transition event");
-    let ui = visual_novel_engine::UiState::from_event(&event, engine.visual_state());
+    let ui = visual_novel_engine::runtime::UiState::from_event(&event, engine.visual_state());
     assert_eq!(
         ui.pending_transition
             .as_ref()
