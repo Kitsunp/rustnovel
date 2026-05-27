@@ -119,6 +119,97 @@ fn composer_mutation_targets_duplicate_character_by_expression_and_instance() {
 }
 
 #[test]
+fn composer_character_drag_matches_authoring_command_bus_move_layer() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+
+    let scene = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: None,
+            music: None,
+            characters: vec![
+                visual_novel_engine::CharacterPlacementRaw {
+                    name: "Ava".to_string(),
+                    expression: Some("ava/smile.png".to_string()),
+                    position: None,
+                    x: Some(10),
+                    y: Some(10),
+                    scale: Some(1.0),
+                },
+                visual_novel_engine::CharacterPlacementRaw {
+                    name: "Ava".to_string(),
+                    expression: Some("ava/angry.png".to_string()),
+                    position: None,
+                    x: Some(200),
+                    y: Some(10),
+                    scale: Some(1.0),
+                },
+                visual_novel_engine::CharacterPlacementRaw {
+                    name: "Ava".to_string(),
+                    expression: Some("ava/angry.png".to_string()),
+                    position: None,
+                    x: Some(300),
+                    y: Some(10),
+                    scale: Some(1.0),
+                },
+            ],
+        },
+        egui::pos2(0.0, 0.0),
+    );
+
+    let before = workbench.node_graph.authoring_graph().clone();
+    let target =
+        visual_novel_engine::authoring::composer::list_layered_objects(&before, Some(scene))
+            .into_iter()
+            .filter(|object| {
+                object.source_node_id == Some(scene)
+                    && object.character_name.as_deref() == Some("Ava")
+                    && object.expression.as_deref() == Some("ava/angry.png")
+            })
+            .nth(1)
+            .expect("second angry Ava layer should be addressable by core object id");
+    let mut expected_bus = visual_novel_engine::authoring::AuthoringCommandBus::new(before);
+    expected_bus
+        .apply(
+            visual_novel_engine::authoring::AuthoringCommand::MoveLayer {
+                object_id: target.object_id,
+                x: 640,
+                y: 360,
+                scale: Some(1.25),
+            },
+        )
+        .expect("core command bus should move the selected layer");
+
+    assert!(workbench.apply_composer_node_mutation(
+        scene,
+        crate::editor::visual_composer::ComposerNodeMutation::CharacterPosition {
+            name: "Ava".to_string(),
+            expression: Some("ava/angry.png".to_string()),
+            source_instance_index: 1,
+            x: 640,
+            y: 360,
+            scale: Some(1.25),
+        },
+    ));
+    assert_eq!(
+        serde_json::to_value(workbench.node_graph.authoring_graph()).unwrap(),
+        serde_json::to_value(expected_bus.graph()).unwrap()
+    );
+    assert!(!workbench.apply_composer_node_mutation(
+        scene,
+        crate::editor::visual_composer::ComposerNodeMutation::CharacterPosition {
+            name: "Ava".to_string(),
+            expression: Some("ava/angry.png".to_string()),
+            source_instance_index: 1,
+            x: 640,
+            y: 360,
+            scale: Some(1.25),
+        },
+    ));
+}
+
+#[test]
 fn composer_drag_operation_records_node_before_after_values() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);
@@ -321,5 +412,85 @@ fn composer_choice_reorder_preserves_option_target_pairs() {
     assert_eq!(
         entry.field_paths.first().map(|path| path.value.as_str()),
         Some("graph.nodes[0].choice.options")
+    );
+}
+
+#[test]
+fn composer_choice_target_matches_authoring_command_bus_connect_and_logs_connection() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+
+    let choice = workbench.node_graph.add_node(
+        StoryNode::Choice {
+            prompt: "Where next?".to_string(),
+            options: vec!["Route".to_string()],
+        },
+        egui::pos2(0.0, 0.0),
+    );
+    let old_target = workbench.node_graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Old".to_string(),
+            text: "Old route".to_string(),
+        },
+        egui::pos2(-120.0, 90.0),
+    );
+    let new_target = workbench.node_graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "New".to_string(),
+            text: "New route".to_string(),
+        },
+        egui::pos2(120.0, 90.0),
+    );
+    workbench.node_graph.connect_port(choice, 0, old_target);
+    workbench.node_graph.clear_operation_hint();
+    workbench.node_graph.clear_modified();
+    workbench.refresh_operation_fingerprint();
+
+    let before_graph = workbench.node_graph.clone();
+    let before_authoring = workbench.node_graph.authoring_graph().clone();
+    let mut expected_bus =
+        visual_novel_engine::authoring::AuthoringCommandBus::new(before_authoring);
+    expected_bus
+        .apply(visual_novel_engine::authoring::AuthoringCommand::Connect {
+            from: choice,
+            from_port: 0,
+            to: new_target,
+        })
+        .expect("core command bus should reconnect the choice option");
+
+    assert!(workbench.apply_composer_node_mutation(
+        choice,
+        crate::editor::visual_composer::ComposerNodeMutation::ChoiceOptionTarget {
+            option_index: 0,
+            target_node_id: Some(new_target),
+        },
+    ));
+    assert_eq!(
+        serde_json::to_value(workbench.node_graph.authoring_graph()).unwrap(),
+        serde_json::to_value(expected_bus.graph()).unwrap()
+    );
+    assert!(!workbench.apply_composer_node_mutation(
+        choice,
+        crate::editor::visual_composer::ComposerNodeMutation::ChoiceOptionTarget {
+            option_index: 0,
+            target_node_id: Some(new_target),
+        },
+    ));
+
+    workbench.node_graph.mark_modified();
+    workbench.commit_modified_graph(before_graph);
+
+    let entry = workbench
+        .operation_log
+        .last()
+        .expect("choice target connection should be logged");
+    assert_eq!(entry.operation_kind, "node_connected");
+    assert!(matches!(
+        entry.operation_kind_v2,
+        Some(visual_novel_engine::authoring::OperationKind::NodeConnected)
+    ));
+    assert_eq!(
+        entry.field_paths.first().map(|path| path.value.as_str()),
+        Some("graph.edges[0:0]")
     );
 }

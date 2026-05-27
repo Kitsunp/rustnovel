@@ -10,6 +10,7 @@ use visual_novel_engine::{
 
 use super::super::node_types::ToastState;
 use super::state::PlayerSessionState;
+use crate::editor::resource_service::EditorResourceService;
 
 #[path = "content.rs"]
 mod content;
@@ -24,6 +25,7 @@ pub(crate) struct PlayerVisualContext<'a> {
     pub background_fit: crate::editor::BackgroundFit,
     pub image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     pub image_failures: &'a mut HashMap<String, String>,
+    pub resource_service: &'a mut EditorResourceService,
 }
 
 struct PlayerLocalizationContext<'a> {
@@ -252,6 +254,7 @@ fn render_visual_state_for_event(
         visual.preview_quality,
         visual.image_cache,
         visual.image_failures,
+        visual.resource_service,
     )
     .with_background_fit(visual.background_fit);
     painter.paint_read_only(ui, &scene, geometry);

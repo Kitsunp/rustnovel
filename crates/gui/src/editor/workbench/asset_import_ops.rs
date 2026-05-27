@@ -166,7 +166,7 @@ impl EditorWorkbench {
 
         self.composer_image_cache.clear();
         self.composer_image_failures.clear();
-        self.audio_duration_cache.clear();
+        self.resource_service.clear();
         self.compilation_cache.invalidate();
         self.player_audio_backend = None;
         self.player_audio_root = None;
@@ -220,7 +220,7 @@ impl EditorWorkbench {
 
         self.composer_image_cache.clear();
         self.composer_image_failures.clear();
-        self.audio_duration_cache.clear();
+        self.resource_service.clear();
         self.compilation_cache.invalidate();
         self.player_audio_backend = None;
         self.player_audio_root = None;

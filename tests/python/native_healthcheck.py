@@ -31,7 +31,9 @@ def python_native_module_origin_healthcheck() -> dict[str, Any]:
     missing_names = sorted(EXPECTED_PUBLIC_NAMES - public_names)
 
     in_repo = module_file is not None and _is_relative_to(module_file, REPO_ROOT)
-    in_active_prefix = module_file is not None and _is_relative_to(module_file, sys_prefix)
+    in_active_prefix = module_file is not None and _is_relative_to(
+        module_file, sys_prefix
+    )
     imported_from_allowed_origin = in_repo or (in_virtualenv and in_active_prefix)
 
     ok = bool(module_file) and imported_from_allowed_origin and not missing_names
@@ -67,8 +69,21 @@ def _failure_message(
     in_active_prefix: bool,
     missing_names: list[str],
 ) -> str:
-    if module_file and (in_repo or (in_virtualenv and in_active_prefix)) and not missing_names:
+    if (
+        module_file
+        and (in_repo or (in_virtualenv and in_active_prefix))
+        and not missing_names
+    ):
         return "visual_novel_engine import origin and public API are valid"
+
+    venv_root = Path("target") / "py-audit-venv"
+    venv_bin = "Scripts" if sys.platform == "win32" else "bin"
+    venv_python = (
+        venv_root / venv_bin / ("python.exe" if sys.platform == "win32" else "python")
+    )
+    venv_maturin = (
+        venv_root / venv_bin / ("maturin.exe" if sys.platform == "win32" else "maturin")
+    )
 
     return "\n".join(
         [
@@ -82,11 +97,11 @@ def _failure_message(
             f"missing_public_names={missing_names}",
             "Expected either a repo-local module or a module installed into the active venv.",
             "Use:",
-            r"  py -m venv target\py-audit-venv",
-            r"  target\py-audit-venv\Scripts\python -m pip install --upgrade pip",
-            r"  target\py-audit-venv\Scripts\python -m pip install maturin pytest",
-            r"  target\py-audit-venv\Scripts\maturin develop --manifest-path crates\py\Cargo.toml --features extension-module",
-            r"  target\py-audit-venv\Scripts\python -m pytest -q",
+            f"  {Path(sys.executable)} -m venv {venv_root}",
+            f"  {venv_python} -m pip install --upgrade pip",
+            f"  {venv_python} -m pip install maturin pytest",
+            f"  {venv_maturin} develop --manifest-path crates/py/Cargo.toml --features extension-module",
+            f"  {venv_python} -m pytest -q",
         ]
     )
 

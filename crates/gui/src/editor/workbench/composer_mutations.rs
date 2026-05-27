@@ -1,5 +1,6 @@
 use super::*;
 use crate::editor::StoryNode;
+use visual_novel_engine::authoring::{composer, AuthoringCommand, AuthoringCommandBus};
 
 struct MutationRecord {
     kind: &'static str,
@@ -7,6 +8,7 @@ struct MutationRecord {
     field_path: String,
 }
 
+#[derive(Clone)]
 struct CharacterPositionEdit {
     name: String,
     expression: Option<String>,
@@ -206,7 +208,7 @@ impl EditorWorkbench {
                 if already_connected {
                     return None;
                 }
-                self.node_graph.connect_port(node_id, option_index, target);
+                self.connect_choice_target_with_command_bus(node_id, option_index, target);
             }
             Some(_) => return None,
             None => {
@@ -220,11 +222,23 @@ impl EditorWorkbench {
                 self.node_graph.disconnect_port(node_id, option_index);
             }
         }
-        Some(field_record(
-            node_id,
-            &format!("choice.options[{option_index}].target"),
-            "Edited Visual Composer choice target",
-        ))
+        Some(choice_target_record(node_id, option_index, target_node_id))
+    }
+
+    fn connect_choice_target_with_command_bus(
+        &mut self,
+        node_id: u32,
+        option_index: usize,
+        target: u32,
+    ) {
+        let mut bus = AuthoringCommandBus::new(self.node_graph.authoring_graph().clone());
+        bus.apply(AuthoringCommand::Connect {
+            from: node_id,
+            from_port: option_index,
+            to: target,
+        })
+        .expect("valid composer choice target should connect through AuthoringCommandBus");
+        self.node_graph.replace_authoring_graph(bus.graph().clone());
     }
 
     fn apply_character_position_mutation(
@@ -232,6 +246,14 @@ impl EditorWorkbench {
         node_id: u32,
         edit: CharacterPositionEdit,
     ) -> Option<MutationRecord> {
+        match self.apply_character_position_with_command_bus(node_id, &edit) {
+            CommandBusMoveResult::Applied => {
+                return Some(character_position_record(node_id));
+            }
+            CommandBusMoveResult::NoChange => return None,
+            CommandBusMoveResult::Unsupported => {}
+        }
+
         let node = self.node_graph.get_node_mut(node_id)?;
         let changed = match node {
             StoryNode::CharacterPlacement {
@@ -257,11 +279,39 @@ impl EditorWorkbench {
             }
             _ => false,
         };
-        changed.then(|| MutationRecord {
-            kind: "composer_drag_entity",
-            details: format!("Moved Visual Composer entity for node {node_id}"),
-            field_path: format!("graph.nodes[{node_id}].visual.transform"),
+        changed.then(|| character_position_record(node_id))
+    }
+
+    fn apply_character_position_with_command_bus(
+        &mut self,
+        node_id: u32,
+        edit: &CharacterPositionEdit,
+    ) -> CommandBusMoveResult {
+        if !matches!(
+            self.node_graph.get_node(node_id),
+            Some(StoryNode::Scene { .. } | StoryNode::ScenePatch(_))
+        ) {
+            return CommandBusMoveResult::Unsupported;
+        }
+        let Some((object_id, before_pose)) =
+            command_bus_character_object(self.node_graph.authoring_graph(), node_id, edit)
+        else {
+            return CommandBusMoveResult::Unsupported;
+        };
+        if before_pose == (Some(edit.x), Some(edit.y), edit.scale) {
+            return CommandBusMoveResult::NoChange;
+        }
+
+        let mut bus = AuthoringCommandBus::new(self.node_graph.authoring_graph().clone());
+        bus.apply(AuthoringCommand::MoveLayer {
+            object_id,
+            x: edit.x,
+            y: edit.y,
+            scale: edit.scale,
         })
+        .expect("matched composer layer object should be movable through AuthoringCommandBus");
+        self.node_graph.replace_authoring_graph(bus.graph().clone());
+        CommandBusMoveResult::Applied
     }
 
     fn remap_choice_connections_after_move(
@@ -286,6 +336,36 @@ impl EditorWorkbench {
             self.node_graph.connect_port(node_id, new_port, target);
         }
     }
+}
+
+enum CommandBusMoveResult {
+    Applied,
+    NoChange,
+    Unsupported,
+}
+
+type CharacterLayerPose = (Option<i32>, Option<i32>, Option<f32>);
+type CharacterLayerTarget = (String, CharacterLayerPose);
+
+fn command_bus_character_object(
+    graph: &visual_novel_engine::authoring::NodeGraph,
+    node_id: u32,
+    edit: &CharacterPositionEdit,
+) -> Option<CharacterLayerTarget> {
+    let mut seen = 0usize;
+    for object in composer::list_layered_objects(graph, Some(node_id)) {
+        if object.source_node_id != Some(node_id)
+            || object.character_name.as_deref() != Some(edit.name.as_str())
+            || object.expression.as_deref() != edit.expression.as_deref()
+        {
+            continue;
+        }
+        if seen == edit.source_instance_index {
+            return Some((object.object_id, (object.x, object.y, object.scale)));
+        }
+        seen += 1;
+    }
+    None
 }
 
 fn update_character_placement_node(
@@ -374,5 +454,34 @@ fn field_record(node_id: u32, field: &str, details: &str) -> MutationRecord {
         kind: "field_edited",
         details: format!("{details} for node {node_id}"),
         field_path: format!("graph.nodes[{node_id}].{field}"),
+    }
+}
+
+fn character_position_record(node_id: u32) -> MutationRecord {
+    MutationRecord {
+        kind: "composer_drag_entity",
+        details: format!("Moved Visual Composer entity for node {node_id}"),
+        field_path: format!("graph.nodes[{node_id}].visual.transform"),
+    }
+}
+
+fn choice_target_record(
+    node_id: u32,
+    option_index: usize,
+    target_node_id: Option<u32>,
+) -> MutationRecord {
+    match target_node_id {
+        Some(target) => MutationRecord {
+            kind: "node_connected",
+            details: format!(
+                "Connected Visual Composer choice {node_id} option {option_index} to node {target}"
+            ),
+            field_path: format!("graph.edges[{node_id}:{option_index}]"),
+        },
+        None => MutationRecord {
+            kind: "node_disconnected",
+            details: format!("Disconnected Visual Composer choice {node_id} option {option_index}"),
+            field_path: format!("graph.edges[{node_id}:{option_index}]"),
+        },
     }
 }

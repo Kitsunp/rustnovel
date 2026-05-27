@@ -149,11 +149,13 @@ fn stage_image_cache_aliases_extensionless_requests_to_resolved_texture() {
     let ctx = egui::Context::default();
     let mut image_cache = HashMap::new();
     let mut failures = HashMap::new();
+    let mut resource_service = crate::editor::resource_service::EditorResourceService::new();
     let mut painter = SceneStagePainter::new(
         Some(temp.path()),
         crate::editor::PreviewQuality::Draft,
         &mut image_cache,
         &mut failures,
+        &mut resource_service,
     );
 
     let first = painter
@@ -165,6 +167,7 @@ fn stage_image_cache_aliases_extensionless_requests_to_resolved_texture() {
 
     assert_eq!(first, second);
     drop(painter);
+    assert_eq!(resource_service.metrics().misses, 1);
     assert!(failures.is_empty());
     assert!(image_cache.contains_key(&scene_stage_cache_key(
         temp.path(),

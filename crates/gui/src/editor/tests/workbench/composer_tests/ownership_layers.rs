@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 #[test]
 fn composer_owner_map_does_not_treat_dialogue_speaker_as_visual_character() {
@@ -319,6 +319,94 @@ fn selected_authoring_overlay_replaces_same_runtime_overlay_layer() {
     assert_eq!(overlays.len(), 1);
     assert_eq!(overlays[0].source_node_id, Some(11));
     assert_eq!(overlays[0].source_field_path, "graph.nodes[11].choice");
+}
+
+#[test]
+fn presentation_snapshot_layers_match_runtime_scene_layers() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+
+    let start = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+    let scene = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/room.png".to_string()),
+            music: Some("audio/theme.ogg".to_string()),
+            characters: vec![visual_novel_engine::CharacterPlacementRaw {
+                name: "Ava".to_string(),
+                expression: Some("ava/smile.png".to_string()),
+                position: None,
+                x: Some(10),
+                y: Some(10),
+                scale: Some(1.0),
+            }],
+        },
+        egui::pos2(0.0, 100.0),
+    );
+    let patch = workbench.node_graph.add_node(
+        StoryNode::ScenePatch(visual_novel_engine::ScenePatchRaw {
+            add: vec![visual_novel_engine::CharacterPlacementRaw {
+                name: "Ava".to_string(),
+                expression: Some("ava/angry.png".to_string()),
+                position: None,
+                x: Some(200),
+                y: Some(10),
+                scale: Some(1.0),
+            }],
+            ..Default::default()
+        }),
+        egui::pos2(0.0, 220.0),
+    );
+    workbench.node_graph.connect(start, scene);
+    workbench.node_graph.connect(scene, patch);
+    workbench.selected_node = Some(patch);
+
+    workbench
+        .sync_graph_to_script()
+        .expect("preview graph should compile");
+
+    let old_layers = crate::editor::visual_composer::layered_scene_objects(
+        &workbench.scene,
+        &workbench.composer_entity_owners,
+        &workbench.engine,
+    );
+    let snapshot = visual_novel_engine::authoring::composer::build_presentation_snapshot(
+        workbench.node_graph.authoring_graph(),
+        Some(patch),
+        Some((1280, 720)),
+        workbench.engine.as_ref(),
+        None,
+        None,
+    );
+
+    let comparable = |object: &visual_novel_engine::authoring::composer::LayeredSceneObject| {
+        (
+            object.kind,
+            object.source_node_id,
+            object.asset_path.clone(),
+            object.character_name.clone(),
+            object.expression.clone(),
+        )
+    };
+    let old = old_layers.iter().map(comparable).collect::<Vec<_>>();
+    let new = snapshot
+        .objects
+        .iter()
+        .filter(|object| !object.object_id.starts_with("overlay:"))
+        .map(comparable)
+        .collect::<Vec<_>>();
+
+    assert_eq!(new, old);
+    assert!(snapshot.objects.iter().any(|object| {
+        object.asset_path.as_deref() == Some("ava/smile.png")
+            && object.source_node_id == Some(scene)
+    }));
+    assert!(snapshot.objects.iter().any(|object| {
+        object.asset_path.as_deref() == Some("ava/angry.png")
+            && object.source_node_id == Some(patch)
+    }));
 }
 
 #[test]

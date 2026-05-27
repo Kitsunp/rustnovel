@@ -8,6 +8,7 @@ use crate::editor::image_asset_cache::{
     image_failure_message, normalize_asset_path, should_retry_missing_image_failure,
     thumbnail_cache_key,
 };
+use crate::editor::resource_service::EditorResourceService;
 use crate::editor::{AssetImportKind, PreviewQuality};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,7 +35,7 @@ pub struct AssetBrowserPanel<'a> {
     project_root: Option<&'a Path>,
     image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     image_failures: &'a mut HashMap<String, String>,
-    audio_duration_cache: &'a mut HashMap<String, Option<f32>>,
+    resource_service: &'a mut EditorResourceService,
     asset_store: Option<vnengine_assets::AssetStore>,
 }
 
@@ -44,14 +45,14 @@ impl<'a> AssetBrowserPanel<'a> {
         project_root: Option<&'a Path>,
         image_cache: &'a mut HashMap<String, egui::TextureHandle>,
         image_failures: &'a mut HashMap<String, String>,
-        audio_duration_cache: &'a mut HashMap<String, Option<f32>>,
+        resource_service: &'a mut EditorResourceService,
     ) -> Self {
         Self {
             manifest,
             project_root,
             image_cache,
             image_failures,
-            audio_duration_cache,
+            resource_service,
             asset_store: None,
         }
     }
@@ -298,11 +299,17 @@ impl<'a> AssetBrowserPanel<'a> {
             return None;
         }
 
-        let image = match self.asset_store.as_ref()?.load_image(&resolved_asset_path) {
+        let image = match self.resource_service.image_for_view(
+            project_root,
+            &resolved_asset_path,
+            "asset_browser",
+        ) {
             Ok(image) => image,
             Err(err) => {
-                self.image_failures
-                    .insert(cache_key, image_failure_message(&resolved_asset_path, &err));
+                self.image_failures.insert(
+                    cache_key,
+                    format!("image '{resolved_asset_path}' load failed: {err}"),
+                );
                 return None;
             }
         };
@@ -357,20 +364,12 @@ impl<'a> AssetBrowserPanel<'a> {
     }
 
     fn audio_duration_secs(&mut self, asset_path: &str) -> Option<f32> {
-        if let Some(cached) = self.audio_duration_cache.get(asset_path) {
-            return *cached;
-        }
-        let duration = if let Some(root) = self.project_root {
-            self.asset_store(root)
-                .and_then(|store| visual_novel_runtime::audio_duration(store, asset_path).ok())
-                .flatten()
-                .map(|duration| duration.as_secs_f32())
-        } else {
-            None
-        };
-        self.audio_duration_cache
-            .insert(asset_path.to_string(), duration);
-        duration
+        let root = self.project_root?;
+        self.resource_service
+            .audio_metadata(root, asset_path)
+            .ok()
+            .and_then(|metadata| metadata.duration)
+            .map(|duration| duration.as_secs_f32())
     }
 }
 

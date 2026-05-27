@@ -235,7 +235,7 @@ impl EditorWorkbench {
                             self.project_root.as_deref(),
                             &mut self.composer_image_cache,
                             &mut self.composer_image_failures,
-                            &mut self.audio_duration_cache,
+                            &mut self.resource_service,
                         )
                         .ui(ui),
                     );
@@ -343,14 +343,23 @@ impl EditorWorkbench {
             self.composer_background_fit_for_node(composer_selected_node);
         let mut composer_preview_mode = self.composer_preview_mode;
         let mut composer_actions = Vec::new();
+        let stage_resolution = self
+            .manifest
+            .as_ref()
+            .map(|manifest| manifest.settings.resolution);
+        let presentation_snapshot =
+            visual_novel_engine::authoring::composer::build_presentation_snapshot(
+                self.node_graph.authoring_graph(),
+                composer_selected_node,
+                stage_resolution,
+                self.engine.as_ref(),
+                Some(&self.player_locale),
+                Some(&self.localization_catalog),
+            );
 
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_fragments_panel(ui);
             ui.separator();
-            let stage_resolution = self
-                .manifest
-                .as_ref()
-                .map(|manifest| manifest.settings.resolution);
             let mut composer = crate::editor::visual_composer::VisualComposerPanel::new(
                 crate::editor::visual_composer::VisualComposerPanelParams {
                     scene: &mut self.scene,
@@ -363,11 +372,13 @@ impl EditorWorkbench {
                     preview_mode: &mut composer_preview_mode,
                     image_cache: &mut self.composer_image_cache,
                     image_failures: &mut self.composer_image_failures,
+                    resource_service: &mut self.resource_service,
                     selected_entity_id: &mut self.selected_entity,
                     layer_overrides: &mut self.composer_layer_overrides,
                     active_event_node_id,
                     selected_authoring_node_id: composer_selected_node,
                     selected_authoring_node: selected_authoring_node.as_ref(),
+                    presentation_snapshot: Some(&presentation_snapshot),
                 },
             );
             if let Some(act) = composer.ui(ui, &entity_owners) {

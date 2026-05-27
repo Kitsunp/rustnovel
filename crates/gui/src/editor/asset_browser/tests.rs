@@ -93,3 +93,75 @@ fn audio_preview_offset_contract_is_integer_ms_and_finite() {
         }
     );
 }
+
+#[test]
+fn asset_browser_audio_duration_uses_shared_resource_service_fingerprint_invalidation() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(temp.path().join("assets/audio")).expect("mkdir audio");
+    let audio_path = temp.path().join("assets/audio/tone.wav");
+    std::fs::write(
+        &audio_path,
+        tiny_wav(std::time::Duration::from_millis(120), 8_000),
+    )
+    .expect("write first wav");
+
+    let manifest = visual_novel_engine::manifest::ProjectManifest::new("Test", "Author");
+    let mut image_cache = std::collections::HashMap::new();
+    let mut image_failures = std::collections::HashMap::new();
+    let mut resource_service = crate::editor::resource_service::EditorResourceService::new();
+
+    let first = {
+        let mut panel = super::AssetBrowserPanel::new(
+            &manifest,
+            Some(temp.path()),
+            &mut image_cache,
+            &mut image_failures,
+            &mut resource_service,
+        );
+        panel
+            .audio_duration_secs("assets/audio/tone.wav")
+            .expect("first duration")
+    };
+
+    std::fs::write(
+        &audio_path,
+        tiny_wav(std::time::Duration::from_millis(260), 8_000),
+    )
+    .expect("write second wav");
+
+    let second = {
+        let mut panel = super::AssetBrowserPanel::new(
+            &manifest,
+            Some(temp.path()),
+            &mut image_cache,
+            &mut image_failures,
+            &mut resource_service,
+        );
+        panel
+            .audio_duration_secs("assets/audio/tone.wav")
+            .expect("second duration")
+    };
+
+    assert!(second > first);
+    assert!(resource_service.metrics().evictions >= 1);
+}
+
+fn tiny_wav(duration: std::time::Duration, sample_rate: u32) -> Vec<u8> {
+    let samples = (duration.as_secs_f32() * sample_rate as f32).round() as u32;
+    let data_len = samples * 2;
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+    bytes.extend_from_slice(b"WAVEfmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&sample_rate.to_le_bytes());
+    bytes.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+    bytes.extend_from_slice(&2u16.to_le_bytes());
+    bytes.extend_from_slice(&16u16.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_len.to_le_bytes());
+    bytes.resize(bytes.len() + data_len as usize, 0);
+    bytes
+}

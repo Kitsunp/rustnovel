@@ -2,8 +2,11 @@ use crate::editor::StoryNode;
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::Path;
-use visual_novel_engine::{Engine, EntityId, SceneState};
+use visual_novel_engine::{
+    authoring::composer::PresentationSnapshot, Engine, EntityId, SceneState,
+};
 
+use crate::editor::resource_service::EditorResourceService;
 use crate::editor::{
     AssetFieldTarget, BackgroundFit, ComposerPreviewMode, PreviewQuality, StageFit,
 };
@@ -108,11 +111,13 @@ pub struct VisualComposerPanel<'a> {
     preview_mode: &'a mut ComposerPreviewMode,
     image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     image_failures: &'a mut HashMap<String, String>,
+    resource_service: &'a mut EditorResourceService,
     selected_entity_id: &'a mut Option<u32>,
     layer_overrides: &'a mut HashMap<String, LayerOverride>,
     active_event_node_id: Option<u32>,
     selected_authoring_node_id: Option<u32>,
     selected_authoring_node: Option<&'a StoryNode>,
+    presentation_snapshot: Option<&'a PresentationSnapshot>,
 }
 
 pub struct VisualComposerPanelParams<'a> {
@@ -126,11 +131,13 @@ pub struct VisualComposerPanelParams<'a> {
     pub preview_mode: &'a mut ComposerPreviewMode,
     pub image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     pub image_failures: &'a mut HashMap<String, String>,
+    pub resource_service: &'a mut EditorResourceService,
     pub selected_entity_id: &'a mut Option<u32>,
     pub layer_overrides: &'a mut HashMap<String, LayerOverride>,
     pub active_event_node_id: Option<u32>,
     pub selected_authoring_node_id: Option<u32>,
     pub selected_authoring_node: Option<&'a StoryNode>,
+    pub presentation_snapshot: Option<&'a PresentationSnapshot>,
 }
 
 impl<'a> VisualComposerPanel<'a> {
@@ -146,11 +153,13 @@ impl<'a> VisualComposerPanel<'a> {
             preview_mode: params.preview_mode,
             image_cache: params.image_cache,
             image_failures: params.image_failures,
+            resource_service: params.resource_service,
             selected_entity_id: params.selected_entity_id,
             layer_overrides: params.layer_overrides,
             active_event_node_id: params.active_event_node_id,
             selected_authoring_node_id: params.selected_authoring_node_id,
             selected_authoring_node: params.selected_authoring_node,
+            presentation_snapshot: params.presentation_snapshot,
         }
     }
 
@@ -232,13 +241,18 @@ impl<'a> VisualComposerPanel<'a> {
             overlays::render_runtime_controls(ui, self.engine, &mut action);
         });
         ui.separator();
-        let objects = layered_scene_objects_with_authoring_overlay(
-            self.scene,
-            entity_owners,
-            self.engine,
-            self.selected_authoring_node_id,
-            self.selected_authoring_node,
-        );
+        let objects = self
+            .presentation_snapshot
+            .map(|snapshot| snapshot.objects.clone())
+            .unwrap_or_else(|| {
+                layered_scene_objects_with_authoring_overlay(
+                    self.scene,
+                    entity_owners,
+                    self.engine,
+                    self.selected_authoring_node_id,
+                    self.selected_authoring_node,
+                )
+            });
         if let Some(layer_action) = self.render_layer_panel(ui, &objects) {
             action = Some(layer_action);
         }
@@ -343,6 +357,7 @@ impl<'a> VisualComposerPanel<'a> {
             *self.preview_quality,
             self.image_cache,
             self.image_failures,
+            self.resource_service,
         )
         .with_layer_overrides(self.layer_overrides.clone());
         let mut painter = painter.with_background_fit(*self.background_fit);

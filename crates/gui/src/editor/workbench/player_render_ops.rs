@@ -23,6 +23,7 @@ impl EditorWorkbench {
             background_fit: self.composer_background_fit_for_node(self.selected_node),
             image_cache: &mut self.composer_image_cache,
             image_failures: &mut self.composer_image_failures,
+            resource_service: &mut self.resource_service,
         };
         let audio_commands = crate::editor::player_ui::render_player_ui(
             &mut self.engine,

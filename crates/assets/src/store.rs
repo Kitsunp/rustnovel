@@ -111,25 +111,7 @@ impl AssetStore {
         let resolved_path = self.resolve_image_path(asset_path)?;
         let bytes = self.load_bytes(&resolved_path)?;
 
-        let image = image::load_from_memory(&bytes).map_err(|err| AssetError::Decode {
-            path: resolved_path.clone(),
-            reason: err.to_string(),
-        })?;
-        let rgba = image.to_rgba8();
-        let (width, height) = (rgba.width(), rgba.height());
-        if width > self.limits.max_width || height > self.limits.max_height {
-            return Err(AssetError::InvalidDimensions {
-                width,
-                height,
-                max_width: self.limits.max_width,
-                max_height: self.limits.max_height,
-            });
-        }
-        Ok(LoadedImage {
-            name: resolved_path,
-            size: [width as usize, height as usize],
-            pixels: rgba.into_raw(),
-        })
+        decode_image_bytes(&resolved_path, &bytes, &self.limits)
     }
 
     pub fn resolve_image_path(&self, asset_path: &str) -> Result<String, AssetError> {
@@ -189,4 +171,30 @@ impl AssetStore {
         }
         Ok(())
     }
+}
+
+pub fn decode_image_bytes(
+    path: &str,
+    bytes: &[u8],
+    limits: &AssetLimits,
+) -> Result<LoadedImage, AssetError> {
+    let image = image::load_from_memory(bytes).map_err(|err| AssetError::Decode {
+        path: path.to_string(),
+        reason: err.to_string(),
+    })?;
+    let rgba = image.to_rgba8();
+    let (width, height) = (rgba.width(), rgba.height());
+    if width > limits.max_width || height > limits.max_height {
+        return Err(AssetError::InvalidDimensions {
+            width,
+            height,
+            max_width: limits.max_width,
+            max_height: limits.max_height,
+        });
+    }
+    Ok(LoadedImage {
+        name: path.to_string(),
+        size: [width as usize, height as usize],
+        pixels: rgba.into_raw(),
+    })
 }

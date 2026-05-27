@@ -14,7 +14,7 @@ pub use model::{
     BudgetReport, LoadedImage, PlatformBudget, PlatformTarget, ScenePreloadPlan, SecurityMode,
     TranscodePreset, TranscodeRecommendation,
 };
-pub use store::AssetStore;
+pub use store::{decode_image_bytes, AssetStore};
 
 #[cfg(test)]
 use helpers::sha256_hex;

@@ -110,7 +110,97 @@ fn presentation_snapshot_parity() {
         runtime_presentation.visual_background.as_deref(),
         Some("bg/room.png")
     );
+    assert!(runtime_presentation.objects.iter().any(|object| {
+        object.kind == composer::StageLayerKind::Background
+            && object.source_node_id == Some(scene)
+            && object.source_field_path == format!("graph.nodes[{scene}].visual.background")
+    }));
     assert_eq!(runtime_presentation.stage_width, presentation.stage_width);
+}
+
+#[test]
+fn presentation_snapshot_runtime_objects_use_visual_state_provenance() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let scene = graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/room.png".to_string()),
+            music: Some("audio/theme.ogg".to_string()),
+            characters: vec![character("Ava", "char/ava_happy.png")],
+        },
+        pos(0.0, 90.0),
+    );
+    graph.connect(start, scene);
+
+    let preview =
+        composer::ComposerPreviewSession::start_from_node(&graph, scene).expect("preview session");
+    let snapshot = preview.presentation_snapshot(&graph, Some((1280, 720)), None, None);
+
+    assert!(snapshot.objects.iter().any(|object| {
+        object.kind == composer::StageLayerKind::Background
+            && object.asset_path.as_deref() == Some("bg/room.png")
+            && object.source_node_id == Some(scene)
+    }));
+    assert!(snapshot.objects.iter().any(|object| {
+        object.kind == composer::StageLayerKind::CharacterMain
+            && object.character_name.as_deref() == Some("Ava")
+            && object.asset_path.as_deref() == Some("char/ava_happy.png")
+            && object.source_node_id == Some(scene)
+    }));
+    assert!(snapshot.objects.iter().any(|object| {
+        object.kind == composer::StageLayerKind::DebugTrace
+            && object.asset_path.as_deref() == Some("audio/theme.ogg")
+            && object.source_node_id == Some(scene)
+    }));
+}
+
+#[test]
+fn presentation_snapshot_selected_authoring_overlay_wins_layer_provenance() {
+    let mut graph = NodeGraph::new();
+    let selected_choice = graph.add_node(
+        StoryNode::Choice {
+            prompt: "Selected?".to_string(),
+            options: vec!["A".to_string()],
+        },
+        pos(0.0, 0.0),
+    );
+    let runtime_script = crate::ScriptRaw::new(
+        vec![crate::EventRaw::Choice(crate::ChoiceRaw {
+            prompt: "Runtime?".to_string(),
+            options: vec![crate::ChoiceOptionRaw {
+                text: "Continue".to_string(),
+                target: "__end".to_string(),
+            }],
+        })],
+        BTreeMap::from([("start".to_string(), 0), ("__end".to_string(), 1)]),
+    );
+    let engine = crate::Engine::new(
+        runtime_script,
+        crate::SecurityPolicy::default(),
+        crate::ResourceLimiter::default(),
+    )
+    .expect("engine");
+
+    let snapshot = composer::build_presentation_snapshot(
+        &graph,
+        Some(selected_choice),
+        None,
+        Some(&engine),
+        None,
+        None,
+    );
+    let overlay = snapshot
+        .objects
+        .iter()
+        .find(|object| object.object_id == "overlay:choice")
+        .expect("choice overlay object");
+
+    assert_eq!(overlay.source_node_id, Some(selected_choice));
+    assert_eq!(
+        overlay.source_field_path,
+        format!("graph.nodes[{selected_choice}].choice")
+    );
 }
 
 #[test]

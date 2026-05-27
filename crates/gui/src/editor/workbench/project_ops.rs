@@ -24,7 +24,7 @@ impl EditorWorkbench {
                 self.manifest_path = Some(path.clone());
                 self.composer_image_cache.clear();
                 self.composer_image_failures.clear();
-                self.audio_duration_cache.clear();
+                self.resource_service.clear();
                 self.composer_layer_overrides.clear();
                 self.composer_background_fit_overrides.clear();
                 self.player_audio_backend = None;
@@ -107,7 +107,7 @@ impl EditorWorkbench {
         self.composer_entity_owners.clear();
         self.composer_image_cache.clear();
         self.composer_image_failures.clear();
-        self.audio_duration_cache.clear();
+        self.resource_service.clear();
         self.player_audio_backend = None;
         self.player_audio_root = None;
 

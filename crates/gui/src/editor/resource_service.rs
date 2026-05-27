@@ -30,9 +30,16 @@ struct CachedBytes {
     bytes: Vec<u8>,
 }
 
+#[derive(Clone, Debug)]
+struct CachedImage {
+    fingerprint: String,
+    image: vnengine_assets::LoadedImage,
+}
+
 #[derive(Default)]
 pub struct EditorResourceService {
     byte_cache: HashMap<PathBuf, CachedBytes>,
+    image_cache: HashMap<PathBuf, CachedImage>,
     audio_metadata_cache: HashMap<PathBuf, AudioMetadata>,
     metrics: ResourceMetrics,
 }
@@ -44,6 +51,13 @@ impl EditorResourceService {
 
     pub fn metrics(&self) -> &ResourceMetrics {
         &self.metrics
+    }
+
+    pub fn clear(&mut self) {
+        self.byte_cache.clear();
+        self.image_cache.clear();
+        self.audio_metadata_cache.clear();
+        self.metrics = ResourceMetrics::default();
     }
 
     pub fn load_bytes(&mut self, project_root: &Path, rel_path: &str) -> Result<Vec<u8>, String> {
@@ -83,6 +97,44 @@ impl EditorResourceService {
             self.metrics.decode_ms = self.metrics.decode_ms.saturating_add(1);
         }
         Ok(bytes)
+    }
+
+    pub fn image_for_view(
+        &mut self,
+        project_root: &Path,
+        rel_path: &str,
+        _view_id: &str,
+    ) -> Result<vnengine_assets::LoadedImage, String> {
+        let path = resolve_project_file(project_root, rel_path)?;
+        let bytes = self.load_bytes(project_root, rel_path)?;
+        let fingerprint = fingerprint_bytes(&bytes);
+
+        if let Some(cached) = self.image_cache.get(&path) {
+            if cached.fingerprint == fingerprint {
+                return Ok(cached.image.clone());
+            }
+            self.metrics.evictions = self.metrics.evictions.saturating_add(1);
+        }
+
+        let before = std::time::Instant::now();
+        let image = vnengine_assets::decode_image_bytes(
+            rel_path,
+            &bytes,
+            &vnengine_assets::AssetLimits::default(),
+        )
+        .map_err(|err| format!("decode image '{rel_path}': {err}"))?;
+        self.metrics.decode_ms = self
+            .metrics
+            .decode_ms
+            .saturating_add(before.elapsed().as_millis().max(1));
+        self.image_cache.insert(
+            path,
+            CachedImage {
+                fingerprint,
+                image: image.clone(),
+            },
+        );
+        Ok(image)
     }
 
     pub fn audio_metadata(
@@ -164,6 +216,36 @@ mod tests {
     }
 
     #[test]
+    fn decoded_image_cache_multiview_stress() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        fs::create_dir_all(tmp.path().join("assets/backgrounds")).expect("asset dir");
+        fs::write(
+            tmp.path().join("assets/backgrounds/room.png"),
+            tiny_png([200, 20, 20, 255]),
+        )
+        .expect("png asset");
+        let mut service = EditorResourceService::new();
+
+        let first = service
+            .image_for_view(tmp.path(), "assets/backgrounds/room.png", "browser")
+            .expect("first decoded image");
+        let decode_ms_after_first = service.metrics().decode_ms;
+        assert_eq!(first.size, [1, 1]);
+
+        for view in ["composer", "player"] {
+            let image = service
+                .image_for_view(tmp.path(), "assets/backgrounds/room.png", view)
+                .expect("cached decoded image");
+            assert_eq!(image.pixels, first.pixels);
+        }
+
+        assert_eq!(service.metrics().misses, 1);
+        assert_eq!(service.metrics().hits, 2);
+        assert!(decode_ms_after_first >= 1);
+        assert_eq!(service.metrics().decode_ms, decode_ms_after_first);
+    }
+
+    #[test]
     fn asset_cache_fingerprint_invalidation() {
         let tmp = tempfile::tempdir().expect("temp dir");
         fs::create_dir_all(tmp.path().join("assets")).expect("asset dir");
@@ -208,6 +290,26 @@ mod tests {
         assert!(service.metrics().evictions >= 1);
     }
 
+    #[test]
+    fn decoded_image_cache_fingerprint_invalidation() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        fs::create_dir_all(tmp.path().join("assets")).expect("asset dir");
+        let path = tmp.path().join("assets/bg.png");
+        fs::write(&path, tiny_png([255, 0, 0, 255])).expect("old png");
+        let mut service = EditorResourceService::new();
+
+        let first = service
+            .image_for_view(tmp.path(), "assets/bg.png", "browser")
+            .expect("first image");
+        fs::write(&path, tiny_png([0, 0, 255, 255])).expect("new png");
+        let second = service
+            .image_for_view(tmp.path(), "assets/bg.png", "browser")
+            .expect("second image");
+
+        assert_ne!(first.pixels, second.pixels);
+        assert!(service.metrics().evictions >= 1);
+    }
+
     fn tiny_wav(duration: Duration, sample_rate: u32) -> Vec<u8> {
         let samples = (duration.as_secs_f32() * sample_rate as f32).round() as u32;
         let data_len = samples * 2;
@@ -226,5 +328,14 @@ mod tests {
         bytes.extend_from_slice(&data_len.to_le_bytes());
         bytes.resize(bytes.len() + data_len as usize, 0);
         bytes
+    }
+
+    fn tiny_png(rgba: [u8; 4]) -> Vec<u8> {
+        let image = image::RgbaImage::from_pixel(1, 1, image::Rgba(rgba));
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut cursor, image::ImageOutputFormat::Png)
+            .expect("encode png");
+        cursor.into_inner()
     }
 }

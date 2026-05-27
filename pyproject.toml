@@ -26,6 +26,10 @@ features = ["extension-module"]
 [tool.ruff]
 extend-exclude = [".pytest_cache", "pytest-cache-files-*", "target"]
 
+[tool.mypy]
+files = ["python", "tests/python", "examples/python"]
+mypy_path = "python"
+
 [tool.pytest.ini_options]
 addopts = "-p no:cacheprovider"
 testpaths = ["tests"]

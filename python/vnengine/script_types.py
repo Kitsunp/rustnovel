@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 from .types import (
     SCRIPT_SCHEMA_VERSION,
@@ -78,7 +78,7 @@ def event_from_dict(data: Mapping[str, Any]) -> Event:
     event_type = data.get("type")
     decoder = _EVENT_DECODERS.get(str(event_type))
     if decoder is not None:
-        return decoder.from_dict(data)
+        return decoder(data)
     raise ValueError(f"Unknown event type: {event_type}")
 
 
@@ -151,17 +151,17 @@ def _is_compatible_schema_version(found: str, expected: str) -> bool:
     return found_major <= expected_major
 
 
-_EVENT_DECODERS = {
-    "dialogue": Dialogue,
-    "choice": Choice,
-    "scene": Scene,
-    "jump": Jump,
-    "set_flag": SetFlag,
-    "set_var": SetVar,
-    "jump_if": JumpIf,
-    "patch": Patch,
-    "ext_call": ExtCall,
-    "audio_action": AudioAction,
-    "transition": Transition,
-    "set_character_position": SetCharacterPosition,
+_EVENT_DECODERS: Dict[str, Callable[[Mapping[str, Any]], Event]] = {
+    "dialogue": Dialogue.from_dict,
+    "choice": Choice.from_dict,
+    "scene": Scene.from_dict,
+    "jump": Jump.from_dict,
+    "set_flag": SetFlag.from_dict,
+    "set_var": SetVar.from_dict,
+    "jump_if": JumpIf.from_dict,
+    "patch": Patch.from_dict,
+    "ext_call": ExtCall.from_dict,
+    "audio_action": AudioAction.from_dict,
+    "transition": Transition.from_dict,
+    "set_character_position": SetCharacterPosition.from_dict,
 }

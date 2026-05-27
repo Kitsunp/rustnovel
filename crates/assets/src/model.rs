@@ -145,6 +145,7 @@ pub struct ScenePreloadPlan {
     pub cache_hit_rate: f32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoadedImage {
     pub name: String,
     pub size: [usize; 2],

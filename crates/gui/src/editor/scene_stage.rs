@@ -8,6 +8,7 @@ use crate::editor::image_asset_cache::{
     image_failure_message, normalize_asset_path, scene_stage_cache_key,
     should_retry_missing_image_failure,
 };
+use crate::editor::resource_service::EditorResourceService;
 use crate::editor::visual_composer::scene_entity_object_id;
 use crate::editor::visual_composer::LayerOverride;
 use crate::editor::PreviewQuality;
@@ -27,6 +28,7 @@ pub(crate) struct SceneStagePainter<'a> {
     preview_quality: PreviewQuality,
     image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     image_failures: &'a mut HashMap<String, String>,
+    resource_service: &'a mut EditorResourceService,
     asset_store: Option<vnengine_assets::AssetStore>,
     layer_overrides: HashMap<String, LayerOverride>,
     background_fit: crate::editor::BackgroundFit,
@@ -53,12 +55,14 @@ impl<'a> SceneStagePainter<'a> {
         preview_quality: PreviewQuality,
         image_cache: &'a mut HashMap<String, egui::TextureHandle>,
         image_failures: &'a mut HashMap<String, String>,
+        resource_service: &'a mut EditorResourceService,
     ) -> Self {
         Self {
             project_root,
             preview_quality,
             image_cache,
             image_failures,
+            resource_service,
             asset_store: None,
             layer_overrides: HashMap::new(),
             background_fit: crate::editor::BackgroundFit::default(),
@@ -406,15 +410,17 @@ impl<'a> SceneStagePainter<'a> {
         asset_path: &str,
         failure_key: &str,
     ) -> Result<vnengine_assets::LoadedImage, ()> {
-        let Some(store) = self.asset_store(project_root, asset_path, failure_key) else {
-            return Err(());
-        };
-        match store.load_image(asset_path) {
+        self.asset_store(project_root, asset_path, failure_key)
+            .ok_or(())?;
+        match self
+            .resource_service
+            .image_for_view(project_root, asset_path, "scene_stage")
+        {
             Ok(image) => Ok(image),
             Err(err) => {
                 self.image_failures.insert(
                     failure_key.to_string(),
-                    image_failure_message(asset_path, &err),
+                    format!("image '{asset_path}' load failed: {err}"),
                 );
                 Err(())
             }
