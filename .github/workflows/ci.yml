@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install Python lint tools
-        run: python -m pip install ruff mypy
+        run: python -m pip install ruff mypy pytest
       - run: ruff format --check .
       - run: ruff check .
       - run: mypy
