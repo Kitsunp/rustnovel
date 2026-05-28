@@ -133,7 +133,7 @@ fn event_from_node(
             characters: characters.clone(),
         }),
         StoryNode::Jump { target } => EventRaw::Jump {
-            target: target.clone(),
+            target: jump_target_label(id, target, node_lookup, choice_targets, label_context),
         },
         StoryNode::SetVariable { key, value } => EventRaw::SetVar {
             key: key.clone(),
@@ -448,6 +448,20 @@ fn namespaced_port_label(namespace: &str, port_id: &str) -> String {
 }
 
 fn jump_if_target_label(
+    node_id: u32,
+    fallback_target: &str,
+    node_lookup: &BTreeMap<u32, &StoryNode>,
+    choice_targets: &BTreeMap<(u32, usize), u32>,
+    label_context: ExportLabelContext<'_>,
+) -> String {
+    if choice_targets.contains_key(&(node_id, 0)) {
+        target_label(node_id, 0, node_lookup, choice_targets, label_context)
+    } else {
+        fallback_target.to_string()
+    }
+}
+
+fn jump_target_label(
     node_id: u32,
     fallback_target: &str,
     node_lookup: &BTreeMap<u32, &StoryNode>,

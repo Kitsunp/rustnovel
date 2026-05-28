@@ -1,12 +1,12 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::collections::BTreeMap;
-use visual_novel_engine::authoring::composer::LayerOverride;
+use visual_novel_engine::authoring::composer::{BackgroundFit, LayerOverride};
 use visual_novel_engine::authoring::{
-    parse_authoring_document_or_script, validate_authoring_graph, validate_authoring_graph_no_io,
+    parse_authoring_document_or_script, validate_authoring_graph,
     validate_authoring_graph_with_project_root, AuthoringCommand, AuthoringDelta,
-    AuthoringDocument, AuthoringPosition, AuthoringValidationReport, NodeGraph, OperationLogEntry,
-    VerificationRun, NODE_VERTICAL_SPACING,
+    AuthoringDocument, AuthoringDocumentSession, AuthoringPosition, AuthoringValidationReport,
+    NodeGraph, OperationLogEntry, VerificationRun, NODE_VERTICAL_SPACING,
 };
 
 use super::api_v2::{
@@ -21,8 +21,10 @@ use super::story_node::PyStoryNode;
 pub struct PyNodeGraph {
     inner: NodeGraph,
     layer_overrides: BTreeMap<String, LayerOverride>,
+    background_fit_overrides: BTreeMap<String, BackgroundFit>,
     operation_log: Vec<OperationLogEntry>,
     verification_runs: Vec<VerificationRun>,
+    session: AuthoringDocumentSession,
 }
 
 #[path = "editor_node_graph/composer.rs"]
@@ -38,12 +40,7 @@ mod misc;
 impl PyNodeGraph {
     #[new]
     fn new() -> Self {
-        Self {
-            inner: NodeGraph::new(),
-            layer_overrides: BTreeMap::new(),
-            operation_log: Vec::new(),
-            verification_runs: Vec::new(),
-        }
+        Self::from_authoring_document(AuthoringDocument::new(NodeGraph::new()))
     }
 
     fn add_node(&mut self, node: PyStoryNode, x: f32, y: f32) -> u32 {
@@ -54,7 +51,7 @@ impl PyNodeGraph {
             node,
             position: AuthoringPosition::new(x, y),
         })
-        .expect("next Python node id should be accepted by AuthoringCommandBus");
+        .expect("next Python node id should be accepted by AuthoringDocumentSession");
         node_id
     }
 
@@ -182,12 +179,7 @@ impl PyNodeGraph {
     fn from_script_json(script_json: &str) -> PyResult<Self> {
         let inner = parse_authoring_document_or_script(script_json)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(Self {
-            inner,
-            layer_overrides: BTreeMap::new(),
-            operation_log: Vec::new(),
-            verification_runs: Vec::new(),
-        })
+        Ok(Self::from_authoring_document(AuthoringDocument::new(inner)))
     }
 
     fn to_lossy_script_json_for_diagnostics(&self) -> PyResult<String> {
@@ -198,7 +190,10 @@ impl PyNodeGraph {
     }
 
     fn validate_no_io(&self) -> Vec<PyLintIssue> {
-        validate_authoring_graph_no_io(&self.inner)
+        self.session
+            .read_model()
+            .diagnostics()
+            .to_vec()
             .into_iter()
             .map(PyLintIssue::from)
             .collect()
@@ -228,7 +223,7 @@ impl PyNodeGraph {
                 std::path::Path::new(project_root),
             )
         } else {
-            validate_authoring_graph_no_io(&self.inner)
+            self.session.read_model().diagnostics().to_vec()
         };
         let script = self.inner.to_script_lossy_for_diagnostics();
         let document = self.to_authoring_document();
@@ -238,25 +233,15 @@ impl PyNodeGraph {
     #[staticmethod]
     fn from_authoring_or_script_json(source: &str) -> PyResult<Self> {
         if let Ok(document) = AuthoringDocument::from_json(source) {
-            return Ok(Self {
-                inner: document.graph,
-                layer_overrides: document.composer_layer_overrides,
-                operation_log: document.operation_log,
-                verification_runs: document.verification_runs,
-            });
+            return Ok(Self::from_authoring_document(document));
         }
         let inner = parse_authoring_document_or_script(source)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(Self {
-            inner,
-            layer_overrides: BTreeMap::new(),
-            operation_log: Vec::new(),
-            verification_runs: Vec::new(),
-        })
+        Ok(Self::from_authoring_document(AuthoringDocument::new(inner)))
     }
 
     fn search_nodes(&self, query: &str) -> Vec<u32> {
-        self.inner.search_nodes(query)
+        self.session.read_model().nodes_by_text(query)
     }
 
     fn create_fragment(&mut self, fragment_id: String, title: String, node_ids: Vec<u32>) -> bool {

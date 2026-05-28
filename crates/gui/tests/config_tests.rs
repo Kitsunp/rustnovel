@@ -33,6 +33,12 @@ fn saves_and_loads_preferences() {
         fullscreen: true,
         ui_scale: 1.4,
         vsync: false,
+        master_volume: 0.6,
+        bgm_volume: 0.7,
+        sfx_volume: 0.8,
+        voice_volume: 0.9,
+        audio_muted: true,
+        advance_on_text_panel_click: Some(false),
     };
 
     prefs.save_to(&path).expect("save prefs");
@@ -41,6 +47,29 @@ fn saves_and_loads_preferences() {
     assert_eq!(prefs, loaded);
     let stored = fs::read_to_string(&path).expect("read prefs");
     assert!(stored.contains("\"fullscreen\": true"));
+}
+
+#[test]
+fn loads_legacy_preferences_with_audio_defaults() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("prefs.json");
+    fs::write(
+        &path,
+        r#"{"fullscreen":true,"ui_scale":1.25,"vsync":false}"#,
+    )
+    .expect("write legacy prefs");
+
+    let loaded = UserPreferences::load_from(&path).expect("load prefs");
+
+    assert!(loaded.fullscreen);
+    assert_eq!(loaded.ui_scale, 1.25);
+    assert!(!loaded.vsync);
+    assert!(!loaded.audio_muted);
+    assert_eq!(loaded.master_volume, 1.0);
+    assert_eq!(loaded.bgm_volume, 1.0);
+    assert_eq!(loaded.sfx_volume, 1.0);
+    assert_eq!(loaded.voice_volume, 1.0);
+    assert_eq!(loaded.advance_on_text_panel_click, None);
 }
 
 #[test]

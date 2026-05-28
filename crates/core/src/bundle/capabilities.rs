@@ -30,6 +30,12 @@ pub(super) fn build_capability_report(
             EventRaw::AudioAction(action) => {
                 audio_actions.insert(format!("{}:{}", action.channel, action.action));
             }
+            EventRaw::Scene(scene) if has_audio_asset(scene.music.as_ref()) => {
+                audio_actions.insert("bgm:scene_music".to_string());
+            }
+            EventRaw::Patch(patch) if has_audio_asset(patch.music.as_ref()) => {
+                audio_actions.insert("bgm:scene_patch_music".to_string());
+            }
             EventRaw::Transition(transition) => {
                 transitions.insert(transition.kind.clone());
             }
@@ -58,4 +64,8 @@ pub(super) fn build_capability_report(
         requires_runtime_artifact: true,
         warnings,
     }
+}
+
+fn has_audio_asset(value: Option<&String>) -> bool {
+    value.is_some_and(|value| !value.trim().is_empty())
 }

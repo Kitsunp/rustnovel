@@ -1,0 +1,145 @@
+manifest_schema_version = "1.0"
+
+[metadata]
+name = "Demo Story"
+author = "User"
+version = "0.1.0"
+description = "A demo visual novel project"
+
+[settings]
+resolution = [
+    1280,
+    720,
+]
+default_language = "en"
+supported_languages = ["en"]
+entry_point = "demo_story.json"
+
+[settings.player_menu]
+enabled = true
+open_on_start = true
+title = "Menu"
+save_slots = 4
+
+[[settings.player_menu.quick_actions]]
+action = "resume_game"
+label = "Start"
+visible = true
+
+[[settings.player_menu.quick_actions]]
+action = "quick_save"
+label = "Quick Save"
+visible = true
+
+[[settings.player_menu.quick_actions]]
+action = "quick_load"
+label = "Quick Load"
+visible = true
+
+[[settings.player_menu.quick_actions]]
+action = "open_saves"
+label = "Saves"
+visible = true
+
+[[settings.player_menu.quick_actions]]
+action = "open_routes"
+label = "Routes"
+visible = true
+
+[[settings.player_menu.quick_actions]]
+action = "open_settings"
+label = "Options"
+visible = true
+
+[[settings.player_menu.quick_actions]]
+action = "quit_game"
+label = "Quit"
+visible = true
+
+[[settings.player_menu.tabs]]
+kind = "saves"
+label = "Saves"
+visible = true
+
+[[settings.player_menu.tabs]]
+kind = "history"
+label = "History"
+visible = true
+
+[[settings.player_menu.tabs]]
+kind = "routes"
+label = "Route Log"
+visible = true
+
+[[settings.player_menu.tabs]]
+kind = "settings"
+label = "Options"
+visible = true
+
+[[settings.player_menu.tabs]]
+kind = "system"
+label = "System"
+visible = true
+
+[settings.player_menu.layout]
+panel_anchor = "center"
+quick_action_placement = "menu_header"
+tabs_position = "left"
+initial_tab = "saves"
+
+[settings.player_menu.style]
+panel_width = 820.0
+panel_width_fraction = 0.8600000143051147
+panel_height_fraction = 0.6800000071525574
+button_min_width = 112.0
+button_height = 34.0
+button_corner_radius = 6.0
+panel_alpha = 238
+
+[settings.player_menu.style.background]
+r = 20
+g = 22
+b = 30
+a = 255
+
+[settings.player_menu.style.accent]
+r = 130
+g = 176
+b = 255
+a = 255
+
+[settings.player_menu.style.warning]
+r = 245
+g = 214
+b = 110
+a = 255
+
+[settings.player_menu.style.danger]
+r = 245
+g = 110
+b = 110
+a = 255
+
+[assets.backgrounds]
+genshin-furina-2_1 = 'assets\backgrounds\genshin-furina-2.png'
+genshin-furina_7 = 'assets\backgrounds\genshin-furina.png'
+genshin-furina_1 = 'assets\backgrounds\genshin-furina-1.png'
+genshin-furina_4 = 'assets\backgrounds\genshin-furina-4.png'
+genshin-furina-1 = 'assets\backgrounds\genshin-furina-1.png'
+genshin-furina_9 = 'assets\backgrounds\genshin-furina.png'
+genshin-furina = 'assets\backgrounds\genshin-furina.png'
+genshin-furina-3 = 'assets\backgrounds\genshin-furina-3.png'
+genshin-furina-2 = 'assets\backgrounds\genshin-furina-2.png'
+genshin-furina_2 = 'assets\backgrounds\genshin-furina-2.png'
+genshin-furina_3 = 'assets\backgrounds\genshin-furina-3.png'
+genshin-furina_6 = 'assets\backgrounds\genshin-furina-6.png'
+genshin-furina-1_1 = 'assets\backgrounds\genshin-furina-1.png'
+genshin-furina_5 = 'assets\backgrounds\genshin-furina-5.png'
+genshin-furina-1_2 = 'assets\backgrounds\genshin-furina-1.png'
+genshin-furina_8 = 'assets\backgrounds\genshin-furina.png'
+genshin-furina_10 = 'assets\backgrounds\genshin-furina.png'
+
+[assets.characters]
+
+[assets.audio]
+cunning_plan = 'assets\audio\cunning-plan.ogg'

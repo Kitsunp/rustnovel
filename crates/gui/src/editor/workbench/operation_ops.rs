@@ -32,6 +32,7 @@ impl EditorWorkbench {
     }
 
     pub fn record_pending_editor_operation(&mut self) {
+        self.rebuild_authoring_session_from_fields();
         let after = match self.current_authoring_fingerprint() {
             Some(after) => after,
             None => return,
@@ -69,6 +70,7 @@ impl EditorWorkbench {
         after_value: Option<String>,
         before: Option<visual_novel_engine::authoring::AuthoringReportFingerprint>,
     ) {
+        self.rebuild_authoring_session_from_fields();
         let Some(after) = self.current_authoring_fingerprint() else {
             return;
         };
@@ -149,13 +151,17 @@ impl EditorWorkbench {
         let script = self.node_graph.to_script();
         Some(
             visual_novel_engine::authoring::build_authoring_document_report_fingerprint(
-                &self.current_authoring_document(),
+                self.authoring_session.document(),
                 &script,
             ),
         )
     }
 
     pub fn current_authoring_document(&self) -> visual_novel_engine::authoring::AuthoringDocument {
+        self.authoring_session.document().clone()
+    }
+
+    fn authoring_document_from_fields(&self) -> visual_novel_engine::authoring::AuthoringDocument {
         let mut document = visual_novel_engine::authoring::AuthoringDocument::new(
             self.node_graph.authoring_graph().clone(),
         );
@@ -172,6 +178,73 @@ impl EditorWorkbench {
         document.operation_log = self.operation_log.clone();
         document.verification_runs = self.verification_runs.clone();
         document
+    }
+
+    pub fn rebuild_authoring_session_from_fields(&mut self) {
+        self.authoring_session = visual_novel_engine::authoring::AuthoringDocumentSession::new(
+            self.authoring_document_from_fields(),
+        );
+    }
+
+    fn authoring_session_matches_fields(&self) -> bool {
+        let document = self.authoring_session.document();
+        document.graph == *self.node_graph.authoring_graph()
+            && document.composer_layer_overrides.len() == self.composer_layer_overrides.len()
+            && document
+                .composer_layer_overrides
+                .iter()
+                .all(|(key, value)| self.composer_layer_overrides.get(key) == Some(value))
+            && document.composer_background_fit_overrides.len()
+                == self.composer_background_fit_overrides.len()
+            && document
+                .composer_background_fit_overrides
+                .iter()
+                .all(|(key, value)| self.composer_background_fit_overrides.get(key) == Some(value))
+            && document.operation_log.len() == self.operation_log.len()
+            && document.verification_runs.len() == self.verification_runs.len()
+    }
+
+    pub fn ensure_authoring_session_matches_fields(&mut self) {
+        if !self.authoring_session_matches_fields() {
+            self.rebuild_authoring_session_from_fields();
+        }
+    }
+
+    pub fn sync_authoring_fields_from_session(&mut self) {
+        let document = self.authoring_session.document().clone();
+        self.node_graph.replace_authoring_graph(document.graph);
+        self.composer_layer_overrides = document.composer_layer_overrides.into_iter().collect();
+        self.composer_background_fit_overrides = document
+            .composer_background_fit_overrides
+            .into_iter()
+            .collect();
+        self.operation_log = document.operation_log;
+        self.verification_runs = document.verification_runs;
+    }
+
+    pub fn apply_authoring_document_command(
+        &mut self,
+        command: visual_novel_engine::authoring::AuthoringDocumentCommand,
+    ) -> Result<visual_novel_engine::authoring::AuthoringDocumentCommandOutcome, String> {
+        self.ensure_authoring_session_matches_fields();
+        let outcome = self.authoring_session.apply(command)?;
+        self.sync_authoring_fields_from_session();
+        self.last_operation_fingerprint = Some(outcome.after_fingerprint.clone());
+        Ok(outcome)
+    }
+
+    pub fn apply_authoring_graph_command(
+        &mut self,
+        command: visual_novel_engine::authoring::AuthoringCommand,
+    ) -> Result<visual_novel_engine::authoring::AuthoringDelta, String> {
+        let outcome = self.apply_authoring_document_command(
+            visual_novel_engine::authoring::AuthoringDocumentCommand::Graph(command),
+        )?;
+        let visual_novel_engine::authoring::AuthoringDocumentDelta::Graph(delta) = outcome.delta
+        else {
+            return Err("document session returned an unexpected graph delta".to_string());
+        };
+        Ok(*delta)
     }
 }
 
@@ -251,5 +324,6 @@ impl EditorWorkbench {
         );
         self.last_operation_fingerprint = Some(after);
         self.operation_log.push(entry);
+        self.rebuild_authoring_session_from_fields();
     }
 }

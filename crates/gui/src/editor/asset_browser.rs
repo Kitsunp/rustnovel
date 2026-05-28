@@ -147,65 +147,87 @@ impl<'a> AssetBrowserPanel<'a> {
         egui::ScrollArea::vertical()
             .id_source(type_id)
             .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    let kind = match type_id {
-                        "bg" => AssetImportKind::Background,
-                        "char" => AssetImportKind::Character,
-                        _ => return,
-                    };
-                    let assets: Vec<(String, PathBuf)> = match type_id {
-                        "bg" => self
-                            .manifest
-                            .assets
-                            .backgrounds
-                            .iter()
-                            .map(|(name, path)| (name.clone(), path.clone()))
-                            .collect(),
-                        "char" => self
-                            .manifest
-                            .assets
-                            .characters
-                            .iter()
-                            .map(|(name, asset)| (name.clone(), asset.path.clone()))
-                            .collect(),
-                        _ => Vec::new(),
-                    };
+                let kind = match type_id {
+                    "bg" => AssetImportKind::Background,
+                    "char" => AssetImportKind::Character,
+                    _ => return,
+                };
+                let assets: Vec<(String, PathBuf)> = match type_id {
+                    "bg" => self
+                        .manifest
+                        .assets
+                        .backgrounds
+                        .iter()
+                        .map(|(name, path)| (name.clone(), path.clone()))
+                        .collect(),
+                    "char" => self
+                        .manifest
+                        .assets
+                        .characters
+                        .iter()
+                        .map(|(name, asset)| (name.clone(), asset.path.clone()))
+                        .collect(),
+                    _ => Vec::new(),
+                };
 
-                    for (name, path) in assets {
-                        ui.vertical(|ui| {
-                            let response = self.render_image_asset_card(ui, type_id, &name, &path);
+                let available_width = sanitized_asset_panel_width(ui.available_width());
+                let columns = asset_grid_columns(available_width);
+                let card_size = asset_card_size(available_width);
+                let cell_size = egui::vec2(card_size.x, card_size.y + ASSET_CARD_ACTION_HEIGHT);
 
-                            let value = match type_id {
-                                "bg" => normalize_asset_path(&path.to_string_lossy()),
-                                "char" => name.clone(),
-                                _ => name.clone(),
-                            };
-                            if response.drag_started() {
-                                let asset_path = normalize_asset_path(&path.to_string_lossy());
-                                let payload = asset_drag_payload(type_id, &value, &asset_path);
-                                ui.memory_mut(|mem| {
-                                    mem.data
-                                        .insert_temp(egui::Id::new("dragged_asset"), payload)
-                                });
-                            }
+                egui::Grid::new(format!("asset_grid_{type_id}"))
+                    .num_columns(columns)
+                    .spacing(egui::vec2(ASSET_GRID_SPACING, ASSET_GRID_SPACING))
+                    .show(ui, |ui| {
+                        for (index, (name, path)) in assets.into_iter().enumerate() {
+                            ui.allocate_ui_with_layout(
+                                cell_size,
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    let response =
+                                        self.render_image_asset_card(ui, type_id, &name, &path);
 
-                            response.on_hover_text(format!("Drag to scene\nPath: {:?}", path));
-                            if ui.small_button("Use").clicked() {
-                                actions.push(AssetBrowserAction::AssignToSelected {
-                                    kind,
-                                    name: name.clone(),
-                                    path: normalize_asset_path(&path.to_string_lossy()),
-                                });
+                                    let value = match type_id {
+                                        "bg" => normalize_asset_path(&path.to_string_lossy()),
+                                        "char" => name.clone(),
+                                        _ => name.clone(),
+                                    };
+                                    if response.drag_started() {
+                                        let asset_path =
+                                            normalize_asset_path(&path.to_string_lossy());
+                                        let payload =
+                                            asset_drag_payload(type_id, &value, &asset_path);
+                                        ui.memory_mut(|mem| {
+                                            mem.data.insert_temp(
+                                                egui::Id::new("dragged_asset"),
+                                                payload,
+                                            )
+                                        });
+                                    }
+
+                                    response
+                                        .on_hover_text(format!("Drag to scene\nPath: {:?}", path));
+                                    if ui.small_button("Use").clicked() {
+                                        actions.push(AssetBrowserAction::AssignToSelected {
+                                            kind,
+                                            name: name.clone(),
+                                            path: normalize_asset_path(&path.to_string_lossy()),
+                                        });
+                                    }
+                                    if ui.small_button("Remove").clicked() {
+                                        actions.push(AssetBrowserAction::Remove {
+                                            kind,
+                                            name: name.clone(),
+                                        });
+                                    }
+                                },
+                            );
+
+                            if (index + 1) % columns == 0 {
+                                ui.end_row();
                             }
-                            if ui.small_button("Remove").clicked() {
-                                actions.push(AssetBrowserAction::Remove {
-                                    kind,
-                                    name: name.clone(),
-                                });
-                            }
-                        });
-                    }
-                });
+                        }
+                    });
             });
     }
 
@@ -389,8 +411,34 @@ fn truncate_label(label: &str, max_chars: usize) -> String {
     value
 }
 
+const ASSET_GRID_SPACING: f32 = 8.0;
+const ASSET_CARD_ACTION_HEIGHT: f32 = 42.0;
+
+fn sanitized_asset_panel_width(available_width: f32) -> f32 {
+    if available_width.is_finite() {
+        available_width.max(1.0)
+    } else {
+        96.0
+    }
+}
+
+pub fn asset_grid_columns(available_width: f32) -> usize {
+    let panel_width = sanitized_asset_panel_width(available_width);
+    let card_width = asset_card_size(panel_width).x;
+    let columns = ((panel_width + ASSET_GRID_SPACING) / (card_width + ASSET_GRID_SPACING)).floor();
+    (columns as usize).max(1)
+}
+
+pub fn asset_grid_rows(item_count: usize, columns: usize) -> usize {
+    if item_count == 0 {
+        return 0;
+    }
+    let columns = columns.max(1);
+    (item_count + columns - 1) / columns
+}
+
 pub fn asset_card_size(available_width: f32) -> egui::Vec2 {
-    let width = available_width.clamp(48.0, 96.0);
+    let width = sanitized_asset_panel_width(available_width).clamp(48.0, 96.0);
     egui::vec2(width, (width * 1.2).clamp(82.0, 116.0))
 }
 

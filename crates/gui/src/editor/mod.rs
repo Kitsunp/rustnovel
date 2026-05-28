@@ -77,6 +77,13 @@ use eframe::egui;
 
 /// Runs the editor workbench as a standalone application.
 pub fn run_editor() -> Result<(), eframe::Error> {
+    run_editor_with_project(None)
+}
+
+/// Runs the editor workbench and optionally loads a project manifest on startup.
+pub fn run_editor_with_project(
+    initial_project: Option<std::path::PathBuf>,
+) -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 720.0])
@@ -87,9 +94,9 @@ pub fn run_editor() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Visual Novel Editor",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Box::new(EditorApp::default())
+            Box::new(EditorApp::new(initial_project.clone()))
         }),
     )
 }
@@ -99,11 +106,19 @@ struct EditorApp {
     workbench: EditorWorkbench,
 }
 
+impl EditorApp {
+    fn new(initial_project: Option<std::path::PathBuf>) -> Self {
+        let mut workbench = EditorWorkbench::new(crate::VnConfig::default());
+        if let Some(project) = initial_project {
+            workbench.load_project(project);
+        }
+        Self { workbench }
+    }
+}
+
 impl Default for EditorApp {
     fn default() -> Self {
-        Self {
-            workbench: EditorWorkbench::new(crate::VnConfig::default()),
-        }
+        Self::new(None)
     }
 }
 

@@ -1,8 +1,6 @@
 use super::*;
 use crate::editor::StoryNode;
-use visual_novel_engine::authoring::{
-    composer, AuthoringCommand, AuthoringCommandBus, AuthoringDelta,
-};
+use visual_novel_engine::authoring::{composer, AuthoringCommand, AuthoringDelta};
 
 struct MutationRecord {
     kind: &'static str,
@@ -247,23 +245,18 @@ impl EditorWorkbench {
             return CommandBusMoveResult::NoChange;
         }
 
-        let mut bus = AuthoringCommandBus::new(self.node_graph.authoring_graph().clone());
-        bus.apply(AuthoringCommand::MoveLayer {
+        self.apply_node_graph_command(AuthoringCommand::MoveLayer {
             object_id,
             x: edit.x,
             y: edit.y,
             scale: edit.scale,
         })
-        .expect("matched composer layer object should be movable through AuthoringCommandBus");
-        self.node_graph.replace_authoring_graph(bus.graph().clone());
+        .expect("matched composer layer object should be movable through AuthoringDocumentSession");
         CommandBusMoveResult::Applied
     }
 
     fn apply_node_graph_command(&mut self, command: AuthoringCommand) -> Option<AuthoringDelta> {
-        let mut bus = AuthoringCommandBus::new(self.node_graph.authoring_graph().clone());
-        let outcome = bus.apply(command).ok()?;
-        self.node_graph.replace_authoring_graph(bus.graph().clone());
-        Some(outcome.delta)
+        self.apply_authoring_graph_command(command).ok()
     }
 }
 

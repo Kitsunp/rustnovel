@@ -33,8 +33,11 @@ pub use document::{
     AUTHORING_DOCUMENT_SCHEMA_VERSION,
 };
 pub use document_command_bus::{
-    AuthoringDocumentCommand, AuthoringDocumentCommandBus, AuthoringDocumentCommandOutcome,
-    AuthoringDocumentDelta,
+    apply_authoring_document_command_headless, AssetRefIndex, AuthoringDirtyFlags,
+    AuthoringDocumentCommand, AuthoringDocumentCommandApplyResult, AuthoringDocumentCommandBus,
+    AuthoringDocumentCommandOutcome, AuthoringDocumentDelta, AuthoringDocumentSession,
+    AuthoringReadModel, AuthoringReportStaleState, ComposerLayerIndex, DiagnosticsIndex, NodeIndex,
+    RouteIndex,
 };
 pub use entry::{
     export_runtime_script_from_authoring, load_authoring_document_or_script,

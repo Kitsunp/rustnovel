@@ -49,8 +49,12 @@ pub fn render_player_controls(
         }
 
         ui.checkbox(&mut player.autoplay_enabled, "Auto");
-        ui.add(egui::Slider::new(&mut player.autoplay_delay_ms, 200..=5000).text("Auto delay ms"));
-        ui.add(
+        ui.add_sized(
+            [136.0, ui.spacing().interact_size.y],
+            egui::Slider::new(&mut player.autoplay_delay_ms, 200..=5000).text("Auto delay ms"),
+        );
+        ui.add_sized(
+            [128.0, ui.spacing().interact_size.y],
             egui::Slider::new(&mut player.text_chars_per_second, 10.0..=240.0).text("Text chars/s"),
         );
 
@@ -73,13 +77,22 @@ pub fn render_player_controls(
 
     ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {
-        ui.label("Audio mix (preview):");
-        ui.checkbox(&mut player.bgm_muted, "Mute BGM");
-        ui.add(egui::Slider::new(&mut player.bgm_volume, 0.0..=1.0).text("BGM"));
-        ui.checkbox(&mut player.sfx_muted, "Mute SFX");
-        ui.add(egui::Slider::new(&mut player.sfx_volume, 0.0..=1.0).text("SFX"));
-        ui.checkbox(&mut player.voice_muted, "Mute Voice");
-        ui.add(egui::Slider::new(&mut player.voice_volume, 0.0..=1.0).text("Voice"));
+        ui.label("Audio:");
+        ui.checkbox(&mut player.bgm_muted, "BGM mute");
+        ui.add_sized(
+            [88.0, ui.spacing().interact_size.y],
+            egui::Slider::new(&mut player.bgm_volume, 0.0..=1.0).text("BGM"),
+        );
+        ui.checkbox(&mut player.sfx_muted, "SFX mute");
+        ui.add_sized(
+            [88.0, ui.spacing().interact_size.y],
+            egui::Slider::new(&mut player.sfx_volume, 0.0..=1.0).text("SFX"),
+        );
+        ui.checkbox(&mut player.voice_muted, "Voice mute");
+        ui.add_sized(
+            [88.0, ui.spacing().interact_size.y],
+            egui::Slider::new(&mut player.voice_volume, 0.0..=1.0).text("Voice"),
+        );
     });
 
     if let Some(last_event) = &player.last_audio_event {
@@ -141,8 +154,8 @@ pub fn render_choice_history_window(
                 return;
             }
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for entry in engine.choice_history().iter().rev() {
-                    render_choice_history_entry(ui, entry);
+                for (idx, entry) in engine.choice_history().iter().enumerate().rev() {
+                    render_choice_history_entry(ui, idx, entry);
                     ui.add_space(6.0);
                 }
             });
@@ -150,14 +163,11 @@ pub fn render_choice_history_window(
     player.show_choice_history = open;
 }
 
-fn render_choice_history_entry(ui: &mut egui::Ui, entry: &ChoiceHistoryEntry) {
+fn render_choice_history_entry(ui: &mut egui::Ui, idx: usize, entry: &ChoiceHistoryEntry) {
     ui.group(|ui| {
-        ui.label(format!(
-            "ip {} -> option {}",
-            entry.event_ip,
-            entry.option_index + 1
-        ));
-        ui.label(format!("\"{}\"", entry.option_text));
-        ui.label(format!("target ip {}", entry.target_ip));
+        ui.colored_label(
+            egui::Color32::from_rgb(235, 238, 245),
+            crate::player_route_history_label(idx, entry),
+        );
     });
 }

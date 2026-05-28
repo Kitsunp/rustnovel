@@ -103,6 +103,7 @@ pub struct AutoFixBatchResult {
 pub struct EditorWorkbench {
     pub config: VnConfig,
     pub node_graph: NodeGraph,
+    pub authoring_session: visual_novel_engine::authoring::AuthoringDocumentSession,
     pub undo_stack: UndoStack,
     pub manifest: Option<visual_novel_engine::manifest::ProjectManifest>,
     pub manifest_path: Option<std::path::PathBuf>,
@@ -121,6 +122,7 @@ pub struct EditorWorkbench {
     pub show_validation: bool,
     pub validation_collapsed: bool,
     pub show_save_confirm: bool,
+    pub show_player_menu_settings: bool,
 
     // Selection
     pub selected_node: Option<u32>,
@@ -235,6 +237,9 @@ impl EditorWorkbench {
 
         let mut undo_stack = UndoStack::new();
         undo_stack.push(graph.clone());
+        let authoring_session = visual_novel_engine::authoring::AuthoringDocumentSession::new(
+            visual_novel_engine::authoring::AuthoringDocument::new(graph.authoring_graph().clone()),
+        );
 
         let layout_prefs_path = Self::layout_prefs_path();
         let loaded_prefs = Self::load_layout_prefs(&layout_prefs_path);
@@ -242,6 +247,7 @@ impl EditorWorkbench {
         let mut workbench = Self {
             config,
             node_graph: graph,
+            authoring_session,
             undo_stack,
             manifest: None,
             manifest_path: None,
@@ -258,6 +264,7 @@ impl EditorWorkbench {
             show_validation: false,
             validation_collapsed: false,
             show_save_confirm: false,
+            show_player_menu_settings: false,
             selected_node: None,
             selected_entity: None,
             scene: visual_novel_engine::SceneState::default(),
@@ -423,6 +430,7 @@ impl EditorWorkbench {
         self.composer_default_background_fit = crate::editor::BackgroundFit::default();
         self.composer_background_fit_overrides.clear();
         self.composer_layer_overrides.clear();
+        self.rebuild_authoring_session_from_fields();
         self.selected_entity = None;
         self.sync_workspace_layout_from_flags();
         self.layout_generation = self.layout_generation.wrapping_add(1);

@@ -51,12 +51,16 @@ pub struct PyVnConfig {
     pub manifest_path: Option<String>,
     #[pyo3(get, set)]
     pub require_manifest: Option<bool>,
+    #[pyo3(get, set)]
+    pub preferences_path: Option<String>,
+    #[pyo3(get, set)]
+    pub player_menu_json: Option<String>,
 }
 
 #[pymethods]
 impl PyVnConfig {
     #[new]
-    #[pyo3(signature = (title=None, width=None, height=None, fullscreen=None, scale_factor=None, assets_root=None, asset_cache_budget_mb=None, security_mode=None, manifest_path=None, require_manifest=None))]
+    #[pyo3(signature = (title=None, width=None, height=None, fullscreen=None, scale_factor=None, assets_root=None, asset_cache_budget_mb=None, security_mode=None, manifest_path=None, require_manifest=None, preferences_path=None, player_menu_json=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         title: Option<String>,
@@ -69,6 +73,8 @@ impl PyVnConfig {
         security_mode: Option<String>,
         manifest_path: Option<String>,
         require_manifest: Option<bool>,
+        preferences_path: Option<String>,
+        player_menu_json: Option<String>,
     ) -> Self {
         Self {
             title,
@@ -81,6 +87,8 @@ impl PyVnConfig {
             security_mode,
             manifest_path,
             require_manifest,
+            preferences_path,
+            player_menu_json,
         }
     }
 }

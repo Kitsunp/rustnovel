@@ -208,20 +208,41 @@ impl EditorWorkbench {
             visual_novel_engine::ExportTargetPlatform::Linux
         };
 
-        match visual_novel_engine::export_bundle(visual_novel_engine::ExportBundleSpec {
+        let runtime_artifact = {
+            let mut dialog = rfd::FileDialog::new().set_directory(&project_root);
+            if target == visual_novel_engine::ExportTargetPlatform::Windows {
+                dialog = dialog.add_filter("Windows executable", &["exe"]);
+            }
+            let Some(runtime) = dialog.pick_file() else {
+                let platform = target.as_str();
+                self.toast = Some(ToastState::warning(format!(
+                    "Package cancelled: choose a {platform} runtime executable"
+                )));
+                return;
+            };
+            Some(runtime)
+        };
+
+        let spec = visual_novel_engine::ExportBundleSpec {
             project_root,
             output_root,
             target_platform: target,
             entry_script,
-            runtime_artifact: None,
+            runtime_artifact,
             integrity: visual_novel_engine::BundleIntegrity::None,
             output_layout_version: 1,
             hmac_key: None,
-        }) {
+        };
+
+        let package_result = visual_novel_engine::export_executable_bundle(spec);
+
+        match package_result {
             Ok(report) => {
                 self.toast = Some(ToastState::success(format!(
-                    "Bundle packaged: assets={} launcher={}",
-                    report.assets_copied, report.launcher
+                    "Bundle packaged: assets={} launcher={} executable={}",
+                    report.assets_copied,
+                    report.launcher,
+                    report.executable.as_deref().unwrap_or("none")
                 )));
             }
             Err(err) => {

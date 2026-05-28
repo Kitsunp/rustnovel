@@ -338,6 +338,11 @@ impl SaveSlotStore {
         self.load_binary_with_recovery(&slot_path, &backup_path)
     }
 
+    pub fn has_quicksave(&self) -> Result<bool, SaveStoreError> {
+        self.ensure_layout()?;
+        Ok(self.slot_path(0, true).exists())
+    }
+
     pub fn list_slots(&self) -> Result<Vec<SaveSlotEntry>, SaveStoreError> {
         self.ensure_layout()?;
         let mut entries = Vec::new();

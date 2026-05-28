@@ -5,11 +5,11 @@ use super::super::{
     AuthoringCommand, AuthoringCommandBus, DiagnosticTarget, OperationKind,
 };
 use super::{
-    AuthoringDocumentCommand, AuthoringDocumentCommandBus, AuthoringDocumentDelta,
+    AuthoringDocumentCommand, AuthoringDocumentDelta, AuthoringDocumentSession,
     DocumentApplyMetadata, DocumentApplyResult,
 };
 
-impl AuthoringDocumentCommandBus {
+impl AuthoringDocumentSession {
     pub(super) fn apply_without_logging(
         &mut self,
         command: &AuthoringDocumentCommand,
@@ -37,9 +37,18 @@ impl AuthoringDocumentCommandBus {
             return Err("use AuthoringDocumentCommand::RevertLast for document undo".to_string());
         }
 
-        let mut graph_bus = AuthoringCommandBus::new(self.document.graph.clone());
-        let outcome = graph_bus.apply(command.clone())?;
-        self.document.graph = graph_bus.graph().clone();
+        let graph = std::mem::take(&mut self.document.graph);
+        let mut graph_bus = AuthoringCommandBus::new(graph);
+        let outcome = match graph_bus.apply(command.clone()) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let (graph, _, _) = graph_bus.into_parts();
+                self.document.graph = graph;
+                return Err(error);
+            }
+        };
+        let (graph, _, _) = graph_bus.into_parts();
+        self.document.graph = graph;
         let kind = outcome
             .operation
             .operation_kind_v2

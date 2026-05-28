@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use super::super::{
     AuthoringPosition, GraphConnection, GraphFragment, GraphStack, LintIssue, OperationLogEntry,
     StoryNode, VerificationRun,
@@ -96,7 +98,7 @@ pub enum AuthoringCommand {
     RevertLast,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum AuthoringDelta {
     NodeCreated {
         node_id: u32,
@@ -193,7 +195,7 @@ pub enum AuthoringDelta {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct AuthoringCommandOutcome {
     pub delta: AuthoringDelta,
     pub operation: OperationLogEntry,

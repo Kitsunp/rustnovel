@@ -68,6 +68,13 @@ fn gui_layer_visible_uses_document_command_bus() {
         workbench.verification_runs.len(),
         workbench.operation_log.len()
     );
+    assert_eq!(workbench.authoring_session.undo_delta_count(), 1);
+    assert!(!workbench
+        .authoring_session
+        .read_model()
+        .composer_layer(&object_id)
+        .expect("session read model should index layer")
+        .visible);
 }
 
 #[test]
@@ -100,6 +107,43 @@ fn gui_layer_locked_uses_document_command_bus() {
     assert_eq!(
         entry.field_paths.first().map(|path| path.value.as_str()),
         Some(format!("composer.layers[{object_id}].locked").as_str())
+    );
+}
+
+#[test]
+fn gui_document_commands_reuse_live_authoring_session() {
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    let (scene, object_id) = add_scene_with_character(&mut workbench);
+
+    workbench.handle_composer_actions(
+        vec![
+            crate::editor::visual_composer::VisualComposerAction::LayerVisibilityChanged {
+                object_id: object_id.clone(),
+                visible: false,
+            },
+        ],
+        Some(scene),
+    );
+    workbench.handle_composer_actions(
+        vec![crate::editor::visual_composer::VisualComposerAction::LayerLockChanged {
+            object_id: object_id.clone(),
+            locked: true,
+        }],
+        Some(scene),
+    );
+
+    assert_eq!(workbench.authoring_session.undo_delta_count(), 2);
+    assert_eq!(workbench.authoring_session.recorded_commands().len(), 2);
+    let layer = workbench
+        .authoring_session
+        .read_model()
+        .composer_layer(&object_id)
+        .expect("session read model should keep composer layer indexed");
+    assert!(!layer.visible);
+    assert!(layer.locked);
+    assert_eq!(
+        workbench.current_authoring_document().operation_log.len(),
+        workbench.operation_log.len()
     );
 }
 

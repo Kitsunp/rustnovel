@@ -5,6 +5,8 @@ use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::PlayerMenuConfig;
+
 pub const MANIFEST_SCHEMA_VERSION: &str = "1.0";
 
 fn default_manifest_schema_version() -> String {
@@ -54,6 +56,8 @@ pub struct ProjectSettings {
     /// Main script file to load (e.g. "main.json")
     #[serde(default = "default_entry_point")]
     pub entry_point: String,
+    #[serde(default)]
+    pub player_menu: PlayerMenuConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -261,6 +265,7 @@ impl ProjectManifest {
                 default_language: default_language(),
                 supported_languages: default_supported_languages(),
                 entry_point: default_entry_point(),
+                player_menu: PlayerMenuConfig::default(),
             },
             assets: AssetManifest::default(),
         }

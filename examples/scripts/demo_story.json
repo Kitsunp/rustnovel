@@ -4,7 +4,7 @@
     {
       "type": "scene",
       "background": "assets/backgrounds/genshin-furina.png",
-      "music": null,
+      "music": "assets/audio/cunning-plan.ogg",
       "characters": []
     },
     {
@@ -27,6 +27,39 @@
       "type": "dialogue",
       "speaker": "Sakura",
       "text": "I'm Sakura! Nice to meet you. Let me show you around!"
+    },
+    {
+      "type": "choice",
+      "prompt": "Where should Sakura take you first?",
+      "options": [
+        {
+          "text": "Visit the courtyard",
+          "target": "courtyard"
+        },
+        {
+          "text": "Find the music room",
+          "target": "music_room"
+        }
+      ]
+    },
+    {
+      "type": "dialogue",
+      "speaker": "Sakura",
+      "text": "The courtyard is quiet at this hour. It's perfect for planning your first day."
+    },
+    {
+      "type": "jump",
+      "target": "tour_end"
+    },
+    {
+      "type": "dialogue",
+      "speaker": "Sakura",
+      "text": "The music room is upstairs. Someone is always practicing something beautiful there."
+    },
+    {
+      "type": "dialogue",
+      "speaker": "Narrator",
+      "text": "Your route choice has been recorded in the menu."
     }
   ],
   "labels": {
@@ -37,6 +70,9 @@
     "node_3": 2,
     "node_4": 3,
     "node_5": 4,
+    "courtyard": 6,
+    "music_room": 8,
+    "tour_end": 9,
     "start": 0
   }
 }

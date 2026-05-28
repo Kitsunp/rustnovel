@@ -55,9 +55,20 @@ fn quicksave_roundtrip() {
     let store = SaveSlotStore::new(root.clone());
     let save = sample_save(11);
 
+    assert!(
+        !store.has_quicksave().expect("quicksave probe should work"),
+        "fresh store must not report a quicksave"
+    );
+
     let entry = store.quicksave(&save).expect("quicksave should succeed");
     assert!(entry.metadata.quick);
     assert_eq!(entry.metadata.slot_id, 0);
+    assert!(
+        store
+            .has_quicksave()
+            .expect("quicksave probe should work after save"),
+        "saved quicksave must be visible to menu availability checks"
+    );
     let stored = fs::read(&entry.path).expect("read stored quicksave");
     assert!(
         SaveData::from_binary(&stored).is_err(),

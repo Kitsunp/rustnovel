@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use visual_novel_engine::authoring::{
-    load_authoring_document_or_script, validate_authoring_graph_with_project_root,
-    AuthoringCommand as CoreAuthoringCommand, AuthoringCommandBus, AuthoringDocument,
-    AuthoringValidationReport, LintSeverity,
+    apply_authoring_document_command_headless, composer, load_authoring_document_or_script,
+    validate_authoring_graph_with_project_root, AuthoringCommand as CoreAuthoringCommand,
+    AuthoringDocument, AuthoringDocumentCommand, AuthoringValidationReport, LintSeverity,
 };
 use visual_novel_engine::{run_repro_case, ReproCase};
 
@@ -17,6 +17,8 @@ mod report;
 pub enum AuthoringCommand {
     /// Validate an authoring document or runtime script and emit report V2.
     Validate(ValidateArgs),
+    /// Apply a document command JSON and emit the core outcome.
+    ApplyCommand(ApplyCommandArgs),
     /// Explain one diagnostic from a report V2 JSON file.
     Explain(ExplainArgs),
     /// Manage graph fragments/subgraphs.
@@ -57,6 +59,19 @@ pub struct ExplainArgs {
     pub report: PathBuf,
     #[arg(long)]
     pub diagnostic_id: String,
+}
+
+#[derive(Args)]
+pub struct ApplyCommandArgs {
+    pub project: PathBuf,
+    #[arg(long)]
+    pub command: PathBuf,
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+    #[arg(long, default_value_t = false)]
+    pub in_place: bool,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
 }
 
 #[derive(Subcommand)]
@@ -143,6 +158,7 @@ pub fn run_authoring_command(command: AuthoringCommand) -> Result<()> {
             args.project_root.as_deref(),
             args.output.as_deref(),
         ),
+        AuthoringCommand::ApplyCommand(args) => run_apply_command(args),
         AuthoringCommand::Explain(args) => explain_diagnostic(&args),
         AuthoringCommand::Fragments { command } => run_fragment_command(command),
         AuthoringCommand::Operations { command } => run_operation_command(command),
@@ -173,6 +189,30 @@ pub fn validate_authoring_script(
     Ok(())
 }
 
+fn run_apply_command(args: ApplyCommandArgs) -> Result<()> {
+    let document = load_authoring_document(&args.project)?;
+    let command = read_document_command(&args.command)?;
+    let result =
+        apply_authoring_document_command_headless(document, command).map_err(anyhow::Error::msg)?;
+    let document = result.document;
+    let outcome = result.outcome;
+    write_mutated_document(
+        &args.project,
+        args.output.as_deref(),
+        args.in_place,
+        &document,
+    )?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&outcome)?);
+    } else {
+        println!(
+            "{} {}",
+            outcome.operation.operation_id, outcome.operation.operation_kind
+        );
+    }
+    Ok(())
+}
+
 fn explain_diagnostic(args: &ExplainArgs) -> Result<()> {
     let _ =
         load_authoring_document_or_script(&args.project).context("load authoring/script entry")?;
@@ -182,6 +222,14 @@ fn explain_diagnostic(args: &ExplainArgs) -> Result<()> {
     };
     println!("{}", serde_json::to_string_pretty(issue)?);
     Ok(())
+}
+
+fn read_document_command(path: &Path) -> Result<AuthoringDocumentCommand> {
+    let source =
+        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let command: CliDocumentCommand =
+        serde_json::from_str(&source).context("parse document command json")?;
+    Ok(command.into())
 }
 
 fn run_fragment_command(command: FragmentCommand) -> Result<()> {
@@ -379,16 +427,12 @@ fn apply_document_command(
     document: &mut AuthoringDocument,
     command: CoreAuthoringCommand,
 ) -> Result<()> {
-    let mut bus = AuthoringCommandBus::with_history(
-        document.graph.clone(),
-        document.operation_log.clone(),
-        document.verification_runs.clone(),
-    );
-    bus.apply(command).map_err(anyhow::Error::msg)?;
-    let (graph, operation_log, verification_runs) = bus.into_parts();
-    document.graph = graph;
-    document.operation_log = operation_log;
-    document.verification_runs = verification_runs;
+    let result = apply_authoring_document_command_headless(
+        document.clone(),
+        AuthoringDocumentCommand::Graph(command),
+    )
+    .map_err(anyhow::Error::msg)?;
+    *document = result.document;
     Ok(())
 }
 
@@ -409,6 +453,45 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let json = serde_json::to_string_pretty(value)?;
     std::fs::write(path, json).with_context(|| format!("write {}", path.display()))?;
     Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "command", rename_all = "snake_case")]
+enum CliDocumentCommand {
+    SetLayerVisible {
+        object_id: String,
+        visible: bool,
+    },
+    SetLayerLocked {
+        object_id: String,
+        locked: bool,
+    },
+    SetBackgroundFitOverride {
+        node_id: u32,
+        fit: composer::BackgroundFit,
+    },
+    ClearBackgroundFitOverride {
+        node_id: u32,
+    },
+}
+
+impl From<CliDocumentCommand> for AuthoringDocumentCommand {
+    fn from(command: CliDocumentCommand) -> Self {
+        match command {
+            CliDocumentCommand::SetLayerVisible { object_id, visible } => {
+                Self::SetLayerVisible { object_id, visible }
+            }
+            CliDocumentCommand::SetLayerLocked { object_id, locked } => {
+                Self::SetLayerLocked { object_id, locked }
+            }
+            CliDocumentCommand::SetBackgroundFitOverride { node_id, fit } => {
+                Self::SetBackgroundFitOverride { node_id, fit }
+            }
+            CliDocumentCommand::ClearBackgroundFitOverride { node_id } => {
+                Self::ClearBackgroundFitOverride { node_id }
+            }
+        }
+    }
 }
 
 fn print_report(report: &AuthoringValidationReport) {

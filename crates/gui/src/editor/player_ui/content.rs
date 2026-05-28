@@ -67,6 +67,7 @@ pub fn render_dialogue(
     speaker: &str,
     text: &str,
     now_sec: f64,
+    advance_on_text_panel_click: bool,
 ) -> bool {
     let rendered_text = player.visible_text(text, now_sec);
     let text_complete = player.is_text_fully_revealed(text, now_sec);
@@ -81,13 +82,14 @@ pub fn render_dialogue(
 
     ui.add_space(10.0);
 
-    egui::Frame::none()
+    let text_panel_response = egui::Frame::none()
         .fill(egui::Color32::from_rgb(40, 40, 50))
         .rounding(8.0)
         .inner_margin(egui::Margin::same(16.0))
         .show(ui, |ui| {
             ui.label(egui::RichText::new(rendered_text).size(16.0));
-        });
+        })
+        .response;
 
     ui.add_space(20.0);
     let mut should_advance = false;
@@ -99,14 +101,124 @@ pub fn render_dialogue(
                 "Show full"
             };
             if ui.button(label).clicked() {
-                if text_complete {
-                    should_advance = true;
-                } else {
-                    player.reveal_current_line(text, now_sec);
-                }
+                reveal_or_advance_dialogue(
+                    player,
+                    text,
+                    now_sec,
+                    text_complete,
+                    &mut should_advance,
+                );
             }
         });
     });
+
+    if advance_on_text_panel_click
+        && ui
+            .interact(
+                text_panel_response.rect,
+                egui::Id::new("editor_player_dialogue_text_panel"),
+                egui::Sense::click(),
+            )
+            .clicked()
+    {
+        reveal_or_advance_dialogue(player, text, now_sec, text_complete, &mut should_advance);
+    }
+
+    if !text_complete {
+        ctx.request_repaint_after(Duration::from_millis(16));
+    } else if player.autoplay_ready(now_sec) {
+        player.mark_auto_step(now_sec);
+        should_advance = true;
+    }
+
+    should_advance
+}
+
+fn reveal_or_advance_dialogue(
+    player: &mut PlayerSessionState,
+    text: &str,
+    now_sec: f64,
+    text_complete: bool,
+    should_advance: &mut bool,
+) {
+    if text_complete {
+        *should_advance = true;
+    } else {
+        player.reveal_current_line(text, now_sec);
+    }
+}
+
+pub fn render_dialogue_overlay(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    player: &mut PlayerSessionState,
+    geometry: crate::editor::scene_stage::StageGeometry,
+    speaker: &str,
+    text: &str,
+    now_sec: f64,
+    advance_on_text_panel_click: bool,
+) -> bool {
+    let rendered_text = player.visible_text(text, now_sec);
+    let text_complete = player.is_text_fully_revealed(text, now_sec);
+    let rect = crate::player_overlay::dialogue_overlay_rect(geometry.stage_rect);
+    let box_height = rect.height();
+
+    ui.painter().rect_filled(
+        rect,
+        6.0,
+        egui::Color32::from_rgba_premultiplied(8, 8, 14, 220),
+    );
+    ui.painter().rect_stroke(
+        rect,
+        6.0,
+        egui::Stroke::new(1.0, egui::Color32::from_gray(130)),
+    );
+    let mut should_advance = false;
+    ui.allocate_ui_at_rect(rect.shrink2(egui::vec2(16.0, 12.0)), |ui| {
+        ui.set_clip_rect(rect.shrink(8.0));
+        ui.add_sized(
+            [ui.available_width(), 22.0],
+            egui::Label::new(
+                egui::RichText::new(speaker).color(egui::Color32::from_rgb(180, 210, 255)),
+            )
+            .wrap(true),
+        );
+        ui.add_space(6.0);
+        ui.add_sized(
+            [ui.available_width(), (box_height - 82.0).max(24.0)],
+            egui::Label::new(egui::RichText::new(rendered_text).color(egui::Color32::WHITE))
+                .wrap(true),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let label = if text_complete {
+                "Continue"
+            } else {
+                "Show full"
+            };
+            if ui.button(label).clicked() {
+                reveal_or_advance_dialogue(
+                    player,
+                    text,
+                    now_sec,
+                    text_complete,
+                    &mut should_advance,
+                );
+            }
+        });
+    });
+
+    if advance_on_text_panel_click {
+        if ui
+            .interact(
+                rect,
+                egui::Id::new("player_dialogue_overlay"),
+                egui::Sense::click(),
+            )
+            .clicked()
+        {
+            reveal_or_advance_dialogue(player, text, now_sec, text_complete, &mut should_advance);
+        }
+    }
 
     if !text_complete {
         ctx.request_repaint_after(Duration::from_millis(16));
@@ -157,6 +269,81 @@ pub fn render_choice(
     }
 }
 
+pub fn render_choice_overlay(
+    ui: &mut egui::Ui,
+    geometry: crate::editor::scene_stage::StageGeometry,
+    engine: &mut Engine,
+    toast: &mut Option<ToastState>,
+    prompt: &str,
+    localized_options: &[String],
+    options: &[ChoiceOptionCompiled],
+    audio_commands: &mut Vec<AudioCommand>,
+) {
+    let option_labels = options
+        .iter()
+        .enumerate()
+        .map(|(idx, option)| {
+            localized_options
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(|| option.text.as_ref().to_string())
+        })
+        .collect::<Vec<_>>();
+    let layout =
+        crate::player_overlay::choice_overlay_layout(geometry.stage_rect, prompt, &option_labels);
+    ui.painter().rect_filled(
+        layout.panel,
+        6.0,
+        egui::Color32::from_rgba_premultiplied(10, 12, 18, 230),
+    );
+    ui.painter().rect_stroke(
+        layout.panel,
+        6.0,
+        egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+    );
+
+    let mut selected = None;
+    ui.allocate_ui_at_rect(layout.panel.shrink2(egui::vec2(18.0, 14.0)), |ui| {
+        ui.set_clip_rect(layout.panel.shrink(8.0));
+        ui.add_sized(
+            [ui.available_width(), layout.prompt_height],
+            egui::Label::new(
+                egui::RichText::new(crate::player_overlay::soft_wrap_long_tokens(prompt, 28))
+                    .color(egui::Color32::WHITE),
+            )
+            .wrap(true),
+        );
+        ui.add_space(10.0);
+        egui::ScrollArea::vertical()
+            .id_source("player_choice_overlay_scroll")
+            .max_height(layout.options_viewport_height)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for (idx, option) in option_labels.iter().enumerate() {
+                    let row_height = layout.option_heights.get(idx).copied().unwrap_or(38.0);
+                    if ui
+                        .add_sized(
+                            [ui.available_width(), row_height],
+                            egui::Button::new(crate::player_overlay::soft_wrap_long_tokens(
+                                option, 32,
+                            )),
+                        )
+                        .clicked()
+                    {
+                        selected = Some((idx, option.clone()));
+                    }
+                    ui.add_space(8.0);
+                }
+            });
+    });
+    if let Some((idx, option)) = selected {
+        info!("Choice selected: {} ({})", option, idx);
+        let _ = engine.choose(idx);
+        audio_commands.extend(engine.take_audio_commands());
+        *toast = Some(ToastState::success(format!("Selected: {option}")));
+    }
+}
+
 pub fn render_scene(ui: &mut egui::Ui, player: &mut PlayerSessionState, now_sec: f64) -> bool {
     if ui.button("Continue").clicked() {
         return true;
@@ -166,6 +353,66 @@ pub fn render_scene(ui: &mut egui::Ui, player: &mut PlayerSessionState, now_sec:
         return true;
     }
     false
+}
+
+pub fn render_scene_overlay(
+    ui: &mut egui::Ui,
+    player: &mut PlayerSessionState,
+    geometry: crate::editor::scene_stage::StageGeometry,
+    description: &str,
+    now_sec: f64,
+    advance_on_text_panel_click: bool,
+) -> bool {
+    let rect = crate::player_overlay::scene_overlay_rect(geometry.stage_rect);
+    ui.painter().rect_filled(
+        rect,
+        6.0,
+        egui::Color32::from_rgba_premultiplied(8, 8, 14, 215),
+    );
+    ui.painter().rect_stroke(
+        rect,
+        6.0,
+        egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+    );
+
+    let mut should_advance = false;
+    ui.allocate_ui_at_rect(rect.shrink2(egui::vec2(14.0, 10.0)), |ui| {
+        ui.set_clip_rect(rect.shrink(8.0));
+        ui.add_sized(
+            [ui.available_width(), 34.0],
+            egui::Label::new(
+                egui::RichText::new(crate::player_overlay::soft_wrap_long_tokens(
+                    description,
+                    42,
+                ))
+                .color(egui::Color32::WHITE),
+            )
+            .wrap(true),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Continue").clicked() {
+                should_advance = true;
+            }
+        });
+    });
+    if advance_on_text_panel_click {
+        if ui
+            .interact(
+                rect,
+                egui::Id::new("editor_player_scene_overlay"),
+                egui::Sense::click(),
+            )
+            .clicked()
+        {
+            should_advance = true;
+        }
+    }
+
+    if player.autoplay_ready(now_sec) {
+        player.mark_auto_step(now_sec);
+        should_advance = true;
+    }
+    should_advance
 }
 
 pub fn render_end(

@@ -157,6 +157,7 @@ impl EditorWorkbench {
     fn apply_repro_case(&mut self, case: visual_novel_engine::ReproCase) -> Result<(), String> {
         let graph = crate::editor::script_sync::from_script(&case.script);
         self.node_graph = graph;
+        self.rebuild_authoring_session_from_fields();
         let mut stack = UndoStack::new();
         stack.push(self.node_graph.clone());
         self.undo_stack = stack;

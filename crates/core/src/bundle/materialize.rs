@@ -64,19 +64,31 @@ pub(super) fn materialize_executable(
     let Some(runtime) = runtime else {
         return Ok(None);
     };
-    if target != ExportTargetPlatform::Windows || !has_extension(&runtime.output_path, "exe") {
-        return Ok(None);
-    }
 
-    let executable_rel = "game.exe";
+    let executable_rel = match target {
+        ExportTargetPlatform::Windows
+            if has_extension(&runtime.output_path, "exe")
+                && runtime_artifact_matches_target(&runtime.output_path, target)? =>
+        {
+            "game.exe"
+        }
+        ExportTargetPlatform::Linux | ExportTargetPlatform::Macos
+            if runtime_artifact_matches_target(&runtime.output_path, target)? =>
+        {
+            "game"
+        }
+        ExportTargetPlatform::Windows => return Ok(None),
+        ExportTargetPlatform::Linux | ExportTargetPlatform::Macos => return Ok(None),
+    };
     let executable_out = output_root.join(executable_rel);
     fs::copy(&runtime.output_path, &executable_out).map_err(|e| {
         invalid_bundle(format!(
-            "copy windows executable '{}' -> '{}': {e}",
+            "copy executable '{}' -> '{}': {e}",
             runtime.output_path.display(),
             executable_out.display()
         ))
     })?;
+    make_executable(&executable_out)?;
     Ok(Some(executable_rel.to_string()))
 }
 
@@ -89,7 +101,10 @@ pub(super) fn write_launcher(
         ExportTargetPlatform::Windows => {
             let launcher_path = output_root.join("launch.bat");
             let content = if let Some(runtime) = runtime_rel {
-                format!("@echo off\r\nsetlocal\r\n\"%~dp0{runtime}\" %*\r\n")
+                let runtime = runtime.replace('/', "\\");
+                format!(
+                    "@echo off\r\nsetlocal\r\n\"%~dp0{runtime}\" \"%~dp0scripts\\compiled.vnscript.json\" --assets-root \"%~dp0.\" --manifest \"%~dp0meta\\assets_manifest.json\" --require-manifest %*\r\n"
+                )
             } else {
                 "@echo off\r\necho Runtime artifact missing in bundle\r\nexit /b 1\r\n".to_string()
             };
@@ -102,7 +117,7 @@ pub(super) fn write_launcher(
             let launcher_path = output_root.join("launch.sh");
             let content = if let Some(runtime) = runtime_rel {
                 format!(
-                    "#!/usr/bin/env sh\nset -eu\nDIR=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\"\nexec \"$DIR/{runtime}\" \"$@\"\n"
+                    "#!/usr/bin/env sh\nset -eu\nDIR=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\"\nexec \"$DIR/{runtime}\" \"$DIR/scripts/compiled.vnscript.json\" --assets-root \"$DIR\" --manifest \"$DIR/meta/assets_manifest.json\" --require-manifest \"$@\"\n"
                 )
             } else {
                 "#!/usr/bin/env sh\nset -eu\necho \"Runtime artifact missing in bundle\"\nexit 1\n"
@@ -111,13 +126,83 @@ pub(super) fn write_launcher(
             fs::write(&launcher_path, content).map_err(|e| {
                 invalid_bundle(format!("write launcher '{}': {e}", launcher_path.display()))
             })?;
+            make_executable(&launcher_path)?;
             Ok("launch.sh".to_string())
         }
     }
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) -> VnResult<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path)
+        .map_err(|e| invalid_bundle(format!("read permissions '{}': {e}", path.display())))?
+        .permissions();
+    permissions.set_mode(permissions.mode() | 0o755);
+    fs::set_permissions(path, permissions)
+        .map_err(|e| invalid_bundle(format!("set executable '{}': {e}", path.display())))
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> VnResult<()> {
+    Ok(())
 }
 
 fn has_extension(path: &Path, expected: &str) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case(expected))
+}
+
+fn runtime_artifact_matches_target(path: &Path, target: ExportTargetPlatform) -> VnResult<bool> {
+    let bytes = fs::read(path)
+        .map_err(|e| invalid_bundle(format!("read runtime artifact '{}': {e}", path.display())))?;
+    Ok(match target {
+        ExportTargetPlatform::Windows => is_windows_pe(&bytes),
+        ExportTargetPlatform::Linux => is_linux_elf(&bytes),
+        ExportTargetPlatform::Macos => is_macos_mach_o(&bytes),
+    })
+}
+
+fn is_windows_pe(bytes: &[u8]) -> bool {
+    if bytes.len() < 0x40 || &bytes[..2] != b"MZ" {
+        return false;
+    }
+    let pe_offset =
+        u32::from_le_bytes([bytes[0x3c], bytes[0x3d], bytes[0x3e], bytes[0x3f]]) as usize;
+    let Some(signature) = bytes.get(pe_offset..pe_offset + 4) else {
+        return false;
+    };
+    if signature != b"PE\0\0" {
+        return false;
+    }
+    let Some(machine) = bytes.get(pe_offset + 4..pe_offset + 6) else {
+        return false;
+    };
+    matches!(
+        u16::from_le_bytes([machine[0], machine[1]]),
+        0x014c | 0x8664 | 0xaa64
+    )
+}
+
+fn is_linux_elf(bytes: &[u8]) -> bool {
+    if bytes.len() < 20 || &bytes[..4] != b"\x7fELF" {
+        return false;
+    }
+    let elf_type = u16::from_le_bytes([bytes[16], bytes[17]]);
+    let machine = u16::from_le_bytes([bytes[18], bytes[19]]);
+    matches!(elf_type, 2 | 3) && matches!(machine, 0x03 | 0x3e | 0xb7)
+}
+
+fn is_macos_mach_o(bytes: &[u8]) -> bool {
+    matches!(
+        bytes.get(..4),
+        Some([0xFE, 0xED, 0xFA, 0xCE])
+            | Some([0xFE, 0xED, 0xFA, 0xCF])
+            | Some([0xCE, 0xFA, 0xED, 0xFE])
+            | Some([0xCF, 0xFA, 0xED, 0xFE])
+            | Some([0xCA, 0xFE, 0xBA, 0xBE])
+            | Some([0xCA, 0xFE, 0xBA, 0xBF])
+    )
 }

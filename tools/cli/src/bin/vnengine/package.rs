@@ -2,7 +2,8 @@ use std::path::Path;
 
 use anyhow::Result;
 use visual_novel_engine::{
-    export_bundle, ExportBundleSpec, ImportFallbackPolicy, ImportProfile, ImportRenpyOptions,
+    export_bundle, export_executable_bundle, ExportBundleSpec, ImportFallbackPolicy, ImportProfile,
+    ImportRenpyOptions,
 };
 
 pub(super) struct ImportRenpyCliOptions<'a> {
@@ -47,8 +48,12 @@ pub(super) fn import_renpy(options: ImportRenpyCliOptions<'_>) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn package_project(spec: ExportBundleSpec) -> Result<()> {
-    let report = export_bundle(spec)?;
+pub(super) fn package_project(spec: ExportBundleSpec, require_executable: bool) -> Result<()> {
+    let report = if require_executable {
+        export_executable_bundle(spec)?
+    } else {
+        export_bundle(spec)?
+    };
 
     println!(
         "packaged project => target={} assets={} integrity={} launcher={} report=meta/package_report.json",

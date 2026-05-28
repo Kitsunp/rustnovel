@@ -17,6 +17,7 @@ const CHOICE_HISTORY_LIMIT: usize = 512;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChoiceHistoryEntry {
     pub event_ip: u32,
+    pub prompt: String,
     pub option_index: usize,
     pub option_text: String,
     pub target_ip: u32,
@@ -120,6 +121,7 @@ impl Engine {
                     .ok_or(VnError::InvalidChoice)?;
                 self.record_choice_decision(
                     self.state.position,
+                    choice.prompt.as_ref(),
                     option_index,
                     option.text.as_ref(),
                     option.target_ip,
@@ -367,6 +369,7 @@ impl Engine {
     fn record_choice_decision(
         &mut self,
         event_ip: u32,
+        prompt: &str,
         option_index: usize,
         option_text: &str,
         target_ip: u32,
@@ -376,6 +379,7 @@ impl Engine {
         }
         self.choice_history.push_back(ChoiceHistoryEntry {
             event_ip,
+            prompt: prompt.to_string(),
             option_index,
             option_text: option_text.to_string(),
             target_ip,

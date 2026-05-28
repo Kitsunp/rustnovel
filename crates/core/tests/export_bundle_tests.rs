@@ -6,7 +6,10 @@ use tempfile::TempDir;
 use visual_novel_engine::{
     authoring::{AuthoringDocument, AuthoringPosition, NodeGraph, StoryNode},
     build_export_plan, export_bundle,
-    runtime::{AudioActionRaw, DialogueRaw, EventRaw, SceneTransitionRaw, ScriptRaw},
+    runtime::{
+        AudioActionRaw, DialogueRaw, EventRaw, ScenePatchRaw, SceneTransitionRaw, SceneUpdateRaw,
+        ScriptRaw,
+    },
     BundleIntegrity, ExportBundleSpec, ExportTargetPlatform, ProjectManifest,
 };
 
@@ -67,6 +70,15 @@ fn build_project_fixture() -> (TempDir, std::path::PathBuf) {
     (tmp, root)
 }
 
+fn minimal_pe_exe() -> Vec<u8> {
+    let mut bytes = vec![0u8; 128];
+    bytes[0..2].copy_from_slice(b"MZ");
+    bytes[0x3c..0x40].copy_from_slice(&0x40u32.to_le_bytes());
+    bytes[0x40..0x44].copy_from_slice(b"PE\0\0");
+    bytes[0x44..0x46].copy_from_slice(&0x8664u16.to_le_bytes());
+    bytes
+}
+
 #[test]
 fn export_bundle_builds_expected_layout_and_manifest() {
     let (_tmp, project_root) = build_project_fixture();
@@ -111,8 +123,16 @@ fn export_bundle_builds_expected_layout_and_manifest() {
         fs::read_to_string(out.join("meta/assets_manifest.json")).expect("assets manifest");
     let manifest: serde_json::Value =
         serde_json::from_str(&manifest_raw).expect("assets manifest json");
-    assert!(manifest.get("assets/bgm/theme.ogg").is_some());
-    assert!(manifest.get("assets/bgm/unused.ogg").is_none());
+    assert_eq!(
+        manifest.get("manifest_version").and_then(|v| v.as_u64()),
+        Some(1)
+    );
+    let assets = manifest
+        .get("assets")
+        .and_then(|value| value.as_object())
+        .expect("assets map");
+    assert!(assets.get("assets/bgm/theme.ogg").is_some());
+    assert!(assets.get("assets/bgm/unused.ogg").is_none());
 }
 
 #[test]
@@ -228,6 +248,11 @@ fn export_bundle_reports_extcall_audio_transition_capabilities() {
     let (_tmp, project_root) = build_project_fixture();
     let script = ScriptRaw::new(
         vec![
+            EventRaw::Scene(SceneUpdateRaw {
+                background: None,
+                music: Some("assets/bgm/theme.ogg".to_string()),
+                characters: Vec::new(),
+            }),
             EventRaw::AudioAction(AudioActionRaw {
                 channel: "sfx".to_string(),
                 action: "play".to_string(),
@@ -245,6 +270,13 @@ fn export_bundle_reports_extcall_audio_transition_capabilities() {
                 command: "plugin.unlock".to_string(),
                 args: Vec::new(),
             },
+            EventRaw::Patch(ScenePatchRaw {
+                background: None,
+                music: Some("assets/bgm/theme.ogg".to_string()),
+                add: Vec::new(),
+                update: Vec::new(),
+                remove: Vec::new(),
+            }),
         ],
         BTreeMap::from([("start".to_string(), 0)]),
     );
@@ -272,7 +304,11 @@ fn export_bundle_reports_extcall_audio_transition_capabilities() {
     );
     assert_eq!(
         report.capabilities.audio_actions,
-        vec!["sfx:play".to_string()]
+        vec![
+            "bgm:scene_music".to_string(),
+            "bgm:scene_patch_music".to_string(),
+            "sfx:play".to_string(),
+        ]
     );
     assert_eq!(
         report.capabilities.transitions,
@@ -339,7 +375,8 @@ fn export_bundle_windows_runtime_exe_creates_top_level_executable() {
     let (_tmp, project_root) = build_project_fixture();
     let runtime_dir = project_root.join("runtime");
     fs::create_dir_all(&runtime_dir).expect("mkdir runtime");
-    fs::write(runtime_dir.join("vn-runtime.exe"), b"fake-exe").expect("write runtime");
+    let runtime_bytes = minimal_pe_exe();
+    fs::write(runtime_dir.join("vn-runtime.exe"), &runtime_bytes).expect("write runtime");
     let out = project_root.join("dist_exe");
 
     let report = export_bundle(ExportBundleSpec {
@@ -361,7 +398,7 @@ fn export_bundle_windows_runtime_exe_creates_top_level_executable() {
     assert_eq!(report.executable.as_deref(), Some("game.exe"));
     assert_eq!(
         fs::read(out.join("game.exe")).expect("game exe"),
-        b"fake-exe"
+        runtime_bytes
     );
     let launcher = fs::read_to_string(out.join("launch.bat")).expect("launcher");
     assert!(

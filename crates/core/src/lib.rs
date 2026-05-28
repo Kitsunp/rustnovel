@@ -14,6 +14,7 @@ mod graph;
 mod localization;
 pub mod manifest;
 mod migration;
+mod player_menu;
 mod protected_content;
 mod render;
 mod renpy_import;
@@ -32,21 +33,25 @@ mod visual;
 
 pub use assets::{AssetId, AssetId128, AssetManifest};
 pub use authoring::{
-    asset_exists_from_project_root, export_runtime_script_from_authoring, is_unsafe_asset_ref,
-    load_authoring_document_or_script, load_runtime_script_from_entry,
-    parse_authoring_document_or_script, parse_runtime_script_from_entry,
-    quick_fix as authoring_quick_fix, validate_authoring_graph, validate_authoring_graph_no_io,
-    validate_authoring_graph_with_probe, validate_authoring_graph_with_project_root,
-    validate_authoring_graph_with_resolver, AuthoringDocument, AuthoringPosition,
-    CharacterPoseBinding, GraphConnection as AuthoringGraphConnection,
+    apply_authoring_document_command_headless, asset_exists_from_project_root,
+    export_runtime_script_from_authoring, is_unsafe_asset_ref, load_authoring_document_or_script,
+    load_runtime_script_from_entry, parse_authoring_document_or_script,
+    parse_runtime_script_from_entry, quick_fix as authoring_quick_fix, validate_authoring_graph,
+    validate_authoring_graph_no_io, validate_authoring_graph_with_probe,
+    validate_authoring_graph_with_project_root, validate_authoring_graph_with_resolver,
+    AuthoringDirtyFlags, AuthoringDocument, AuthoringDocumentCommand,
+    AuthoringDocumentCommandApplyResult, AuthoringDocumentCommandOutcome, AuthoringDocumentDelta,
+    AuthoringDocumentSession, AuthoringPosition, AuthoringReadModel, AuthoringReportStaleState,
+    CharacterPoseBinding, DiagnosticsIndex, GraphConnection as AuthoringGraphConnection,
     LintCode as AuthoringLintCode, LintIssue as AuthoringLintIssue,
-    LintSeverity as AuthoringLintSeverity, NodeGraph as AuthoringGraph, QuickFixCandidate,
-    QuickFixRisk, SceneLayer, SceneProfile, StoryNode as AuthoringStoryNode, ValidationPhase,
-    AUTHORING_DOCUMENT_SCHEMA_VERSION,
+    LintSeverity as AuthoringLintSeverity, NodeGraph as AuthoringGraph, NodeIndex,
+    QuickFixCandidate, QuickFixRisk, RouteIndex, SceneLayer, SceneProfile,
+    StoryNode as AuthoringStoryNode, ValidationPhase, AUTHORING_DOCUMENT_SCHEMA_VERSION,
 };
 pub use bundle::{
-    build_export_plan, export_bundle, BundleAssetEntry, BundleIntegrity, ExportBundleReport,
-    ExportBundleSpec, ExportPlan, ExportTargetPlatform,
+    build_export_plan, export_bundle, export_executable_bundle, export_windows_executable_bundle,
+    BundleAssetEntry, BundleIntegrity, ExportBundleReport, ExportBundleSpec, ExportPlan,
+    ExportTargetPlatform,
 };
 pub use error::{VnError, VnResult};
 pub use localization::{
@@ -57,6 +62,12 @@ pub use manifest::ProjectManifest;
 pub use migration::{
     migrate_script_json_to_current, migrate_script_json_value, MigrationError, MigrationReport,
     MigrationTraceEntry,
+};
+pub use player_menu::{
+    PlayerMenuAction, PlayerMenuActionConfig, PlayerMenuColor, PlayerMenuConfig,
+    PlayerMenuConfigError, PlayerMenuLayoutConfig, PlayerMenuPanelAnchor,
+    PlayerMenuQuickActionPlacement, PlayerMenuStyleConfig, PlayerMenuTabConfig, PlayerMenuTabKind,
+    PlayerMenuTabsPosition,
 };
 pub use protected_content::{
     open_protected_content, protect_content, ProtectedContentChunk, ProtectedContentError,

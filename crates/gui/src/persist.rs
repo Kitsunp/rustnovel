@@ -6,10 +6,18 @@ use thiserror::Error;
 use visual_novel_engine::{SaveData, SaveError, AUTH_SAVE_KEY};
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
 pub struct UserPreferences {
     pub fullscreen: bool,
     pub ui_scale: f32,
     pub vsync: bool,
+    pub audio_muted: bool,
+    pub master_volume: f32,
+    pub bgm_volume: f32,
+    pub sfx_volume: f32,
+    pub voice_volume: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advance_on_text_panel_click: Option<bool>,
 }
 
 impl Default for UserPreferences {
@@ -18,6 +26,12 @@ impl Default for UserPreferences {
             fullscreen: false,
             ui_scale: 1.0,
             vsync: true,
+            audio_muted: false,
+            master_volume: 1.0,
+            bgm_volume: 1.0,
+            sfx_volume: 1.0,
+            voice_volume: 1.0,
+            advance_on_text_panel_click: None,
         }
     }
 }

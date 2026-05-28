@@ -197,7 +197,12 @@ fn validate_node<F>(
             validate_scene_patch(id, patch, asset_exists, issues);
         }
         StoryNode::Jump { target } => {
-            validate_jump_target(id, target, script_labels, issues);
+            let has_connected_target = graph
+                .connections()
+                .any(|conn| conn.from == id && conn.from_port == 0);
+            if !has_connected_target {
+                validate_jump_target(id, target, script_labels, issues);
+            }
         }
         StoryNode::JumpIf { target, cond } => {
             if cond_key_empty(cond) {

@@ -1,5 +1,4 @@
 use pyo3::exceptions::PyValueError;
-use std::collections::BTreeMap;
 use visual_novel_engine::authoring::quick_fix::suggest_fixes;
 use visual_novel_engine::authoring::{
     load_authoring_document_or_script, validate_authoring_graph, AuthoringCommand,
@@ -54,11 +53,19 @@ impl PyNodeGraph {
     }
 
     pub(super) fn py_set_bookmark(&mut self, name: String, node_id: u32) -> bool {
-        self.inner.set_bookmark(name, node_id)
+        let changed = self.inner.set_bookmark(name, node_id);
+        if changed {
+            self.rebuild_session_from_fields();
+        }
+        changed
     }
 
     pub(super) fn py_remove_bookmark(&mut self, name: &str) -> bool {
-        self.inner.remove_bookmark(name)
+        let changed = self.inner.remove_bookmark(name);
+        if changed {
+            self.rebuild_session_from_fields();
+        }
+        changed
     }
 
     pub(super) fn py_bookmark_target(&self, name: &str) -> Option<u32> {
@@ -84,21 +91,11 @@ impl PyNodeGraph {
         let source =
             std::fs::read_to_string(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
         if let Ok(document) = AuthoringDocument::from_json(&source) {
-            return Ok(Self {
-                inner: document.graph,
-                layer_overrides: document.composer_layer_overrides,
-                operation_log: document.operation_log,
-                verification_runs: document.verification_runs,
-            });
+            return Ok(Self::from_authoring_document(document));
         }
         let inner = load_authoring_document_or_script(path)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(Self {
-            inner,
-            layer_overrides: BTreeMap::new(),
-            operation_log: Vec::new(),
-            verification_runs: Vec::new(),
-        })
+        Ok(Self::from_authoring_document(AuthoringDocument::new(inner)))
     }
 
     pub(super) fn py_repr(&self) -> String {

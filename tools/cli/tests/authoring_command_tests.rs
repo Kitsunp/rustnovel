@@ -149,6 +149,61 @@ fn authoring_validate_command_fingerprints_authoring_document_metadata() {
 }
 
 #[test]
+fn authoring_apply_command_serializes_core_document_outcome() {
+    let (_tmp, script_path) = write_authoring_document();
+    let command_path = script_path.with_file_name("command.json");
+    let output_path = script_path.with_file_name("mutated.vnauthoring");
+    fs::write(
+        &command_path,
+        r#"{"command":"set_background_fit_override","node_id":0,"fit":"contain"}"#,
+    )
+    .expect("command json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("authoring")
+        .arg("apply-command")
+        .arg(script_path.as_os_str())
+        .arg("--command")
+        .arg(command_path.as_os_str())
+        .arg("--output")
+        .arg(output_path.as_os_str())
+        .arg("--json")
+        .output()
+        .expect("run authoring apply-command");
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).expect("outcome json");
+    assert_eq!(
+        outcome["delta"]["BackgroundFitChanged"]["after"],
+        serde_json::json!("contain")
+    );
+    assert_eq!(
+        outcome["operation"]["operation_kind"],
+        serde_json::json!("field_edited")
+    );
+    assert_eq!(
+        outcome["operation"]["operation_id"],
+        outcome["verification"]["operation_id"]
+    );
+
+    let document = AuthoringDocument::from_json(
+        &fs::read_to_string(output_path).expect("mutated authoring document"),
+    )
+    .expect("parse mutated authoring document");
+    assert_eq!(
+        document.composer_background_fit_overrides.get("0"),
+        Some(&visual_novel_engine::authoring::composer::BackgroundFit::Contain)
+    );
+    assert_eq!(document.operation_log.len(), 1);
+    assert_eq!(document.verification_runs.len(), 1);
+}
+
+#[test]
 fn authoring_validate_command_reports_graph_errors_before_failing() {
     let (_tmp, script_path) = write_script(ScriptRaw::new(
         vec![EventRaw::Scene(SceneUpdateRaw {

@@ -146,7 +146,9 @@ fn validate_node_for_strict_export(
 ) -> VnResult<()> {
     match node {
         StoryNode::Choice { options, .. } => validate_choice(node_id, options, connected_ports),
-        StoryNode::Jump { target } => validate_jump(node_id, target, script_labels),
+        StoryNode::Jump { target } => {
+            validate_jump(node_id, target, script_labels, connected_ports)
+        }
         StoryNode::JumpIf { target, .. } => {
             validate_jump_if(node_id, target, script_labels, connected_ports)
         }
@@ -184,7 +186,15 @@ fn validate_choice(
     Ok(())
 }
 
-fn validate_jump(node_id: u32, target: &str, script_labels: &BTreeSet<String>) -> VnResult<()> {
+fn validate_jump(
+    node_id: u32,
+    target: &str,
+    script_labels: &BTreeSet<String>,
+    connected_ports: &BTreeSet<(u32, usize)>,
+) -> VnResult<()> {
+    if connected_ports.contains(&(node_id, 0)) {
+        return Ok(());
+    }
     if target.trim().is_empty() {
         return Err(VnError::invalid_script(format!(
             "jump node {node_id} has empty target"

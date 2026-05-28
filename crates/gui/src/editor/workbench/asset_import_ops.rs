@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::*;
 use crate::editor::{AssetFieldTarget, AssetImportKind, StoryNode};
-use visual_novel_engine::authoring::{AuthoringCommand, AuthoringCommandBus};
+use visual_novel_engine::authoring::{AuthoringCommand, AuthoringDocumentCommand};
 
 #[path = "asset_import_helpers.rs"]
 mod asset_import_helpers;
@@ -442,12 +442,12 @@ impl EditorWorkbench {
         node_id: u32,
         replacement: StoryNode,
     ) -> Result<(), String> {
-        let mut bus = AuthoringCommandBus::new(self.node_graph.authoring_graph().clone());
-        bus.apply(AuthoringCommand::EditNode {
-            node_id,
-            replacement,
-        })?;
-        self.node_graph.replace_authoring_graph(bus.graph().clone());
+        self.apply_authoring_document_command(AuthoringDocumentCommand::Graph(
+            AuthoringCommand::EditNode {
+                node_id,
+                replacement,
+            },
+        ))?;
         Ok(())
     }
 }

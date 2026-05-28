@@ -62,6 +62,37 @@ fn choice_layout_handles_tiny_stage_and_unbroken_text_without_invalid_geometry()
 }
 
 #[test]
+fn dialogue_overlay_rect_stays_inside_stage_across_stage_sizes() {
+    for size in [egui::vec2(1280.0, 720.0), egui::vec2(320.0, 180.0), egui::vec2(120.0, 72.0)] {
+        let stage = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        let rect = dialogue_overlay_rect(stage);
+
+        assert!(rect.width().is_finite());
+        assert!(rect.height().is_finite());
+        assert!(stage.contains_rect(rect));
+        assert!(rect.bottom() < stage.bottom());
+        assert!(rect.top() > stage.top());
+    }
+}
+
+#[test]
+fn scene_continue_overlay_rect_stays_inside_stage_across_stage_sizes() {
+    for size in [
+        egui::vec2(1280.0, 720.0),
+        egui::vec2(320.0, 180.0),
+        egui::vec2(120.0, 72.0),
+    ] {
+        let stage = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        let rect = scene_overlay_rect(stage);
+
+        assert!(rect.width().is_finite());
+        assert!(rect.height().is_finite());
+        assert!(stage.contains_rect(rect));
+        assert!(rect.bottom() <= stage.bottom());
+    }
+}
+
+#[test]
 fn soft_wrap_long_tokens_inserts_invisible_breaks_without_changing_words_with_spaces() {
     let unbroken = "x".repeat(96);
     let wrapped = soft_wrap_long_tokens(&unbroken, 24);

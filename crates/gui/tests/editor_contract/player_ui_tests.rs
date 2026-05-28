@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use super::*;
 use visual_novel_engine::{
     runtime::{DialogueRaw, Engine, EventRaw, ScriptRaw},
-    ResourceLimiter, SecurityPolicy,
+    PlayerMenuTabKind, ResourceLimiter, SecurityPolicy,
 };
 
 fn one_dialogue_engine() -> Engine {
@@ -33,6 +33,15 @@ fn text_reveal_is_utf8_safe() {
 
     assert!(line.starts_with(first));
     assert!(line.starts_with(second));
+}
+
+#[test]
+fn player_menu_preview_starts_uninitialized_until_play_mode_enters() {
+    let state = PlayerSessionState::default();
+
+    assert!(!state.menu_initialized);
+    assert!(!state.show_menu);
+    assert_eq!(state.menu_tab, PlayerMenuTabKind::Saves);
 }
 
 #[test]

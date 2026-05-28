@@ -104,6 +104,7 @@ fn engine_records_choice_history() {
     let history = engine.choice_history();
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].event_ip, 2);
+    assert_eq!(history[0].prompt, "Ir?");
     assert_eq!(history[0].option_index, 1);
     assert_eq!(history[0].option_text, "No");
     assert_eq!(history[0].target_ip, 0);

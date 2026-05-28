@@ -37,3 +37,4 @@ genshin-furina-1 = 'assets\backgrounds\genshin-furina-1.png'
 [assets.characters]
 
 [assets.audio]
+cunning_plan = 'assets\audio\cunning-plan.ogg'

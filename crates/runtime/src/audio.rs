@@ -67,14 +67,23 @@ pub trait Audio {
         let _ = fade_out;
         self.stop_music();
     }
+    fn set_music_volume(&mut self, volume: f32) {
+        let _ = volume;
+    }
     fn play_sfx(&mut self, id: &str);
     fn play_sfx_with_volume(&mut self, id: &str, volume: Option<f32>) {
         let _ = volume;
         self.play_sfx(id);
     }
+    fn set_sfx_volume(&mut self, volume: f32) {
+        let _ = volume;
+    }
     fn stop_sfx(&mut self) {}
     fn play_voice_with_volume(&mut self, id: &str, volume: Option<f32>) {
         self.play_sfx_with_volume(id, volume);
+    }
+    fn set_voice_volume(&mut self, volume: f32) {
+        let _ = volume;
     }
     fn stop_voice(&mut self) {}
 }
@@ -113,17 +122,26 @@ impl<T: Audio + ?Sized> Audio for Box<T> {
     fn stop_music_with_fade(&mut self, fade_out: Option<Duration>) {
         (**self).stop_music_with_fade(fade_out);
     }
+    fn set_music_volume(&mut self, volume: f32) {
+        (**self).set_music_volume(volume);
+    }
     fn play_sfx(&mut self, id: &str) {
         (**self).play_sfx(id);
     }
     fn play_sfx_with_volume(&mut self, id: &str, volume: Option<f32>) {
         (**self).play_sfx_with_volume(id, volume);
     }
+    fn set_sfx_volume(&mut self, volume: f32) {
+        (**self).set_sfx_volume(volume);
+    }
     fn stop_sfx(&mut self) {
         (**self).stop_sfx();
     }
     fn play_voice_with_volume(&mut self, id: &str, volume: Option<f32>) {
         (**self).play_voice_with_volume(id, volume);
+    }
+    fn set_voice_volume(&mut self, volume: f32) {
+        (**self).set_voice_volume(volume);
     }
     fn stop_voice(&mut self) {
         (**self).stop_voice();
@@ -336,6 +354,10 @@ impl Audio for RodioBackend {
         self.current_bgm = None;
     }
 
+    fn set_music_volume(&mut self, volume: f32) {
+        self.bgm_sink.set_volume(volume.clamp(0.0, 1.0));
+    }
+
     fn play_sfx(&mut self, id: &str) {
         self.play_sfx_with_volume(id, None);
     }
@@ -347,10 +369,24 @@ impl Audio for RodioBackend {
         }
     }
 
+    fn set_sfx_volume(&mut self, volume: f32) {
+        let volume = volume.clamp(0.0, 1.0);
+        self.sfx_sinks.retain(|sink| !sink.empty());
+        for sink in &self.sfx_sinks {
+            sink.set_volume(volume);
+        }
+    }
+
     fn play_voice_with_volume(&mut self, id: &str, volume: Option<f32>) {
         match self.decode_audio_source(id, Duration::ZERO) {
             Ok(source) => self.play_voice_internal(source, volume),
             Err(e) => eprintln!("Audio Error: {}", e),
+        }
+    }
+
+    fn set_voice_volume(&mut self, volume: f32) {
+        if let Some(sink) = &self.voice_sink {
+            sink.set_volume(volume.clamp(0.0, 1.0));
         }
     }
 

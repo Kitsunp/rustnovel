@@ -14,11 +14,13 @@ impl EditorWorkbench {
             return false;
         }
 
-        if self.engine.is_none() && self.sync_graph_to_script().is_err() {
-            self.toast = Some(ToastState::error(
-                "No se pudo preparar el Player: corrige errores del grafo/importacion",
-            ));
-            return false;
+        if self.engine.is_none() {
+            if let Err(err) = self.sync_graph_to_script() {
+                self.toast = Some(ToastState::error(format!(
+                    "No se pudo preparar el Player: {err}"
+                )));
+                return false;
+            }
         }
         {
             let Some(engine) = self.engine.as_mut() else {
@@ -37,6 +39,8 @@ impl EditorWorkbench {
             engine.clear_session_history();
         }
         self.player_state.reset_for_restart(0.0);
+        self.player_state.menu_initialized = false;
+        self.player_state.quick_save_state = None;
         self.ensure_player_audio_backend();
         self.refresh_scene_from_engine_preview();
         true

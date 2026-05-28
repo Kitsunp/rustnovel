@@ -226,22 +226,9 @@ impl EditorWorkbench {
         &mut self,
         command: visual_novel_engine::authoring::AuthoringDocumentCommand,
     ) {
-        let mut bus = visual_novel_engine::authoring::AuthoringDocumentCommandBus::new(
-            self.current_authoring_document(),
-        );
-        let Ok(outcome) = bus.apply(command) else {
+        let Ok(_) = self.apply_authoring_document_command(command) else {
             return;
         };
-        let document = bus.into_document();
-        self.node_graph.replace_authoring_graph(document.graph);
-        self.composer_layer_overrides = document.composer_layer_overrides.into_iter().collect();
-        self.composer_background_fit_overrides = document
-            .composer_background_fit_overrides
-            .into_iter()
-            .collect();
-        self.operation_log = document.operation_log;
-        self.verification_runs = document.verification_runs;
-        self.last_operation_fingerprint = Some(outcome.after_fingerprint);
         self.node_graph.mark_modified();
     }
 }

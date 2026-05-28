@@ -229,6 +229,56 @@ fn self_loop_choice_and_jump_roundtrip_without_structural_rejection() {
 }
 
 #[test]
+fn imported_jump_prefers_connected_target_over_stale_text_label() {
+    let script = ScriptRaw::new(
+        vec![
+            EventRaw::Dialogue(DialogueRaw {
+                speaker: "Narrator".to_string(),
+                text: "Branch A".to_string(),
+            }),
+            EventRaw::Jump {
+                target: "shared_ending".to_string(),
+            },
+            EventRaw::Dialogue(DialogueRaw {
+                speaker: "Narrator".to_string(),
+                text: "Shared ending".to_string(),
+            }),
+        ],
+        BTreeMap::from([("start".to_string(), 0), ("shared_ending".to_string(), 2)]),
+    );
+    let graph = NodeGraph::from_script(&script);
+    let jump_id = graph
+        .nodes()
+        .find_map(|(id, node, _)| matches!(node, StoryNode::Jump { .. }).then_some(*id))
+        .expect("jump node");
+    assert!(
+        graph
+            .connections()
+            .any(|conn| conn.from == jump_id && conn.from_port == 0),
+        "imported jumps should keep a visual connection to their target"
+    );
+
+    let exported = graph
+        .to_script_strict()
+        .expect("connected jump should export through the visual target");
+    let exported_target = exported
+        .events
+        .iter()
+        .find_map(|event| match event {
+            EventRaw::Jump { target } => Some(target.as_str()),
+            _ => None,
+        })
+        .expect("exported jump");
+    assert!(
+        exported.labels.contains_key(exported_target),
+        "exported jump target '{exported_target}' must be a generated label"
+    );
+    exported
+        .compile()
+        .expect("strict export should compile after relabeling the connected jump");
+}
+
+#[test]
 fn missing_target_is_preserved_and_strict_export_fails() {
     let script = ScriptRaw::new(
         vec![EventRaw::Jump {

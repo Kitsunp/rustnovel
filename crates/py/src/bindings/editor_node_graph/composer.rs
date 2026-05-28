@@ -12,7 +12,9 @@ use super::PyNodeGraph;
 
 impl PyNodeGraph {
     pub(super) fn py_operation_log(&self) -> Vec<PyOperationLogEntry> {
-        self.operation_log
+        self.session
+            .document()
+            .operation_log
             .clone()
             .into_iter()
             .map(Into::into)
@@ -20,7 +22,9 @@ impl PyNodeGraph {
     }
 
     pub(super) fn py_verification_runs(&self) -> Vec<PyVerificationRun> {
-        self.verification_runs
+        self.session
+            .document()
+            .verification_runs
             .clone()
             .into_iter()
             .map(Into::into)
@@ -34,6 +38,13 @@ impl PyNodeGraph {
         stage_height: Option<u32>,
         locale: Option<&str>,
     ) -> PyComposerSnapshot {
+        if stage_width.is_none() && stage_height.is_none() && locale.is_none() {
+            if let Some(node_id) = selected_node_id {
+                if let Some(snapshot) = self.session.read_model().preview_data_for_node(node_id) {
+                    return snapshot.clone().into();
+                }
+            }
+        }
         let resolution = stage_width.zip(stage_height);
         let mut snapshot = build_composer_snapshot(
             &self.inner,
@@ -51,6 +62,16 @@ impl PyNodeGraph {
         &self,
         selected_node_id: Option<u32>,
     ) -> Vec<PyLayeredSceneObject> {
+        if selected_node_id.is_none() {
+            return self
+                .session
+                .read_model()
+                .composer_layers()
+                .iter()
+                .cloned()
+                .map(Into::into)
+                .collect();
+        }
         let mut objects = collect_layered_objects(&self.inner, selected_node_id);
         apply_layer_overrides(&mut objects, &self.layer_overrides);
         objects.into_iter().map(Into::into).collect()
@@ -82,9 +103,10 @@ impl PyNodeGraph {
         scale: Option<f32>,
     ) -> bool {
         if self
-            .layer_overrides
-            .get(object_id)
-            .is_some_and(|override_| override_.locked || !override_.visible)
+            .session
+            .read_model()
+            .composer_layer(object_id)
+            .is_some_and(|layer| layer.locked || !layer.visible)
         {
             return false;
         }

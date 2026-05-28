@@ -15,6 +15,11 @@ impl EditorWorkbench {
             .as_ref()
             .map(|manifest| manifest.settings.resolution);
         let visual_prefs = self.player_visual_preferences();
+        let player_menu = self
+            .manifest
+            .as_ref()
+            .map(|manifest| manifest.settings.player_menu.clone())
+            .unwrap_or_default();
         let mut visual_context = crate::editor::player_ui::PlayerVisualContext {
             project_root: self.project_root.as_deref(),
             stage_resolution,
@@ -31,6 +36,7 @@ impl EditorWorkbench {
             &mut self.player_state,
             &mut self.player_locale,
             &self.localization_catalog,
+            &player_menu,
             ctx,
             &mut visual_context,
         );

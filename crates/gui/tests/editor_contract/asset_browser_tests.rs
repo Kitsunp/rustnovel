@@ -33,6 +33,31 @@ fn asset_cards_shrink_for_narrow_window_panels() {
 }
 
 #[test]
+fn asset_grid_wraps_many_backgrounds_vertically_in_narrow_panels() {
+    let narrow_columns = super::asset_grid_columns(52.0);
+    assert_eq!(narrow_columns, 1);
+    assert_eq!(super::asset_grid_rows(6, narrow_columns), 6);
+
+    let roomy_columns = super::asset_grid_columns(320.0);
+    assert!(roomy_columns > narrow_columns);
+    assert!(super::asset_grid_rows(roomy_columns * 2 + 1, roomy_columns) > 2);
+}
+
+#[test]
+fn asset_grid_and_cards_tolerate_adverse_panel_widths() {
+    for width in [0.0, -40.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let card = super::asset_card_size(width);
+        assert!(card.x.is_finite());
+        assert!(card.y.is_finite());
+        assert!(card.x >= 48.0);
+        assert!(super::asset_grid_columns(width) >= 1);
+    }
+
+    assert_eq!(super::asset_grid_rows(0, 0), 0);
+    assert_eq!(super::asset_grid_rows(3, 0), 3);
+}
+
+#[test]
 fn thumbnail_cache_keys_include_project_root() {
     let asset_path = "assets/bg/room.png";
     assert_ne!(

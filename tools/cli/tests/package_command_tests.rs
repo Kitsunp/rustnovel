@@ -46,6 +46,27 @@ fn build_project_fixture() -> (TempDir, std::path::PathBuf) {
     (tmp, root)
 }
 
+fn minimal_pe_exe() -> Vec<u8> {
+    let mut bytes = vec![0u8; 128];
+    bytes[0..2].copy_from_slice(b"MZ");
+    bytes[0x3c..0x40].copy_from_slice(&0x40u32.to_le_bytes());
+    bytes[0x40..0x44].copy_from_slice(b"PE\0\0");
+    bytes[0x44..0x46].copy_from_slice(&0x8664u16.to_le_bytes());
+    bytes
+}
+
+fn minimal_linux_elf() -> Vec<u8> {
+    let mut bytes = vec![0u8; 64];
+    bytes[0..4].copy_from_slice(b"\x7fELF");
+    bytes[4] = 2;
+    bytes[5] = 1;
+    bytes[16] = 2;
+    bytes[17] = 0;
+    bytes[18] = 0x3e;
+    bytes[19] = 0;
+    bytes
+}
+
 #[test]
 fn package_command_creates_bundle_layout() {
     let (_tmp, project_root) = build_project_fixture();
@@ -75,6 +96,137 @@ fn package_command_creates_bundle_layout() {
     assert!(!output_root.join("assets/sfx/unused.ogg").exists());
     assert!(output_root.join("meta/package_report.json").is_file());
     assert!(output_root.join("launch.bat").is_file());
+}
+
+#[test]
+fn package_command_require_executable_rejects_missing_runtime() {
+    let (_tmp, project_root) = build_project_fixture();
+    let output_root = project_root.join("dist_requires_exe");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("package")
+        .arg(project_root.as_os_str())
+        .arg("--output")
+        .arg(output_root.as_os_str())
+        .arg("--target")
+        .arg("windows")
+        .arg("--require-executable")
+        .output()
+        .expect("run package command");
+
+    assert!(!output.status.success(), "missing executable should fail");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(".exe runtime_artifact"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn package_command_require_executable_creates_game_exe() {
+    let (_tmp, project_root) = build_project_fixture();
+    let runtime_dir = project_root.join("runtime");
+    fs::create_dir_all(&runtime_dir).expect("runtime dir");
+    let runtime_bytes = minimal_pe_exe();
+    fs::write(runtime_dir.join("vn-runtime.exe"), &runtime_bytes).expect("runtime exe");
+    let output_root = project_root.join("dist_exe");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("package")
+        .arg(project_root.as_os_str())
+        .arg("--output")
+        .arg(output_root.as_os_str())
+        .arg("--target")
+        .arg("windows")
+        .arg("--runtime-artifact")
+        .arg("runtime/vn-runtime.exe")
+        .arg("--require-executable")
+        .output()
+        .expect("run package command");
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(output_root.join("game.exe")).expect("game exe"),
+        runtime_bytes
+    );
+    let launcher = fs::read_to_string(output_root.join("launch.bat")).expect("launcher");
+    assert!(launcher.contains("scripts\\compiled.vnscript.json"));
+    assert!(launcher.contains("--assets-root \"%~dp0.\""));
+    assert!(launcher.contains("--require-manifest"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("executable=game.exe"));
+}
+
+#[test]
+fn package_command_require_executable_rejects_fake_exe_payload() {
+    let (_tmp, project_root) = build_project_fixture();
+    let runtime_dir = project_root.join("runtime");
+    fs::create_dir_all(&runtime_dir).expect("runtime dir");
+    fs::write(runtime_dir.join("vn-runtime.exe"), b"fake runtime exe").expect("runtime exe");
+    let output_root = project_root.join("dist_fake_exe");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("package")
+        .arg(project_root.as_os_str())
+        .arg("--output")
+        .arg(output_root.as_os_str())
+        .arg("--target")
+        .arg("windows")
+        .arg("--runtime-artifact")
+        .arg("runtime/vn-runtime.exe")
+        .arg("--require-executable")
+        .output()
+        .expect("run package command");
+
+    assert!(!output.status.success(), "fake executable should fail");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(".exe runtime_artifact"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn package_command_require_executable_creates_linux_game_launcher() {
+    let (_tmp, project_root) = build_project_fixture();
+    let runtime_dir = project_root.join("runtime");
+    fs::create_dir_all(&runtime_dir).expect("runtime dir");
+    let runtime_bytes = minimal_linux_elf();
+    fs::write(runtime_dir.join("vn-runtime"), &runtime_bytes).expect("runtime");
+    let output_root = project_root.join("dist_linux_exe");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("package")
+        .arg(project_root.as_os_str())
+        .arg("--output")
+        .arg(output_root.as_os_str())
+        .arg("--target")
+        .arg("linux")
+        .arg("--runtime-artifact")
+        .arg("runtime/vn-runtime")
+        .arg("--require-executable")
+        .output()
+        .expect("run package command");
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(output_root.join("game")).expect("game"),
+        runtime_bytes
+    );
+    let launcher = fs::read_to_string(output_root.join("launch.sh")).expect("launcher");
+    assert!(launcher.contains("exec \"$DIR/game\""));
+    assert!(launcher.contains("--assets-root \"$DIR\""));
+    assert!(launcher.contains("--require-manifest"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("executable=game"));
 }
 
 #[test]

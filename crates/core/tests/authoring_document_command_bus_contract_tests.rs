@@ -324,3 +324,220 @@ fn document_command_bus_undo_redo_delta_contract() {
         .contains_key(&scene_id.to_string()));
     assert_eq!(bus.document().operation_log.len(), 2);
 }
+
+#[test]
+fn document_session_layout_delta_updates_read_model_and_dirty_flags() {
+    let (document, _, object_id) = scene_document();
+    let mut session = AuthoringDocumentSession::new(document);
+    assert!(session.dirty_flags().is_clean());
+    assert!(
+        session
+            .read_model()
+            .composer_layer(&object_id)
+            .expect("layer indexed before mutation")
+            .visible
+    );
+
+    let outcome = session
+        .apply(AuthoringDocumentCommand::SetLayerVisible {
+            object_id: object_id.clone(),
+            visible: false,
+        })
+        .expect("set layer visible");
+
+    let flags = session.dirty_flags();
+    assert!(!flags.graph_dirty);
+    assert!(flags.layout_dirty);
+    assert!(!flags.assets_dirty);
+    assert!(flags.document_dirty);
+    assert!(!flags.validation_dirty);
+    assert!(!flags.runtime_export_dirty);
+    assert!(
+        !session
+            .read_model()
+            .composer_layer(&object_id)
+            .expect("layer stays indexed after delta")
+            .visible
+    );
+    assert!(outcome.verification.resolved_diagnostic_ids.is_empty());
+    assert!(outcome.verification.introduced_diagnostic_ids.is_empty());
+    assert_eq!(
+        outcome.before_fingerprint.story_semantic_sha256,
+        outcome.after_fingerprint.story_semantic_sha256
+    );
+
+    session.clear_dirty_flags();
+    assert!(session.dirty_flags().is_clean());
+}
+
+#[test]
+fn document_session_graph_delta_rebuilds_read_model_asset_refs_and_marks_runtime_dirty() {
+    let (document, scene_id, _) = scene_document();
+    let mut session = AuthoringDocumentSession::new(document);
+    assert!(session
+        .read_model()
+        .asset_refs()
+        .contains(&"assets/bg/room.png".to_string()));
+
+    let outcome = session
+        .apply(AuthoringDocumentCommand::Graph(
+            AuthoringCommand::EditNode {
+                node_id: scene_id,
+                replacement: StoryNode::Scene {
+                    profile: None,
+                    background: Some("assets/bg/lab.png".to_string()),
+                    music: None,
+                    characters: vec![],
+                },
+            },
+        ))
+        .expect("edit scene through document session");
+
+    let flags = session.dirty_flags();
+    assert!(flags.graph_dirty);
+    assert!(flags.layout_dirty);
+    assert!(flags.assets_dirty);
+    assert!(flags.document_dirty);
+    assert!(flags.validation_dirty);
+    assert!(flags.runtime_export_dirty);
+    assert!(session
+        .read_model()
+        .asset_refs()
+        .contains(&"assets/bg/lab.png".to_string()));
+    assert!(!session
+        .read_model()
+        .asset_refs()
+        .contains(&"assets/bg/room.png".to_string()));
+    assert_ne!(
+        outcome.before_fingerprint.story_semantic_sha256,
+        outcome.after_fingerprint.story_semantic_sha256
+    );
+}
+
+#[test]
+fn document_session_read_model_indexes_nodes_routes_diagnostics_and_preview_data() {
+    let mut graph = NodeGraph::new();
+    let start_id = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let dialogue_id = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Ava".to_string(),
+            text: "old laboratory note".to_string(),
+        },
+        pos(100.0, 0.0),
+    );
+    let end_id = graph.add_node(StoryNode::End, pos(200.0, 0.0));
+    let orphan_id = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Nox".to_string(),
+            text: "orphan route".to_string(),
+        },
+        pos(100.0, 120.0),
+    );
+    graph.connect(start_id, dialogue_id);
+    graph.connect(dialogue_id, end_id);
+
+    let mut session = AuthoringDocumentSession::new(AuthoringDocument::new(graph));
+    let read_model = session.read_model();
+    assert!(read_model.node_ids().contains(&dialogue_id));
+    assert_eq!(
+        read_model.nodes_by_text("old laboratory"),
+        vec![dialogue_id]
+    );
+    assert!(read_model.reachable_node_ids().contains(&dialogue_id));
+    assert!(read_model.unreachable_node_ids().contains(&orphan_id));
+    assert!(read_model.preview_data_for_node(dialogue_id).is_some());
+    assert!(read_model
+        .diagnostics_by_code(LintCode::UnreachableNode.label())
+        .iter()
+        .any(|issue| issue.node_id == Some(orphan_id)));
+    assert!(!read_model.diagnostics_for_node(orphan_id).is_empty());
+
+    session
+        .apply(AuthoringDocumentCommand::Graph(
+            AuthoringCommand::EditDialogue {
+                node_id: dialogue_id,
+                speaker: "Ava".to_string(),
+                text: "new laboratory note".to_string(),
+            },
+        ))
+        .expect("edit dialogue through document session");
+
+    assert!(session
+        .read_model()
+        .nodes_by_text("old laboratory")
+        .is_empty());
+    assert_eq!(
+        session.read_model().nodes_by_text("new laboratory"),
+        vec![dialogue_id]
+    );
+    assert!(session
+        .read_model()
+        .diagnostics_for_node(orphan_id)
+        .iter()
+        .any(|issue| issue.code == LintCode::UnreachableNode));
+}
+
+#[test]
+fn document_session_read_model_reports_stale_domains_from_fingerprints() {
+    let (document, _, object_id) = scene_document();
+    let mut session = AuthoringDocumentSession::new(document);
+
+    let outcome = session
+        .apply(AuthoringDocumentCommand::SetLayerVisible {
+            object_id,
+            visible: false,
+        })
+        .expect("set layer visible");
+
+    let stale = session
+        .read_model()
+        .report_stale_state(&outcome.before_fingerprint, &outcome.after_fingerprint);
+    assert!(stale.is_stale());
+    assert!(!stale.semantic_stale);
+    assert!(stale.layout_stale);
+    assert!(!stale.assets_stale);
+    assert!(stale.full_document_stale);
+}
+
+#[test]
+fn document_session_revert_rebuilds_read_model_without_snapshot_undo() {
+    let (document, _, object_id) = scene_document();
+    let mut session = AuthoringDocumentSession::new(document);
+
+    session
+        .apply(AuthoringDocumentCommand::SetLayerLocked {
+            object_id: object_id.clone(),
+            locked: true,
+        })
+        .expect("lock layer");
+    assert!(
+        session
+            .read_model()
+            .composer_layer(&object_id)
+            .expect("layer indexed after lock")
+            .locked
+    );
+    session.clear_dirty_flags();
+
+    let outcome = session
+        .apply(AuthoringDocumentCommand::RevertLast)
+        .expect("revert lock delta");
+
+    assert!(matches!(
+        outcome.delta,
+        AuthoringDocumentDelta::Reverted { .. }
+    ));
+    assert!(
+        !session
+            .read_model()
+            .composer_layer(&object_id)
+            .expect("layer indexed after revert")
+            .locked
+    );
+    assert_eq!(session.undo_delta_count(), 0);
+    assert_eq!(session.redo_delta_count(), 1);
+    let flags = session.dirty_flags();
+    assert!(flags.layout_dirty);
+    assert!(flags.document_dirty);
+    assert!(!flags.validation_dirty);
+}

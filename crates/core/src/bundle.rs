@@ -156,7 +156,11 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
     })?;
 
     let assets_manifest_entries = copy_referenced_assets(&project_root, &assets_dir, &script)?;
-    let assets_manifest_json = serde_json::to_string_pretty(&assets_manifest_entries)
+    let assets_manifest_payload = serde_json::json!({
+        "manifest_version": 1,
+        "assets": &assets_manifest_entries,
+    });
+    let assets_manifest_json = serde_json::to_string_pretty(&assets_manifest_payload)
         .map_err(|e| invalid_bundle(format!("serialize assets manifest: {e}")))?;
     let assets_manifest_out = meta_dir.join("assets_manifest.json");
     fs::write(&assets_manifest_out, assets_manifest_json.as_bytes()).map_err(|e| {
@@ -249,4 +253,35 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
     })?;
 
     Ok(report)
+}
+
+pub fn export_executable_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
+    let target = spec.target_platform;
+    let report = export_bundle(spec)?;
+    let expected = match target {
+        ExportTargetPlatform::Windows => "game.exe",
+        ExportTargetPlatform::Linux | ExportTargetPlatform::Macos => "game",
+    };
+    if report.executable.as_deref() != Some(expected) {
+        let hint = match target {
+            ExportTargetPlatform::Windows => ".exe runtime_artifact",
+            ExportTargetPlatform::Linux => "linux runtime_artifact",
+            ExportTargetPlatform::Macos => "macos runtime_artifact",
+        };
+        return Err(invalid_bundle(format!(
+            "{} executable export requires a {hint} and must produce {expected}",
+            target.as_str()
+        )));
+    }
+    Ok(report)
+}
+
+pub fn export_windows_executable_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
+    if spec.target_platform != ExportTargetPlatform::Windows {
+        return Err(invalid_bundle(format!(
+            "windows executable export requires target_platform=windows, got {}",
+            spec.target_platform.as_str()
+        )));
+    }
+    export_executable_bundle(spec)
 }

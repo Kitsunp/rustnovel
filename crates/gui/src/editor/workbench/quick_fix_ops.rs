@@ -147,6 +147,7 @@ impl EditorWorkbench {
         let before = self.current_authoring_fingerprint();
         self.node_graph = previous_graph;
         self.node_graph.mark_modified();
+        self.rebuild_authoring_session_from_fields();
         let _ = self.sync_graph_to_script();
         self.record_editor_operation_now(
             "revert",
@@ -197,28 +198,27 @@ impl EditorWorkbench {
     fn apply_issue_fix_for_issue(&mut self, issue: &LintIssue, fix_id: &str) -> Result<(), String> {
         let before_graph = self.node_graph.clone();
 
-        let mut bus = visual_novel_engine::authoring::AuthoringCommandBus::with_history(
-            self.node_graph.authoring_graph().clone(),
-            self.operation_log.clone(),
-            self.verification_runs.clone(),
-        );
-        let outcome = bus.apply(
-            visual_novel_engine::authoring::AuthoringCommand::ApplyQuickFix {
-                issue: Box::new(issue.clone()),
-                fix_id: fix_id.to_string(),
-            },
+        let outcome = self.apply_authoring_document_command(
+            visual_novel_engine::authoring::AuthoringDocumentCommand::Graph(
+                visual_novel_engine::authoring::AuthoringCommand::ApplyQuickFix {
+                    issue: Box::new(issue.clone()),
+                    fix_id: fix_id.to_string(),
+                },
+            ),
         )?;
-        let (after_graph, operation_log, verification_runs) = bus.into_parts();
-        self.node_graph.replace_authoring_graph(after_graph);
-        self.operation_log = operation_log;
-        self.verification_runs = verification_runs;
+        let visual_novel_engine::authoring::AuthoringDocumentDelta::Graph(delta) = outcome.delta
+        else {
+            return Err("document session returned an unexpected quick-fix delta".to_string());
+        };
         let visual_novel_engine::authoring::AuthoringDelta::QuickFixApplied {
             before_sha256,
             after_sha256,
             ..
-        } = outcome.delta
+        } = *delta
         else {
-            return Err("command bus returned an unexpected quick-fix delta".to_string());
+            return Err(
+                "document session returned an unexpected quick-fix graph delta".to_string(),
+            );
         };
         let operation_id = outcome.operation.operation_id.clone();
         self.last_operation_fingerprint = self.current_authoring_fingerprint();

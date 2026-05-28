@@ -93,6 +93,34 @@ label start:
 }
 
 #[test]
+fn loaded_example_project_can_prepare_player_mode() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+    let manifest_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("examples")
+        .join("scripts")
+        .join("project.vnm");
+
+    workbench
+        .load_project_with_status(manifest_path, false)
+        .expect("example project should load");
+    let prepared = workbench.prepare_player_mode();
+    let toast = workbench
+        .toast
+        .as_ref()
+        .map(|toast| toast.message.as_str())
+        .unwrap_or("<no toast>");
+
+    assert!(prepared, "example project must enter Play mode: {toast}");
+    assert!(
+        workbench.engine.is_some(),
+        "player engine should remain available after preparing Play mode"
+    );
+}
+
+#[test]
 fn load_project_with_status_ignores_locales_outside_locale_root() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);

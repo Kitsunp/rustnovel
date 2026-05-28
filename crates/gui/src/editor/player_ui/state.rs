@@ -1,5 +1,8 @@
 use super::render::byte_index_for_char;
-use visual_novel_engine::runtime::{Engine, EventCompiled};
+use visual_novel_engine::{
+    runtime::{Engine, EngineState, EventCompiled},
+    PlayerMenuTabKind,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SkipMode {
@@ -15,6 +18,7 @@ pub struct PlayerSessionState {
     pub autoplay_enabled: bool,
     pub autoplay_delay_ms: u64,
     pub text_chars_per_second: f32,
+    pub advance_on_text_panel_click: bool,
     pub skip_mode: SkipMode,
     pub bgm_volume: f32,
     pub sfx_volume: f32,
@@ -24,6 +28,10 @@ pub struct PlayerSessionState {
     pub voice_muted: bool,
     pub last_audio_event: Option<String>,
     pub last_audio_error: Option<String>,
+    pub show_menu: bool,
+    pub menu_initialized: bool,
+    pub menu_tab: PlayerMenuTabKind,
+    pub quick_save_state: Option<EngineState>,
     current_ip: Option<u32>,
     line_started_at_sec: f64,
     last_auto_step_at_sec: Option<f64>,
@@ -37,6 +45,7 @@ impl Default for PlayerSessionState {
             autoplay_enabled: false,
             autoplay_delay_ms: 1200,
             text_chars_per_second: 45.0,
+            advance_on_text_panel_click: true,
             skip_mode: SkipMode::Off,
             bgm_volume: 1.0,
             sfx_volume: 1.0,
@@ -46,6 +55,10 @@ impl Default for PlayerSessionState {
             voice_muted: false,
             last_audio_event: None,
             last_audio_error: None,
+            show_menu: false,
+            menu_initialized: false,
+            menu_tab: PlayerMenuTabKind::Saves,
+            quick_save_state: None,
             current_ip: None,
             line_started_at_sec: 0.0,
             last_auto_step_at_sec: None,

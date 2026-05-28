@@ -139,6 +139,9 @@ enum Command {
         /// Output layout version stamped in report.
         #[arg(long, default_value_t = 1)]
         layout_version: u16,
+        /// Fail unless the bundle produces a top-level native executable (game.exe on Windows, game on Linux/macOS).
+        #[arg(long)]
+        require_executable: bool,
     },
 }
 
@@ -308,16 +311,20 @@ fn main() -> Result<()> {
             integrity,
             hmac_key,
             layout_version,
-        } => package::package_project(ExportBundleSpec {
-            project_root: project,
-            output_root: output,
-            target_platform: target.into(),
-            entry_script,
-            runtime_artifact,
-            integrity: integrity.into(),
-            output_layout_version: layout_version,
-            hmac_key,
-        }),
+            require_executable,
+        } => package::package_project(
+            ExportBundleSpec {
+                project_root: project,
+                output_root: output,
+                target_platform: target.into(),
+                entry_script,
+                runtime_artifact,
+                integrity: integrity.into(),
+                output_layout_version: layout_version,
+                hmac_key,
+            },
+            require_executable,
+        ),
     }
 }
 

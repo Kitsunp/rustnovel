@@ -1,7 +1,7 @@
 use super::super::{AuthoringCommandBus, AuthoringDelta};
-use super::{AuthoringDocumentCommandBus, AuthoringDocumentDelta};
+use super::{AuthoringDocumentDelta, AuthoringDocumentSession};
 
-impl AuthoringDocumentCommandBus {
+impl AuthoringDocumentSession {
     pub(super) fn apply_inverse_delta(
         &mut self,
         delta: &AuthoringDocumentDelta,
@@ -40,10 +40,12 @@ impl AuthoringDocumentCommandBus {
     }
 
     fn apply_inverse_graph_delta(&mut self, delta: &AuthoringDelta) -> Result<(), String> {
-        let mut graph_bus = AuthoringCommandBus::new(self.document.graph.clone());
-        graph_bus.apply_inverse_delta(delta)?;
-        self.document.graph = graph_bus.graph().clone();
-        Ok(())
+        let graph = std::mem::take(&mut self.document.graph);
+        let mut graph_bus = AuthoringCommandBus::new(graph);
+        let result = graph_bus.apply_inverse_delta(delta);
+        let (graph, _, _) = graph_bus.into_parts();
+        self.document.graph = graph;
+        result
     }
 }
 

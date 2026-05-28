@@ -46,6 +46,11 @@ pub fn render_menu_bar(ui: &mut egui::Ui, workbench: &mut EditorWorkbench) {
             }
         });
         ui.menu_button("Tools", |ui| {
+            if ui.button("Player Menu Settings").clicked() {
+                workbench.show_player_menu_settings = true;
+                ui.close_menu();
+            }
+            ui.separator();
             if ui.button("Validate / Dry Run").clicked() {
                 workbench.run_dry_validation();
                 ui.close_menu();

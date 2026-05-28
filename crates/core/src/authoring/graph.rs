@@ -51,7 +51,7 @@ pub struct SceneProfile {
     pub poses: Vec<CharacterPoseBinding>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct NodeGraph {
     nodes: Vec<(u32, StoryNode, AuthoringPosition)>,
     connections: Vec<GraphConnection>,

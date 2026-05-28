@@ -10,7 +10,8 @@ use std::collections::BTreeSet;
 pub use visual_novel_engine::authoring::{GraphConnection, SceneProfile};
 use visual_novel_engine::{
     authoring::{
-        AuthoringCommand, AuthoringCommandBus, AuthoringDelta, AuthoringPosition,
+        AuthoringCommand, AuthoringDelta, AuthoringDocument, AuthoringDocumentCommand,
+        AuthoringDocumentDelta, AuthoringDocumentSession, AuthoringPosition,
         NodeGraph as AuthoringGraph,
     },
     runtime::ScriptRaw,
@@ -82,12 +83,17 @@ pub struct NodeGraph {
     /// Last semantic editor operation inferred at graph level.
     #[serde(skip)]
     pub operation_hint: Option<GraphOperationHint>,
+    /// Persistent core session used by graph-local editor commands.
+    #[serde(skip, default = "default_authoring_session")]
+    authoring_session: AuthoringDocumentSession,
 }
 
 impl Default for NodeGraph {
     fn default() -> Self {
+        let authoring = AuthoringGraph::new();
+        let authoring_session = authoring_session_for_graph(&authoring);
         Self {
-            authoring: AuthoringGraph::new(),
+            authoring,
             selected: None,
             selected_nodes: BTreeSet::new(),
             pan: egui::Vec2::ZERO,
@@ -100,6 +106,7 @@ impl Default for NodeGraph {
             marquee_current: None,
             context_menu: None,
             operation_hint: None,
+            authoring_session,
         }
     }
 }
@@ -117,7 +124,7 @@ impl NodeGraph {
             node,
             position: AuthoringPosition::new(pos.x, pos.y),
         })
-        .expect("next GUI node id should be accepted by AuthoringCommandBus");
+        .expect("next GUI node id should be accepted by AuthoringDocumentSession");
         self.queue_operation_hint(
             "node_created",
             format!("Created node {id}"),
@@ -361,8 +368,10 @@ impl NodeGraph {
     }
 
     pub fn from_authoring_graph(authoring: AuthoringGraph) -> Self {
+        let authoring_session = authoring_session_for_graph(&authoring);
         Self {
             authoring,
+            authoring_session,
             ..Self::default()
         }
     }
@@ -372,14 +381,23 @@ impl NodeGraph {
     }
 
     pub fn replace_authoring_graph(&mut self, authoring: AuthoringGraph) {
+        self.authoring_session = authoring_session_for_graph(&authoring);
         self.authoring = authoring;
     }
 
     fn apply_authoring_command(&mut self, command: AuthoringCommand) -> Option<AuthoringDelta> {
-        let mut bus = AuthoringCommandBus::new(self.authoring.clone());
-        let outcome = bus.apply(command).ok()?;
-        self.authoring = bus.graph().clone();
-        Some(outcome.delta)
+        if self.authoring_session.document().graph != self.authoring {
+            self.authoring_session = authoring_session_for_graph(&self.authoring);
+        }
+        let outcome = self
+            .authoring_session
+            .apply(AuthoringDocumentCommand::Graph(command))
+            .ok()?;
+        self.authoring = self.authoring_session.document().graph.clone();
+        let AuthoringDocumentDelta::Graph(delta) = outcome.delta else {
+            return None;
+        };
+        Some(*delta)
     }
 
     pub fn toggle_multi_selection(&mut self, node_id: u32) {
@@ -500,6 +518,14 @@ impl NodeGraph {
             self.selected_nodes.iter().copied().collect()
         }
     }
+}
+
+fn default_authoring_session() -> AuthoringDocumentSession {
+    authoring_session_for_graph(&AuthoringGraph::new())
+}
+
+fn authoring_session_for_graph(authoring: &AuthoringGraph) -> AuthoringDocumentSession {
+    AuthoringDocumentSession::new(AuthoringDocument::new(authoring.clone()))
 }
 
 fn default_zoom() -> f32 {
