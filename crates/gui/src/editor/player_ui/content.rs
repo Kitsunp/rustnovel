@@ -7,6 +7,19 @@ use visual_novel_engine::runtime::{AudioCommand, ChoiceOptionCompiled, Engine};
 use super::super::super::node_types::ToastState;
 use super::super::state::PlayerSessionState;
 
+pub struct DialogueOverlayContext<'a> {
+    pub speaker: &'a str,
+    pub text: &'a str,
+    pub now_sec: f64,
+    pub advance_on_text_panel_click: bool,
+}
+
+pub struct ChoiceOverlayContent<'a> {
+    pub prompt: &'a str,
+    pub localized_options: &'a [String],
+    pub options: &'a [ChoiceOptionCompiled],
+}
+
 pub fn transition_kind_label(kind: u8) -> &'static str {
     match kind {
         0 => "fade",
@@ -153,11 +166,14 @@ pub fn render_dialogue_overlay(
     ctx: &egui::Context,
     player: &mut PlayerSessionState,
     geometry: crate::editor::scene_stage::StageGeometry,
-    speaker: &str,
-    text: &str,
-    now_sec: f64,
-    advance_on_text_panel_click: bool,
+    dialogue: DialogueOverlayContext<'_>,
 ) -> bool {
+    let DialogueOverlayContext {
+        speaker,
+        text,
+        now_sec,
+        advance_on_text_panel_click,
+    } = dialogue;
     let rendered_text = player.visible_text(text, now_sec);
     let text_complete = player.is_text_fully_revealed(text, now_sec);
     let rect = crate::player_overlay::dialogue_overlay_rect(geometry.stage_rect);
@@ -207,17 +223,16 @@ pub fn render_dialogue_overlay(
         });
     });
 
-    if advance_on_text_panel_click {
-        if ui
+    if advance_on_text_panel_click
+        && ui
             .interact(
                 rect,
                 egui::Id::new("player_dialogue_overlay"),
                 egui::Sense::click(),
             )
             .clicked()
-        {
-            reveal_or_advance_dialogue(player, text, now_sec, text_complete, &mut should_advance);
-        }
+    {
+        reveal_or_advance_dialogue(player, text, now_sec, text_complete, &mut should_advance);
     }
 
     if !text_complete {
@@ -274,11 +289,14 @@ pub fn render_choice_overlay(
     geometry: crate::editor::scene_stage::StageGeometry,
     engine: &mut Engine,
     toast: &mut Option<ToastState>,
-    prompt: &str,
-    localized_options: &[String],
-    options: &[ChoiceOptionCompiled],
+    content: ChoiceOverlayContent<'_>,
     audio_commands: &mut Vec<AudioCommand>,
 ) {
+    let ChoiceOverlayContent {
+        prompt,
+        localized_options,
+        options,
+    } = content;
     let option_labels = options
         .iter()
         .enumerate()
@@ -395,17 +413,16 @@ pub fn render_scene_overlay(
             }
         });
     });
-    if advance_on_text_panel_click {
-        if ui
+    if advance_on_text_panel_click
+        && ui
             .interact(
                 rect,
                 egui::Id::new("editor_player_scene_overlay"),
                 egui::Sense::click(),
             )
             .clicked()
-        {
-            should_advance = true;
-        }
+    {
+        should_advance = true;
     }
 
     if player.autoplay_ready(now_sec) {

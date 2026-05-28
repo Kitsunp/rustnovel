@@ -58,6 +58,8 @@ impl AuthoringDocumentSession {
             AuthoringDocumentDelta::Graph(Box::new(outcome.delta)),
             DocumentApplyMetadata {
                 kind,
+                diagnostic_id: outcome.operation.diagnostic_id,
+                diagnostic_target: outcome.operation.diagnostic_target,
                 field_paths: outcome
                     .operation
                     .field_paths
@@ -91,6 +93,8 @@ impl AuthoringDocumentSession {
             },
             DocumentApplyMetadata {
                 kind: OperationKind::LayerVisibilityChanged,
+                diagnostic_id: None,
+                diagnostic_target: None,
                 field_paths: vec![format!("composer.layers[{object_id}].visible")],
                 targets: vec![DiagnosticTarget::Graph],
                 before_value: json_string(&before),
@@ -119,6 +123,8 @@ impl AuthoringDocumentSession {
             },
             DocumentApplyMetadata {
                 kind: OperationKind::LayerLockChanged,
+                diagnostic_id: None,
+                diagnostic_target: None,
                 field_paths: vec![format!("composer.layers[{object_id}].locked")],
                 targets: vec![DiagnosticTarget::Graph],
                 before_value: json_string(&before),
@@ -148,6 +154,8 @@ impl AuthoringDocumentSession {
             },
             DocumentApplyMetadata {
                 kind: OperationKind::FieldEdited,
+                diagnostic_id: None,
+                diagnostic_target: None,
                 field_paths: vec![format!("composer.background_fit[{node_id}]")],
                 targets: vec![DiagnosticTarget::Graph],
                 before_value: json_string(&before),
@@ -170,6 +178,8 @@ impl AuthoringDocumentSession {
             },
             DocumentApplyMetadata {
                 kind: OperationKind::FieldEdited,
+                diagnostic_id: None,
+                diagnostic_target: None,
                 field_paths: vec![format!("composer.background_fit[{node_id}]")],
                 targets: vec![DiagnosticTarget::Graph],
                 before_value: json_string(&Some(before)),

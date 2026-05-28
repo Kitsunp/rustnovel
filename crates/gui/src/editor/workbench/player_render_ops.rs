@@ -30,15 +30,21 @@ impl EditorWorkbench {
             image_failures: &mut self.composer_image_failures,
             resource_service: &mut self.resource_service,
         };
+        let localization = crate::editor::player_ui::PlayerLocalizationContext {
+            locale: &mut self.player_locale,
+            catalog: &self.localization_catalog,
+        };
+        let mut player_context = crate::editor::player_ui::PlayerUiContext {
+            localization,
+            menu_config: &player_menu,
+            visual: &mut visual_context,
+        };
         let audio_commands = crate::editor::player_ui::render_player_ui(
             &mut self.engine,
             &mut self.toast,
             &mut self.player_state,
-            &mut self.player_locale,
-            &self.localization_catalog,
-            &player_menu,
             ctx,
-            &mut visual_context,
+            &mut player_context,
         );
         self.apply_player_audio_commands(audio_commands);
     }

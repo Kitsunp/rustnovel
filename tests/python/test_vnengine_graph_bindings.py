@@ -19,6 +19,15 @@ def workspace_tempdir(name: str):
         shutil.rmtree(root, ignore_errors=True)
 
 
+def minimal_pe_exe() -> bytes:
+    payload = bytearray(128)
+    payload[0:2] = b"MZ"
+    payload[0x3C:0x40] = (0x40).to_bytes(4, "little")
+    payload[0x40:0x44] = b"PE\0\0"
+    payload[0x44:0x46] = (0x8664).to_bytes(2, "little")
+    return bytes(payload)
+
+
 class GuiBindingTests(unittest.TestCase):
     def test_run_visual_novel_rejects_invalid_json(self):
         import visual_novel_engine as vn
@@ -81,7 +90,8 @@ class GuiBindingTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            (project / "runtime" / "vn-runtime.exe").write_bytes(b"fake-exe")
+            runtime_bytes = minimal_pe_exe()
+            (project / "runtime" / "vn-runtime.exe").write_bytes(runtime_bytes)
 
             out = root / "dist"
             report = json.loads(
@@ -94,7 +104,7 @@ class GuiBindingTests(unittest.TestCase):
 
             self.assertEqual(report["runtime_artifact"], "runtime/vn-runtime.exe")
             self.assertEqual(report["executable"], "game.exe")
-            self.assertEqual((out / "game.exe").read_bytes(), b"fake-exe")
+            self.assertEqual((out / "game.exe").read_bytes(), runtime_bytes)
 
     def test_node_graph_search_and_bookmarks(self):
         import visual_novel_engine as vn

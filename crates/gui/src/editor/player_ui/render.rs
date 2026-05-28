@@ -35,38 +35,35 @@ pub struct PlayerVisualContext<'a> {
     pub resource_service: &'a mut EditorResourceService,
 }
 
-struct PlayerLocalizationContext<'a> {
-    locale: &'a mut String,
-    catalog: &'a LocalizationCatalog,
+pub struct PlayerLocalizationContext<'a> {
+    pub locale: &'a mut String,
+    pub catalog: &'a LocalizationCatalog,
+}
+
+pub struct PlayerUiContext<'a, 'visual> {
+    pub localization: PlayerLocalizationContext<'a>,
+    pub menu_config: &'a PlayerMenuConfig,
+    pub visual: &'a mut PlayerVisualContext<'visual>,
+}
+
+struct PreviewMenuRuntime<'a> {
+    engine: &'a mut Engine,
+    toast: &'a mut Option<ToastState>,
+    player: &'a mut PlayerSessionState,
+    audio_commands: &'a mut Vec<AudioCommand>,
 }
 
 pub fn render_player_ui(
     engine: &mut Option<Engine>,
     toast: &mut Option<ToastState>,
     player: &mut PlayerSessionState,
-    player_locale: &mut String,
-    localization_catalog: &LocalizationCatalog,
-    menu_config: &PlayerMenuConfig,
     ctx: &egui::Context,
-    visual: &mut PlayerVisualContext<'_>,
+    context: &mut PlayerUiContext<'_, '_>,
 ) -> Vec<AudioCommand> {
     let mut audio_commands = Vec::new();
     egui::CentralPanel::default().show(ctx, |ui| {
         if let Some(ref mut eng) = engine {
-            let mut localization = PlayerLocalizationContext {
-                locale: player_locale,
-                catalog: localization_catalog,
-            };
-            audio_commands.extend(render_event_ui(
-                ui,
-                ctx,
-                eng,
-                toast,
-                player,
-                &mut localization,
-                menu_config,
-                visual,
-            ));
+            audio_commands.extend(render_event_ui(ui, ctx, eng, toast, player, context));
         } else {
             render_no_script_ui(ui);
         }
@@ -91,9 +88,7 @@ fn render_event_ui(
     engine: &mut Engine,
     toast: &mut Option<ToastState>,
     player: &mut PlayerSessionState,
-    localization: &mut PlayerLocalizationContext<'_>,
-    menu_config: &PlayerMenuConfig,
-    visual: &mut PlayerVisualContext<'_>,
+    context: &mut PlayerUiContext<'_, '_>,
 ) -> Vec<AudioCommand> {
     let mut audio_commands = Vec::new();
     let now_sec = ctx.input(|i| i.time);
@@ -103,19 +98,24 @@ fn render_event_ui(
         audio_commands.extend(engine.take_audio_commands());
     }
     if !player.menu_initialized {
-        let menu = menu_config.normalized();
+        let menu = context.menu_config.normalized();
         player.show_menu = menu.enabled && menu.open_on_start;
         player.menu_tab = menu.initial_tab();
         player.advance_on_text_panel_click = menu.advance_on_text_panel_click;
         player.menu_initialized = true;
     }
-    if menu_config.enabled && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if context.menu_config.enabled && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         player.show_menu = !player.show_menu;
     }
 
     controls::render_header_bar(ui, engine, toast, player, now_sec, &mut audio_commands);
     ui.separator();
-    controls::render_player_controls(ui, player, localization.locale, localization.catalog);
+    controls::render_player_controls(
+        ui,
+        player,
+        &mut *context.localization.locale,
+        context.localization.catalog,
+    );
     controls::render_backlog_window(ctx, engine, player);
     controls::render_choice_history_window(ctx, engine, player);
     ui.separator();
@@ -134,19 +134,20 @@ fn render_event_ui(
             }
 
             ui.add_space(14.0);
-            let stage_geometry = render_visual_state_for_event(ui, engine, &event, visual);
+            let stage_geometry =
+                render_visual_state_for_event(ui, engine, &event, &mut *context.visual);
             let advance_on_text_panel_click = player.advance_on_text_panel_click;
             match event {
                 EventCompiled::Dialogue(d) => {
                     let localized_speaker = localize_inline_value(
                         d.speaker.as_ref(),
-                        localization.locale,
-                        localization.catalog,
+                        context.localization.locale.as_str(),
+                        context.localization.catalog,
                     );
                     let localized_text = localize_inline_value(
                         d.text.as_ref(),
-                        localization.locale,
-                        localization.catalog,
+                        context.localization.locale.as_str(),
+                        context.localization.catalog,
                     );
                     let should_advance = if let Some(geometry) = stage_geometry {
                         content::render_dialogue_overlay(
@@ -154,10 +155,12 @@ fn render_event_ui(
                             ctx,
                             player,
                             geometry,
-                            &localized_speaker,
-                            &localized_text,
-                            now_sec,
-                            advance_on_text_panel_click,
+                            content::DialogueOverlayContext {
+                                speaker: &localized_speaker,
+                                text: &localized_text,
+                                now_sec,
+                                advance_on_text_panel_click,
+                            },
                         )
                     } else {
                         content::render_dialogue(
@@ -179,8 +182,8 @@ fn render_event_ui(
                 EventCompiled::Choice(c) => {
                     let localized_prompt = localize_inline_value(
                         c.prompt.as_ref(),
-                        localization.locale,
-                        localization.catalog,
+                        context.localization.locale.as_str(),
+                        context.localization.catalog,
                     );
                     let localized_options = c
                         .options
@@ -188,8 +191,8 @@ fn render_event_ui(
                         .map(|option| {
                             localize_inline_value(
                                 option.text.as_ref(),
-                                localization.locale,
-                                localization.catalog,
+                                context.localization.locale.as_str(),
+                                context.localization.catalog,
                             )
                         })
                         .collect::<Vec<_>>();
@@ -199,9 +202,11 @@ fn render_event_ui(
                             geometry,
                             engine,
                             toast,
-                            &localized_prompt,
-                            &localized_options,
-                            &c.options,
+                            content::ChoiceOverlayContent {
+                                prompt: &localized_prompt,
+                                localized_options: &localized_options,
+                                options: &c.options,
+                            },
                             &mut audio_commands,
                         );
                     } else {
@@ -285,7 +290,7 @@ fn render_event_ui(
         engine,
         toast,
         player,
-        menu_config,
+        context.menu_config,
         now_sec,
         &mut audio_commands,
     );
@@ -368,31 +373,31 @@ fn render_player_menu_preview(
                 visual_novel_engine::PlayerMenuTabsPosition::Top => {
                     render_preview_menu_tabs(ui, player, &menu);
                     ui.separator();
-                    render_scrollable_preview_menu_tab(
-                        ui,
-                        ctx,
+                    let mut runtime = PreviewMenuRuntime {
                         engine,
                         toast,
                         player,
-                        &menu,
-                        now_sec,
                         audio_commands,
-                    );
+                    };
+                    render_scrollable_preview_menu_tab(ui, ctx, &menu, now_sec, &mut runtime);
                 }
                 visual_novel_engine::PlayerMenuTabsPosition::Left => {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| render_preview_menu_tabs(ui, player, &menu));
                         ui.separator();
                         ui.vertical(|ui| {
-                            render_scrollable_preview_menu_tab(
-                                ui,
-                                ctx,
+                            let mut runtime = PreviewMenuRuntime {
                                 engine,
                                 toast,
                                 player,
+                                audio_commands,
+                            };
+                            render_scrollable_preview_menu_tab(
+                                ui,
+                                ctx,
                                 &menu,
                                 now_sec,
-                                audio_commands,
+                                &mut runtime,
                             )
                         });
                     });
@@ -405,12 +410,9 @@ fn render_player_menu_preview(
 fn render_scrollable_preview_menu_tab(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
-    engine: &mut Engine,
-    toast: &mut Option<ToastState>,
-    player: &mut PlayerSessionState,
     menu: &PlayerMenuConfig,
     now_sec: f64,
-    audio_commands: &mut Vec<AudioCommand>,
+    runtime: &mut PreviewMenuRuntime<'_>,
 ) {
     let viewport = player_menu_reference_viewport(ctx);
     let max_height = player_menu_content_height(viewport.y, &menu.style);
@@ -419,7 +421,15 @@ fn render_scrollable_preview_menu_tab(
         .max_height(max_height)
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            render_preview_menu_tab(ui, engine, toast, player, menu, now_sec, audio_commands)
+            render_preview_menu_tab(
+                ui,
+                &mut *runtime.engine,
+                &mut *runtime.toast,
+                &mut *runtime.player,
+                menu,
+                now_sec,
+                &mut *runtime.audio_commands,
+            )
         });
 }
 

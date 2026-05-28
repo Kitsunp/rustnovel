@@ -197,9 +197,7 @@ fn validate_node<F>(
             validate_scene_patch(id, patch, asset_exists, issues);
         }
         StoryNode::Jump { target } => {
-            let has_connected_target = graph
-                .connections()
-                .any(|conn| conn.from == id && conn.from_port == 0);
+            let has_connected_target = has_exportable_connected_target(graph, id);
             if !has_connected_target {
                 validate_jump_target(id, target, script_labels, issues);
             }
@@ -221,9 +219,7 @@ fn validate_node<F>(
                     .with_evidence_trace(),
                 );
             }
-            let has_connected_target = graph
-                .connections()
-                .any(|conn| conn.from == id && conn.from_port == 0);
+            let has_connected_target = has_exportable_connected_target(graph, id);
             if !has_connected_target {
                 validate_jump_target(id, target, script_labels, issues);
             }
@@ -356,6 +352,16 @@ fn validate_layout_position(id: u32, x: f32, y: f32, issues: &mut Vec<LintIssue>
             .with_evidence_trace(),
         );
     }
+}
+
+fn has_exportable_connected_target(graph: &NodeGraph, id: u32) -> bool {
+    graph.connections().any(|conn| {
+        conn.from == id
+            && conn.from_port == 0
+            && graph
+                .get_node(conn.to)
+                .is_some_and(|node| node.is_marker() || node.export_supported())
+    })
 }
 
 fn validate_jump_target(

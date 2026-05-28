@@ -645,17 +645,16 @@ impl VnApp {
                 }
             });
         });
-        if player_text_panel_advance_enabled(&self.config.player_menu, &self.prefs) {
-            if ui
+        if player_text_panel_advance_enabled(&self.config.player_menu, &self.prefs)
+            && ui
                 .interact(
                     rect,
                     egui::Id::new(("standalone_dialogue_overlay", self.engine.state().position)),
                     egui::Sense::click(),
                 )
                 .clicked()
-            {
-                should_advance = true;
-            }
+        {
+            should_advance = true;
         }
         if should_advance {
             self.advance();
@@ -754,17 +753,16 @@ impl VnApp {
                 }
             });
         });
-        if player_text_panel_advance_enabled(&self.config.player_menu, &self.prefs) {
-            if ui
+        if player_text_panel_advance_enabled(&self.config.player_menu, &self.prefs)
+            && ui
                 .interact(
                     rect,
                     egui::Id::new("standalone_player_scene_overlay"),
                     egui::Sense::click(),
                 )
                 .clicked()
-            {
-                should_advance = true;
-            }
+        {
+            should_advance = true;
         }
         if should_advance {
             self.advance();

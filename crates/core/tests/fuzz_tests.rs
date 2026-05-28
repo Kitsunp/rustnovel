@@ -1,9 +1,9 @@
 #[cfg(feature = "arbitrary")]
 mod fuzz {
-    use arbitrary::{Arbitrary, Unstructured};
+    use arbitrary::{Arbitrary as _, Unstructured};
     use visual_novel_engine::{
-        Engine, EventCompiled, EventRaw, ResourceLimiter, ScriptCompiled, ScriptRaw,
-        SecurityPolicy, VnError,
+        runtime::{Engine, EventCompiled, EventRaw, ScriptCompiled, ScriptRaw},
+        ResourceLimiter, SecurityPolicy, VnError,
     };
 
     fn fill_deterministic(buf: &mut [u8], seed: u64) {

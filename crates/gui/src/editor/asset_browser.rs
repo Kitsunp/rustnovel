@@ -434,7 +434,7 @@ pub fn asset_grid_rows(item_count: usize, columns: usize) -> usize {
         return 0;
     }
     let columns = columns.max(1);
-    (item_count + columns - 1) / columns
+    item_count.div_ceil(columns)
 }
 
 pub fn asset_card_size(available_width: f32) -> egui::Vec2 {

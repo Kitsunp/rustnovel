@@ -22,6 +22,8 @@ pub use types::{
 
 pub(super) struct DocumentApplyMetadata {
     pub(super) kind: OperationKind,
+    pub(super) diagnostic_id: Option<String>,
+    pub(super) diagnostic_target: Option<DiagnosticTarget>,
     pub(super) field_paths: Vec<String>,
     pub(super) targets: Vec<DiagnosticTarget>,
     pub(super) before_value: Option<String>,
@@ -145,6 +147,8 @@ impl AuthoringDocumentSession {
         for target in metadata.targets {
             operation = operation.with_target(target);
         }
+        operation.diagnostic_id = metadata.diagnostic_id;
+        operation.diagnostic_target = metadata.diagnostic_target;
         operation.before_value = metadata.before_value;
         operation.after_value = metadata.after_value;
         let verification = VerificationRun::from_diagnostics(

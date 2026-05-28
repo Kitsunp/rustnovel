@@ -4,6 +4,8 @@ pub mod render;
 pub mod state;
 
 pub use render::render_player_ui;
+pub use render::PlayerLocalizationContext;
+pub use render::PlayerUiContext;
 pub use render::PlayerVisualContext;
 pub use state::PlayerSessionState;
 #[allow(unused_imports)]
