@@ -2,16 +2,20 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use hmac::{Hmac, Mac};
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use visual_novel_engine::{
     authoring::{AuthoringDocument, AuthoringPosition, NodeGraph, StoryNode},
     build_export_plan, export_bundle,
     runtime::{
-        AudioActionRaw, DialogueRaw, EventRaw, ScenePatchRaw, SceneTransitionRaw, SceneUpdateRaw,
-        ScriptRaw,
+        AudioActionRaw, CharacterPlacementRaw, DialogueRaw, EventRaw, ScenePatchRaw,
+        SceneTransitionRaw, SceneUpdateRaw, ScriptRaw,
     },
     BundleIntegrity, ExportBundleSpec, ExportTargetPlatform, ProjectManifest,
 };
+
+type HmacSha256 = Hmac<Sha256>;
 
 fn create_escape_symlink(link: &Path, target: &Path) -> bool {
     #[cfg(unix)]
@@ -79,6 +83,178 @@ fn minimal_pe_exe() -> Vec<u8> {
     bytes
 }
 
+fn read_json(path: &Path) -> serde_json::Value {
+    serde_json::from_str(&fs::read_to_string(path).expect("json file")).expect("json")
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
+fn hmac_manifest_hex(key: &str, manifest_text: &str) -> String {
+    let mut mac = HmacSha256::new_from_slice(key.as_bytes()).expect("hmac key");
+    mac.update(manifest_text.as_bytes());
+    mac.finalize()
+        .into_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
+fn has_diagnostic_code(diagnostics: &[visual_novel_engine::ExportDiagnostic], code: &str) -> bool {
+    diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == code
+            && diagnostic.phase == "plan"
+            && diagnostic.trace_id.starts_with("export-")
+    })
+}
+
+#[test]
+fn export_package_flow_reports_manifest_hashes_and_hmac_agree() {
+    let (_tmp, project_root) = build_project_fixture();
+    let runtime_dir = project_root.join("runtime");
+    fs::create_dir_all(&runtime_dir).expect("runtime dir");
+    let runtime_bytes = minimal_pe_exe();
+    fs::write(runtime_dir.join("vn-runtime.exe"), &runtime_bytes).expect("runtime exe");
+    let out = project_root.join("dist_flow");
+    let spec = ExportBundleSpec {
+        project_root: project_root.clone(),
+        output_root: out.clone(),
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: Some(PathBuf::from("runtime/vn-runtime.exe")),
+        integrity: BundleIntegrity::HmacSha256,
+        output_layout_version: 1,
+        hmac_key: Some("flow-secret".to_string()),
+    };
+
+    let plan = build_export_plan(&spec).expect("plan");
+    assert_eq!(plan.target_platform, "windows");
+    assert_eq!(plan.executable.as_deref(), Some("game.exe"));
+    assert!(
+        plan.diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.trace_id.starts_with("export-")),
+        "every plan diagnostic should carry a trace id"
+    );
+
+    let report = export_bundle(spec).expect("bundle export");
+    let package_report = read_json(&out.join("meta/package_report.json"));
+    let compat_report = read_json(&out.join("meta/compat_report.json"));
+    let manifest_text =
+        fs::read_to_string(out.join("meta/bundle_file_manifest.json")).expect("file manifest");
+    let file_manifest: serde_json::Value =
+        serde_json::from_str(&manifest_text).expect("file manifest json");
+    let signature =
+        fs::read_to_string(out.join("meta/bundle.hmac_sha256")).expect("signature file");
+
+    assert_eq!(
+        package_report,
+        serde_json::to_value(&report).expect("report json")
+    );
+    assert_eq!(package_report["target_platform"], "windows");
+    assert_eq!(package_report["runtime_artifact"], "runtime/vn-runtime.exe");
+    assert_eq!(
+        package_report["runtime_artifact_sha256"],
+        sha256_hex(&runtime_bytes)
+    );
+    assert_eq!(package_report["executable"], "game.exe");
+    assert_eq!(package_report["bundle_hmac_sha256"], signature);
+
+    assert_eq!(
+        compat_report["target_platform"],
+        package_report["target_platform"]
+    );
+    assert_eq!(
+        compat_report["runtime_artifact"],
+        package_report["runtime_artifact"]
+    );
+    assert_eq!(
+        compat_report["runtime_artifact_sha256"],
+        package_report["runtime_artifact_sha256"]
+    );
+    assert_eq!(compat_report["executable"], package_report["executable"]);
+    assert_eq!(compat_report["expected_executable"], "game.exe");
+    assert_eq!(compat_report["graphics_backend"], "software");
+    assert_eq!(compat_report["bundle_hmac_sha256"], signature);
+    assert_eq!(
+        compat_report["bundle_file_manifest_sha256"],
+        sha256_hex(manifest_text.as_bytes())
+    );
+    assert_eq!(
+        signature,
+        hmac_manifest_hex("flow-secret", &manifest_text),
+        "signature must authenticate the exact manifest payload"
+    );
+
+    let manifest_files = file_manifest["files"].as_array().expect("manifest files");
+    let compat_hashes = compat_report["hashes"].as_array().expect("compat hashes");
+    assert_eq!(
+        compat_hashes, manifest_files,
+        "compat hashes must be the same manifest the HMAC signs"
+    );
+    assert!(manifest_files
+        .iter()
+        .any(|entry| entry["path"] == "game.exe"));
+    assert!(manifest_files
+        .iter()
+        .any(|entry| entry["path"] == "runtime/vn-runtime.exe"));
+    assert!(manifest_files.iter().any(|entry| {
+        entry["path"] == package_report["runtime_artifact"]
+            && entry["sha256"] == package_report["runtime_artifact_sha256"]
+    }));
+    assert!(manifest_files
+        .iter()
+        .any(|entry| entry["path"] == "assets/bgm/theme.ogg"));
+    assert!(!manifest_files
+        .iter()
+        .any(|entry| entry["path"] == "assets/bgm/unused.ogg"));
+
+    let mut total_size = 0u64;
+    for entry in manifest_files {
+        let rel = entry["path"].as_str().expect("entry path");
+        let bytes = fs::read(out.join(rel)).unwrap_or_else(|err| {
+            panic!("manifest entry '{rel}' should exist and be readable: {err}")
+        });
+        total_size += bytes.len() as u64;
+        assert_eq!(entry["size"], bytes.len() as u64, "size mismatch for {rel}");
+        assert_eq!(
+            entry["sha256"],
+            sha256_hex(&bytes),
+            "hash mismatch for {rel}"
+        );
+    }
+    assert_eq!(compat_report["total_size"], total_size);
+
+    let plan_trace_ids: Vec<_> = plan
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.trace_id.as_str())
+        .collect();
+    let report_trace_ids: Vec<_> = report
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.trace_id.as_str())
+        .collect();
+    assert_eq!(
+        report_trace_ids, plan_trace_ids,
+        "execute report must preserve plan diagnostic trace ids"
+    );
+    assert_eq!(compat_report["diagnostics"], package_report["diagnostics"]);
+    assert_eq!(package_report["smoke_result"]["status"], "not_run");
+    assert_eq!(
+        compat_report["smoke_result"],
+        package_report["smoke_result"]
+    );
+    assert!(package_report["smoke_result"]["trace_id"]
+        .as_str()
+        .expect("smoke trace id")
+        .starts_with("export-smoke-"));
+}
+
 #[test]
 fn export_bundle_builds_expected_layout_and_manifest() {
     let (_tmp, project_root) = build_project_fixture();
@@ -105,10 +281,11 @@ fn export_bundle_builds_expected_layout_and_manifest() {
         report.capabilities.audio_actions,
         vec!["bgm:play".to_string()]
     );
-    assert!(report
-        .capabilities
-        .warnings
-        .contains(&"audio_requires_runtime_audio_backend".to_string()));
+    assert!(report.capabilities.warnings.is_empty());
+    assert!(has_diagnostic_code(
+        &report.diagnostics,
+        "export.capability.audio_backend_required"
+    ));
     assert!(!Path::new(&out.join("scripts/main.vnc")).exists());
     assert!(Path::new(&out.join("scripts/compiled.vnc")).is_file());
     assert!(Path::new(&out.join("scripts/compiled.vnscript.json")).is_file());
@@ -133,6 +310,93 @@ fn export_bundle_builds_expected_layout_and_manifest() {
         .expect("assets map");
     assert!(assets.get("assets/bgm/theme.ogg").is_some());
     assert!(assets.get("assets/bgm/unused.ogg").is_none());
+
+    assert_eq!(
+        report.compat_report.as_deref(),
+        Some("meta/compat_report.json")
+    );
+    let compat_raw =
+        fs::read_to_string(out.join("meta/compat_report.json")).expect("compat report");
+    let compat: serde_json::Value = serde_json::from_str(&compat_raw).expect("compat json");
+    assert_eq!(compat["schema"], "vnengine.export_compat_report.v1");
+    assert_eq!(compat["target_platform"], "windows");
+    assert_eq!(compat["expected_executable"], "game.exe");
+    assert_eq!(compat["graphics_backend"], "software");
+    assert_eq!(compat["wgpu_fallback"], true);
+    assert_eq!(compat["assets_copied"], 1);
+    assert!(compat["total_size"].as_u64().expect("total size") > 0);
+    assert_eq!(compat["smoke_result"]["status"], "not_run");
+    let package_report = read_json(&out.join("meta/package_report.json"));
+    assert_eq!(package_report["smoke_result"], compat["smoke_result"]);
+    let diagnostics = compat["diagnostics"].as_array().expect("diagnostics");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "export.runtime_artifact.missing"
+            && diagnostic["phase"] == "plan"
+            && diagnostic["target"] == "windows"
+            && diagnostic["trace_id"]
+                .as_str()
+                .is_some_and(|trace_id| trace_id.starts_with("export-"))
+            && diagnostic["blocking_release"] == true
+    }));
+    let hashes = compat["hashes"].as_array().expect("hashes");
+    assert!(hashes
+        .iter()
+        .any(|entry| entry["path"] == "scripts/compiled.vnc"));
+}
+
+#[test]
+fn export_bundle_rejects_case_sensitive_asset_collisions() {
+    let tmp = TempDir::new().expect("temp dir");
+    let root = tmp.path().join("project");
+    fs::create_dir_all(root.join("assets")).expect("assets dir");
+    ProjectManifest::new("case-fixture", "qa")
+        .save(&root.join("project.vnm"))
+        .expect("manifest save");
+    fs::write(root.join("assets/Ava.png"), [1u8, 2, 3]).expect("upper asset");
+    fs::write(root.join("assets/ava.png"), [4u8, 5, 6]).expect("lower asset");
+    let script = ScriptRaw::new(
+        vec![EventRaw::Scene(SceneUpdateRaw {
+            background: Some("assets/Ava.png".to_string()),
+            music: None,
+            characters: vec![CharacterPlacementRaw {
+                name: "Ava".to_string(),
+                expression: Some("assets/ava.png".to_string()),
+                position: None,
+                x: None,
+                y: None,
+                scale: None,
+            }],
+        })],
+        BTreeMap::from([("start".to_string(), 0)]),
+    );
+    fs::write(
+        root.join("main.json"),
+        script.to_json().expect("script json"),
+    )
+    .expect("script");
+
+    let out = root.join("dist_case_collision");
+    let err = export_bundle(ExportBundleSpec {
+        project_root: root.clone(),
+        output_root: out.clone(),
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: None,
+        integrity: BundleIntegrity::None,
+        output_layout_version: 1,
+        hmac_key: None,
+    })
+    .expect_err("case collision must fail");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("case-sensitive asset collision"),
+        "{message}"
+    );
+    assert!(
+        !out.exists(),
+        "failed export must not publish a partial final bundle"
+    );
 }
 
 #[test]
@@ -157,9 +421,11 @@ fn export_plan_cli_py_gui_parity() {
     assert_eq!(cli_plan.script_sha256, py_plan.script_sha256);
     assert_eq!(cli_plan.layout, py_plan.layout);
     assert_eq!(cli_plan.capabilities, py_plan.capabilities);
-    assert!(cli_plan
-        .warnings
-        .contains(&"missing_runtime_artifact".to_string()));
+    assert!(cli_plan.warnings.is_empty());
+    assert!(has_diagnostic_code(
+        &cli_plan.diagnostics,
+        "export.runtime_artifact.missing"
+    ));
 }
 
 #[test]
@@ -207,15 +473,29 @@ fn export_plan_extcall_audio_transition_missing_runtime() {
     })
     .expect("plan");
 
-    assert!(plan
-        .warnings
-        .contains(&"missing_runtime_artifact".to_string()));
+    assert!(plan.warnings.is_empty());
     assert!(plan
         .capabilities
         .ext_call_commands
         .contains(&"plugin".to_string()));
     assert!(!plan.capabilities.audio_actions.is_empty());
     assert!(!plan.capabilities.transitions.is_empty());
+    assert!(has_diagnostic_code(
+        &plan.diagnostics,
+        "export.capability.ext_call_runtime_required"
+    ));
+    assert!(has_diagnostic_code(
+        &plan.diagnostics,
+        "export.capability.audio_backend_required"
+    ));
+    assert!(has_diagnostic_code(
+        &plan.diagnostics,
+        "export.capability.transition_support_required"
+    ));
+    assert!(has_diagnostic_code(
+        &plan.diagnostics,
+        "export.runtime_artifact.missing"
+    ));
 }
 
 #[test]
@@ -233,14 +513,15 @@ fn export_plan_capability_policy_contract() {
     })
     .expect("plan with policy errors");
 
-    assert!(plan
-        .errors
-        .iter()
-        .any(|error| error.contains("runtime artifact")));
-    assert!(plan
-        .errors
-        .iter()
-        .any(|error| error.contains("requires hmac_key")));
+    assert!(plan.errors.is_empty());
+    assert!(has_diagnostic_code(
+        &plan.diagnostics,
+        "export.runtime_artifact.unreadable"
+    ));
+    assert!(has_diagnostic_code(
+        &plan.diagnostics,
+        "export.integrity.hmac_key_missing"
+    ));
 }
 
 #[test]
@@ -314,14 +595,15 @@ fn export_bundle_reports_extcall_audio_transition_capabilities() {
         report.capabilities.transitions,
         vec!["dissolve".to_string()]
     );
-    assert!(report
-        .capabilities
-        .warnings
-        .contains(&"ext_call_requires_runtime_handler".to_string()));
-    assert!(report
-        .capabilities
-        .warnings
-        .contains(&"transitions_require_visual_runtime_support".to_string()));
+    assert!(report.capabilities.warnings.is_empty());
+    assert!(has_diagnostic_code(
+        &report.diagnostics,
+        "export.capability.ext_call_runtime_required"
+    ));
+    assert!(has_diagnostic_code(
+        &report.diagnostics,
+        "export.capability.transition_support_required"
+    ));
 }
 
 #[test]

@@ -231,6 +231,32 @@ fn linux_executable_bundle_writes_top_level_game_and_launcher() {
     assert!(launcher.contains("--require-manifest"));
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_executable_bundle_sets_game_permission_0755() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_tmp, project_root) = build_project_fixture();
+    let runtime_dir = project_root.join("runtime");
+    fs::create_dir_all(&runtime_dir).expect("runtime dir");
+    fs::write(runtime_dir.join("vn-runtime"), minimal_linux_elf()).expect("runtime");
+    let output_root = project_root.join("dist_linux_permissions");
+
+    export_executable_bundle(linux_spec(
+        project_root,
+        output_root.clone(),
+        Some(PathBuf::from("runtime/vn-runtime")),
+    ))
+    .expect("linux executable bundle");
+
+    let game_mode = fs::metadata(output_root.join("game"))
+        .expect("game metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(game_mode, 0o755);
+}
+
 #[test]
 fn linux_executable_bundle_rejects_non_elf_runtime() {
     let (_tmp, project_root) = build_project_fixture();

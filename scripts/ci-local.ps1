@@ -7,6 +7,7 @@ param(
         "sbom-policy",
         "fuzz-smoke",
         "python-tests",
+        "package-windows-smoke",
         "all"
     )]
     [string] $Job = "lint",
@@ -50,6 +51,20 @@ function Test-PythonModuleAvailable {
 
     & $PythonExe -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('$Module') else 1)" *> $null
     return $LASTEXITCODE -eq 0
+}
+
+function Write-Utf8NoBom {
+    param(
+        [string] $Path,
+        [string[]] $Lines
+    )
+
+    $content = [string]::Join([Environment]::NewLine, $Lines)
+    [System.IO.File]::WriteAllText(
+        $Path,
+        $content,
+        [System.Text.UTF8Encoding]::new($false)
+    )
 }
 
 function Invoke-LintJob {
@@ -223,33 +238,226 @@ function Invoke-PythonTestsJob {
             Join-Path $venv "bin/python"
         }
     }
-    Invoke-CiStep "install maturin" {
+    Invoke-CiStep "install Python test tools" {
         if ($useSystemPython) {
-            if (-not (Test-PythonModuleAvailable $pythonExe "maturin")) {
-                & $pythonExe -m pip install --user maturin
+            if ((-not (Test-PythonModuleAvailable $pythonExe "maturin")) -or (-not (Test-PythonModuleAvailable $pythonExe "pytest"))) {
+                & $pythonExe -m pip install --user maturin pytest
             }
         } else {
             & $pythonExe -m pip install --upgrade pip
-            & $pythonExe -m pip install maturin
+            & $pythonExe -m pip install maturin pytest
         }
     }
-    Invoke-CiStep "maturin develop" {
-        & $pythonExe -m maturin develop --manifest-path crates/py/Cargo.toml --features extension-module
+    Invoke-CiStep "maturin wheel install" {
+        $wheelDir = Join-Path (Get-Location) "target/py-wheels"
+        New-Item -ItemType Directory -Force -Path $wheelDir | Out-Null
+        & $pythonExe -m maturin build --manifest-path crates/py/Cargo.toml --features extension-module --out $wheelDir
+        if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) {
+            throw "maturin build failed with exit code $LASTEXITCODE"
+        }
+        $wheel = Get-ChildItem -LiteralPath $wheelDir -Filter "visual_novel_engine-*.whl" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+        if ($null -eq $wheel) {
+            throw "maturin build did not produce a visual_novel_engine wheel in $wheelDir"
+        }
+        & $pythonExe -m pip install --force-reinstall $wheel.FullName
     }
     Invoke-CiStep "python pytest" {
-        if (Test-IsWindowsHost) {
-            $builtDll = Join-Path "target/debug" "visual_novel_engine.dll"
-            $importablePyd = Join-Path "target/debug" "visual_novel_engine.pyd"
-            if (Test-Path $builtDll) {
-                Copy-Item -LiteralPath $builtDll -Destination $importablePyd -Force
-                $env:PYTHONPATH = "target/debug;python"
-            } else {
-                $env:PYTHONPATH = "python"
-            }
-        } else {
-            $env:PYTHONPATH = "python"
-        }
+        $env:PYTHONPATH = "python"
         & $pythonExe -m pytest tests/python/ -v --tb=short
+    }
+}
+
+function Invoke-PackageWindowsSmokeJob {
+    if (-not (Test-IsWindowsHost)) {
+        throw "package-windows-smoke is a Windows-local job; Linux package smoke runs in GitHub Actions"
+    }
+
+    $smokeRoot = Join-Path (Get-Location) "target/ci-local/package-windows-smoke"
+    $projectDir = Join-Path $smokeRoot "project"
+    $bundleDir = Join-Path $smokeRoot "bundle"
+    $logDir = Join-Path $smokeRoot "logs"
+
+    if (Test-Path $smokeRoot) {
+        Remove-Item -LiteralPath $smokeRoot -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $projectDir, $logDir | Out-Null
+
+    $manifest = @(
+        'manifest_schema_version = "1.0"',
+        '',
+        '[metadata]',
+        'name = "Package Windows Smoke"',
+        'author = "local"',
+        'version = "0.1.0"',
+        'description = "Native Windows package smoke fixture"',
+        '',
+        '[settings]',
+        'resolution = [960, 540]',
+        'default_language = "en"',
+        'supported_languages = ["en"]',
+        'entry_point = "main.json"',
+        '',
+        '[assets.backgrounds]',
+        '[assets.characters]',
+        '[assets.audio]'
+    )
+    Write-Utf8NoBom -Path (Join-Path $projectDir "project.vnm") -Lines $manifest
+    New-Item -ItemType Directory -Force -Path (Join-Path $projectDir "assets/backgrounds") | Out-Null
+    [System.IO.File]::WriteAllBytes(
+        (Join-Path $projectDir "assets/backgrounds/smoke.png"),
+        [System.Convert]::FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")
+    )
+
+    $script = @(
+        '{',
+        '  "script_schema_version": "1.0",',
+        '  "events": [',
+        '    {',
+        '      "type": "scene",',
+        '      "background": "assets/backgrounds/smoke.png",',
+        '      "characters": []',
+        '    },',
+        '    {',
+        '      "type": "dialogue",',
+        '      "speaker": "Narrator",',
+        '      "text": "Package Windows smoke"',
+        '    }',
+        '  ],',
+        '  "labels": {',
+        '    "start": 0',
+        '  }',
+        '}'
+    )
+    Write-Utf8NoBom -Path (Join-Path $projectDir "main.json") -Lines $script
+
+    Invoke-CiStep "build Windows runtime artifact" {
+        cargo build -p visual_novel_gui --bin vn_player --locked --verbose
+    }
+
+    $runtime = Join-Path (Get-Location) "target/debug/vn_player.exe"
+    if (-not (Test-Path $runtime)) {
+        throw "Missing Windows runtime artifact: $runtime"
+    }
+
+    $packageLog = Join-Path $logDir "package-windows-smoke.log"
+    Invoke-CiStep "vnengine package Windows smoke" {
+        cargo run -p vnengine_cli --bin vnengine -- --json package $projectDir `
+            --output $bundleDir `
+            --target windows `
+            --runtime-artifact $runtime `
+            --require-executable `
+            --integrity hmac-sha256 `
+            --hmac-key local-smoke `
+            --execute | Tee-Object -FilePath $packageLog
+    }
+
+    foreach ($relative in @(
+            "game.exe",
+            "meta/package_report.json",
+            "meta/bundle_file_manifest.json",
+            "meta/compat_report.json",
+            "meta/bundle.hmac_sha256"
+        )) {
+        $path = Join-Path $bundleDir $relative
+        if (-not (Test-Path $path)) {
+            throw "Package smoke missing expected artifact: $relative"
+        }
+    }
+
+    $envelope = Get-Content -Raw -LiteralPath $packageLog | ConvertFrom-Json
+    $report = Get-Content -Raw -LiteralPath (Join-Path $bundleDir "meta/package_report.json") | ConvertFrom-Json
+    $compat = Get-Content -Raw -LiteralPath (Join-Path $bundleDir "meta/compat_report.json") | ConvertFrom-Json
+    $manifestPath = Join-Path $bundleDir "meta/bundle_file_manifest.json"
+    $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+    $signature = Get-Content -Raw -LiteralPath (Join-Path $bundleDir "meta/bundle.hmac_sha256")
+    if (-not $envelope.ok -or $envelope.code -ne "ok") {
+        throw "Package smoke JSON envelope did not report success"
+    }
+    if ($envelope.data.schema -ne "vnengine.export_bundle_report.v1") {
+        throw "Package smoke JSON envelope did not return an export report"
+    }
+    if ($report.target_platform -ne "windows" -or $report.executable -ne "game.exe") {
+        throw "Unexpected package report target/executable"
+    }
+    $runtimeEntry = @($manifest.files | Where-Object { $_.path -eq $report.runtime_artifact }) | Select-Object -First 1
+    if ($null -eq $runtimeEntry) {
+        throw "Bundle manifest is missing runtime artifact entry: $($report.runtime_artifact)"
+    }
+    if ($report.runtime_artifact_sha256 -ne $runtimeEntry.sha256 -or $compat.runtime_artifact_sha256 -ne $runtimeEntry.sha256) {
+        throw "Runtime artifact sha256 disagrees between package report, compat report and bundle manifest"
+    }
+    if ($envelope.data.executable -ne $report.executable -or $envelope.data.bundle_hmac_sha256 -ne $report.bundle_hmac_sha256) {
+        throw "CLI JSON envelope and package_report.json disagree"
+    }
+    if ($compat.graphics_backend -ne "software" -or -not $compat.wgpu_fallback) {
+        throw "Compat report did not record software fallback contract"
+    }
+    if (-not $compat.bundle_file_manifest_sha256 -or $null -eq $compat.diagnostics) {
+        throw "Compat report is missing manifest hash or structured diagnostics"
+    }
+    if ($compat.bundle_hmac_sha256 -ne $signature -or $report.bundle_hmac_sha256 -ne $signature) {
+        throw "HMAC signature disagrees between report, compat report and signature file"
+    }
+
+    $manifestHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestPath).Hash.ToLowerInvariant()
+    if ($compat.bundle_file_manifest_sha256 -ne $manifestHash) {
+        throw "Compat report manifest hash does not match bundle_file_manifest.json"
+    }
+    $totalSize = 0
+    foreach ($entry in $manifest.files) {
+        $relativePath = $entry.path -replace '/', [System.IO.Path]::DirectorySeparatorChar
+        $path = Join-Path $bundleDir $relativePath
+        if (-not (Test-Path $path)) {
+            throw "Manifest entry is missing from bundle: $($entry.path)"
+        }
+        $item = Get-Item -LiteralPath $path
+        if ($item.Length -ne [int64]$entry.size) {
+            throw "Manifest size mismatch for $($entry.path)"
+        }
+        $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+        if ($hash -ne $entry.sha256) {
+            throw "Manifest sha256 mismatch for $($entry.path)"
+        }
+        $totalSize += $item.Length
+    }
+    if ([int64]$compat.total_size -ne [int64]$totalSize) {
+        throw "Compat total_size does not match manifest entries"
+    }
+
+    $smokeReportPath = Join-Path $bundleDir "meta/runtime_smoke_report.json"
+    $gameExe = Join-Path $bundleDir "game.exe"
+    Invoke-CiStep "vn_player Windows runtime smoke" {
+        & $gameExe --smoke --smoke-report $smokeReportPath
+    }
+
+    $smoke = Get-Content -Raw -LiteralPath $smokeReportPath | ConvertFrom-Json
+    $report = Get-Content -Raw -LiteralPath (Join-Path $bundleDir "meta/package_report.json") | ConvertFrom-Json
+    $compat = Get-Content -Raw -LiteralPath (Join-Path $bundleDir "meta/compat_report.json") | ConvertFrom-Json
+    if ($smoke.schema -ne "vnengine.player_runtime_smoke.v1" -or $smoke.status -ne "passed") {
+        throw "Runtime smoke did not produce a passed structured report"
+    }
+    if ($smoke.target_platform -ne "windows" -or $smoke.backend -ne "software") {
+        throw "Runtime smoke target/backend does not match package target"
+    }
+    if ($report.smoke_result.status -ne "passed" -or $compat.smoke_result.status -ne "passed") {
+        throw "Runtime smoke result was not propagated back into package and compat reports"
+    }
+    if ($report.smoke_result.trace_id -ne $smoke.smoke_result.trace_id -or $compat.smoke_result.trace_id -ne $smoke.smoke_result.trace_id) {
+        throw "Runtime smoke trace_id disagrees between smoke, package and compat reports"
+    }
+    $requiredSmokeCodes = @(
+        "export.runtime_smoke.asset_load",
+        "export.runtime_smoke.render_frame",
+        "export.runtime_smoke.advance_scene",
+        "export.runtime_smoke.close"
+    )
+    $smokeCodes = @($smoke.checks | ForEach-Object { $_.code })
+    foreach ($code in $requiredSmokeCodes) {
+        if ($smokeCodes -notcontains $code) {
+            throw "Runtime smoke missing check code: $code"
+        }
     }
 }
 
@@ -261,7 +469,8 @@ $jobs = if ($Job -eq "all") {
         "reproducible-smoke",
         "sbom-policy",
         "fuzz-smoke",
-        "python-tests"
+        "python-tests",
+        "package-windows-smoke"
     )
 } else {
     @($Job)
@@ -276,5 +485,6 @@ foreach ($selected in $jobs) {
         "sbom-policy" { Invoke-SbomPolicyJob }
         "fuzz-smoke" { Invoke-FuzzSmokeJob }
         "python-tests" { Invoke-PythonTestsJob }
+        "package-windows-smoke" { Invoke-PackageWindowsSmokeJob }
     }
 }

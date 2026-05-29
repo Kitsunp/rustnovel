@@ -54,8 +54,9 @@ pub use authoring::{
 };
 pub use bundle::{
     build_export_plan, export_bundle, export_executable_bundle, export_windows_executable_bundle,
-    BundleAssetEntry, BundleIntegrity, ExportBundleReport, ExportBundleSpec, ExportPlan,
-    ExportService, ExportTargetPlatform,
+    BundleAssetEntry, BundleIntegrity, ExportBundleReport, ExportBundleSpec, ExportCompatReport,
+    ExportDiagnostic, ExportPlan, ExportRuntimeSmokeCheck, ExportRuntimeSmokeResult, ExportService,
+    ExportTargetPlatform,
 };
 pub use error::{VnError, VnResult};
 pub use localization::{

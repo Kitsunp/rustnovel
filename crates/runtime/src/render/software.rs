@@ -41,6 +41,9 @@ impl<'a> SoftwareBackend<'a> {
 
 impl<'a> RenderBackend for SoftwareBackend<'a> {
     fn resize(&mut self, width: u32, height: u32) -> Result<(), String> {
+        if width == 0 || height == 0 {
+            return Ok(());
+        }
         self.pixels
             .resize_surface(width, height)
             .map_err(|err| format!("software resize surface failed: {err}"))?;

@@ -9,13 +9,13 @@ on:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev
+          sudo apt-get install -y libasound2-dev libudev-dev xvfb
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -37,14 +37,14 @@ jobs:
       - run: cargo audit -D warnings
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: lint
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev
+          sudo apt-get install -y libasound2-dev libudev-dev xvfb
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace --all-targets --locked --verbose
       - run: cargo build -p vnengine_py --profile python --features extension-module --locked --verbose
@@ -56,22 +56,192 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-2022]
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev
+          sudo apt-get install -y libasound2-dev libudev-dev xvfb
       - uses: dtolnay/rust-toolchain@stable
       - name: Cargo check
         run: cargo check --workspace --all-targets --locked
       - run: cargo test -p visual_novel_engine --locked --verbose
       - run: cargo test -p vnengine_runtime --locked --verbose
 
+  package-linux-smoke:
+    runs-on: ubuntu-24.04
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev xvfb
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Linux runtime artifact
+        run: cargo build -p visual_novel_gui --bin vn_player --locked --verbose
+      - name: Package Linux smoke bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_root="target/package-linux-smoke"
+          project="$smoke_root/project"
+          bundle="$smoke_root/bundle"
+          logs="$smoke_root/logs"
+          rm -rf "$smoke_root"
+          mkdir -p "$project" "$logs"
+          cat > "$project/project.vnm" <<'EOF'
+          manifest_schema_version = "1.0"
+
+          [metadata]
+          name = "Package Linux Smoke"
+          author = "CI"
+          version = "0.1.0"
+          description = "Native Linux package smoke fixture"
+
+          [settings]
+          resolution = [960, 540]
+          default_language = "en"
+          supported_languages = ["en"]
+          entry_point = "main.json"
+
+          [assets.backgrounds]
+          [assets.characters]
+          [assets.audio]
+          EOF
+          mkdir -p "$project/assets/backgrounds"
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
+
+          Path("target/package-linux-smoke/project/assets/backgrounds/smoke.png").write_bytes(
+              base64.b64decode(
+                  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+              )
+          )
+          PY
+          cat > "$project/main.json" <<'EOF'
+          {
+            "script_schema_version": "1.0",
+            "events": [
+              {
+                "type": "scene",
+                "background": "assets/backgrounds/smoke.png",
+                "characters": []
+              },
+              {
+                "type": "dialogue",
+                "speaker": "Narrator",
+                "text": "Package Linux smoke"
+              }
+            ],
+            "labels": {
+              "start": 0
+            }
+          }
+          EOF
+          cargo run -p vnengine_cli --bin vnengine -- --json package "$project" \
+            --output "$bundle" \
+            --target linux \
+            --runtime-artifact target/debug/vn_player \
+            --require-executable \
+            --integrity hmac-sha256 \
+            --hmac-key ci-smoke \
+            --execute | tee "$logs/package-linux-smoke.log"
+          test -f "$bundle/meta/package_report.json"
+          test -f "$bundle/meta/bundle_file_manifest.json"
+          test -f "$bundle/meta/compat_report.json"
+          test -x "$bundle/game"
+          mode="$(stat -c '%a' "$bundle/game")"
+          test "$mode" = "755"
+          VNENGINE_RENDER_BACKEND=software VNENGINE_FORCE_WGPU_FAILURE=1 \
+            xvfb-run -a "$bundle/game" --smoke --smoke-report "$bundle/meta/runtime_smoke_report.json"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          bundle = Path("target/package-linux-smoke/bundle")
+          envelope = json.loads(Path("target/package-linux-smoke/logs/package-linux-smoke.log").read_text())
+          report = json.loads((bundle / "meta/package_report.json").read_text())
+          compat = json.loads((bundle / "meta/compat_report.json").read_text())
+          smoke = json.loads((bundle / "meta/runtime_smoke_report.json").read_text())
+          manifest_bytes = (bundle / "meta/bundle_file_manifest.json").read_bytes()
+          manifest = json.loads(manifest_bytes)
+          signature = (bundle / "meta/bundle.hmac_sha256").read_text()
+          assert envelope["ok"] is True
+          assert envelope["code"] == "ok"
+          report_at_export = dict(report)
+          report_at_export["smoke_result"] = envelope["data"]["smoke_result"]
+          assert envelope["data"] == report_at_export
+          assert report["target_platform"] == "linux"
+          assert report["executable"] == "game"
+          assert report["compat_report"] == "meta/compat_report.json"
+          assert report["bundle_hmac_sha256"] == signature
+          runtime_entry = next(entry for entry in manifest["files"] if entry["path"] == report["runtime_artifact"])
+          assert report["runtime_artifact_sha256"] == runtime_entry["sha256"]
+          assert compat["target_platform"] == "linux"
+          assert compat["expected_executable"] == "game"
+          assert compat["runtime_artifact_sha256"] == report["runtime_artifact_sha256"]
+          assert compat["graphics_backend"] == "software"
+          assert compat["wgpu_fallback"] is True
+          assert compat["total_size"] > 0
+          assert compat["bundle_file_manifest_sha256"] == hashlib.sha256(manifest_bytes).hexdigest()
+          assert compat["bundle_hmac_sha256"] == signature
+          assert isinstance(compat["diagnostics"], list)
+          assert compat["hashes"] == manifest["files"]
+          assert smoke["schema"] == "vnengine.player_runtime_smoke.v1"
+          assert smoke["status"] == "passed"
+          assert smoke["target_platform"] == "linux"
+          assert smoke["backend"] == "software"
+          assert report["smoke_result"] == smoke["smoke_result"]
+          assert compat["smoke_result"] == smoke["smoke_result"]
+          smoke_codes = {check["code"] for check in smoke["checks"]}
+          assert {
+              "export.runtime_smoke.asset_load",
+              "export.runtime_smoke.render_frame",
+              "export.runtime_smoke.advance_scene",
+              "export.runtime_smoke.close",
+          }.issubset(smoke_codes)
+          assert any(entry["path"] == "game" for entry in manifest["files"])
+          total_size = 0
+          for entry in manifest["files"]:
+              path = bundle / entry["path"]
+              data = path.read_bytes()
+              total_size += len(data)
+              assert len(data) == entry["size"], entry["path"]
+              assert hashlib.sha256(data).hexdigest() == entry["sha256"], entry["path"]
+          assert total_size == compat["total_size"]
+          PY
+      - name: Upload Linux package smoke artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: package-linux-smoke
+          path: |
+            target/package-linux-smoke/bundle/**
+            target/package-linux-smoke/logs/**
+
+  runtime-headless-smoke:
+    runs-on: ubuntu-24.04
+    needs: lint
+    env:
+      VNENGINE_RENDER_BACKEND: software
+      VNENGINE_FORCE_WGPU_FAILURE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev xvfb
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Runtime tests under Xvfb with software backend
+        run: xvfb-run -a cargo test -p vnengine_runtime --locked --verbose
+
   reproducible-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: lint
     env:
       SOURCE_DATE_EPOCH: "1704067200"
@@ -97,7 +267,7 @@ jobs:
           cmp --silent /tmp/vn_first.rlib /tmp/vn_second.rlib
 
   sbom-policy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: lint
     steps:
       - uses: actions/checkout@v4
@@ -132,26 +302,26 @@ jobs:
           PY
 
   fuzz-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: lint
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev
+          sudo apt-get install -y libasound2-dev libudev-dev xvfb
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test -p visual_novel_engine --features arbitrary --test fuzz_tests --locked --verbose
 
   python-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: lint
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev
+          sudo apt-get install -y libasound2-dev libudev-dev xvfb
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
@@ -172,10 +342,11 @@ jobs:
           source .venv/bin/activate
           python -m pip install --upgrade pip
           python -m pip install maturin pytest
-      - name: Build and install Python module
+      - name: Build and install Python wheel
         run: |
           source .venv/bin/activate
-          maturin develop --manifest-path crates/py/Cargo.toml --features extension-module
+          maturin build --manifest-path crates/py/Cargo.toml --features extension-module --out target/py-wheels
+          python -m pip install --force-reinstall target/py-wheels/visual_novel_engine-*.whl
       - name: Run Python tests
         run: |
           source .venv/bin/activate

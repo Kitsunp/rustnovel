@@ -23,9 +23,7 @@ cargo audit
 
 echo ""
 echo "=== Ejecutando tests de Rust ==="
-cargo test -p visual_novel_engine --verbose
-cargo test -p vnengine_runtime --verbose
-cargo test -p visual_novel_gui --verbose
+cargo test --workspace --all-targets --locked --verbose
 
 echo ""
 echo "=== Ejecutando tests de Rust con feature Python (embed) ==="
@@ -53,13 +51,12 @@ fi
 
 source .venv/bin/activate
 
-if ! command -v maturin &> /dev/null; then
-    echo "maturin no instalado, instalando..."
-    python -m pip install --upgrade pip
-    python -m pip install maturin pytest
-fi
+python -m pip install --upgrade pip
+python -m pip install maturin pytest
 
-maturin develop --manifest-path crates/py/Cargo.toml --features extension-module
+mkdir -p target/py-wheels
+maturin build --manifest-path crates/py/Cargo.toml --features extension-module --out target/py-wheels
+python -m pip install --force-reinstall target/py-wheels/visual_novel_engine-*.whl
 
 echo ""
 echo "=== Ejecutando tests de Python ==="

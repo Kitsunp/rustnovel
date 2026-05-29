@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shutil
 import unittest
@@ -113,8 +114,24 @@ class GuiBindingTests(unittest.TestCase):
             report = report_obj.to_dict()
 
             self.assertEqual(report["runtime_artifact"], "runtime/vn-runtime.exe")
+            self.assertEqual(
+                report["runtime_artifact_sha256"],
+                hashlib.sha256(runtime_bytes).hexdigest(),
+            )
             self.assertEqual(report["executable"], "game.exe")
+            self.assertEqual(report["smoke_result"]["status"], "not_run")
+            self.assertTrue(
+                report["smoke_result"]["trace_id"].startswith("export-smoke-")
+            )
             self.assertEqual((out / "game.exe").read_bytes(), runtime_bytes)
+            package_report = json.loads((out / "meta/package_report.json").read_text())
+            compat_report = json.loads((out / "meta/compat_report.json").read_text())
+            self.assertEqual(
+                compat_report["runtime_artifact_sha256"],
+                package_report["runtime_artifact_sha256"],
+            )
+            self.assertEqual(package_report["smoke_result"], report["smoke_result"])
+            self.assertEqual(compat_report["smoke_result"], report["smoke_result"])
 
     def test_node_graph_search_and_bookmarks(self):
         import visual_novel_engine as vn

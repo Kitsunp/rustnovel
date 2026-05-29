@@ -108,8 +108,15 @@ pub struct ThemeEditorDraft {
     pub preview_applied: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExportWizardKind {
+    ExecutableGame,
+    CompiledScriptBundle,
+}
+
 #[derive(Clone, Debug)]
 pub struct ExportWizardState {
+    pub export_kind: ExportWizardKind,
     pub target: visual_novel_engine::ExportTargetPlatform,
     pub output_root: String,
     pub runtime_artifact: String,
@@ -121,11 +128,13 @@ pub struct ExportWizardState {
     pub last_error: Option<String>,
     pub last_report: Option<visual_novel_engine::ExportBundleReport>,
     pub dry_run: bool,
+    pub logs: Vec<String>,
 }
 
 impl Default for ExportWizardState {
     fn default() -> Self {
         Self {
+            export_kind: ExportWizardKind::ExecutableGame,
             target: if cfg!(target_os = "windows") {
                 visual_novel_engine::ExportTargetPlatform::Windows
             } else if cfg!(target_os = "macos") {
@@ -143,6 +152,7 @@ impl Default for ExportWizardState {
             last_error: None,
             last_report: None,
             dry_run: true,
+            logs: Vec::new(),
         }
     }
 }

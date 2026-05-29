@@ -5,6 +5,7 @@ use crate::error::VnResult;
 
 use super::helpers::{
     canonicalize_within_root, invalid_bundle, normalize_path_display, sanitize_relative_path,
+    sha256_hex,
 };
 use super::ExportTargetPlatform;
 
@@ -12,6 +13,7 @@ use super::ExportTargetPlatform;
 pub(super) struct CopiedRuntimeArtifact {
     pub(super) rel_path: String,
     pub(super) output_path: PathBuf,
+    pub(super) sha256: String,
 }
 
 pub(super) fn copy_runtime_artifact(
@@ -49,10 +51,17 @@ pub(super) fn copy_runtime_artifact(
             destination.display()
         ))
     })?;
+    let bytes = fs::read(&destination).map_err(|e| {
+        invalid_bundle(format!(
+            "read copied runtime artifact '{}': {e}",
+            destination.display()
+        ))
+    })?;
 
     Ok(Some(CopiedRuntimeArtifact {
         rel_path: normalize_path_display(Path::new("runtime").join(file_name).as_path()),
         output_path: destination,
+        sha256: sha256_hex(&bytes),
     }))
 }
 

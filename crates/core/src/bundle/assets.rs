@@ -18,9 +18,17 @@ pub(super) fn copy_referenced_assets(
     assets_output_root: &Path,
     script: &ScriptRaw,
 ) -> VnResult<BTreeMap<String, BundleAssetEntry>> {
+    if let Some((asset, existing)) = detect_asset_case_collisions(project_root, script)?.pop() {
+        return Err(invalid_bundle(format!(
+            "case-sensitive asset collision: '{}' conflicts with '{}'",
+            asset, existing
+        )));
+    }
+
     let mut manifest = BTreeMap::new();
     for asset_ref in collect_script_asset_refs(script) {
         let (source, destination_rel) = resolve_asset_reference(project_root, &asset_ref)?;
+        let manifest_path = normalize_path_display(&destination_rel);
         let destination = assets_output_root.join(
             destination_rel
                 .strip_prefix("assets")
@@ -42,7 +50,7 @@ pub(super) fn copy_referenced_assets(
             invalid_bundle(format!("read copied asset '{}': {e}", source.display()))
         })?;
         manifest.insert(
-            normalize_path_display(&destination_rel),
+            manifest_path,
             BundleAssetEntry {
                 sha256: sha256_hex(&bytes),
                 size: bytes.len() as u64,
@@ -51,6 +59,27 @@ pub(super) fn copy_referenced_assets(
     }
 
     Ok(manifest)
+}
+
+pub(super) fn detect_asset_case_collisions(
+    project_root: &Path,
+    script: &ScriptRaw,
+) -> VnResult<Vec<(String, String)>> {
+    let mut seen_destinations: BTreeMap<String, String> = BTreeMap::new();
+    let mut collisions = Vec::new();
+    for asset_ref in collect_script_asset_refs(script) {
+        let (_, destination_rel) = resolve_asset_reference(project_root, &asset_ref)?;
+        let manifest_path = normalize_path_display(&destination_rel);
+        let case_folded = manifest_path.to_lowercase();
+        if let Some(existing) = seen_destinations.get(&case_folded) {
+            if existing != &manifest_path {
+                collisions.push((manifest_path, existing.clone()));
+            }
+        } else {
+            seen_destinations.insert(case_folded, manifest_path);
+        }
+    }
+    Ok(collisions)
 }
 
 fn resolve_asset_reference(project_root: &Path, asset_ref: &str) -> VnResult<(PathBuf, PathBuf)> {

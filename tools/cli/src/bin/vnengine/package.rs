@@ -68,5 +68,8 @@ pub(super) fn package_project(spec: ExportBundleSpec, require_executable: bool) 
     if let Some(signature) = report.bundle_hmac_sha256 {
         println!("bundle_hmac_sha256={signature}");
     }
+    if let Some(compat_report) = report.compat_report {
+        println!("compat_report={compat_report}");
+    }
     Ok(())
 }

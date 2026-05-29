@@ -397,6 +397,21 @@ impl EditorWorkbench {
             .resizable(true)
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
+                    ui.label("Mode");
+                    ui.selectable_value(
+                        &mut self.export_wizard.export_kind,
+                        ExportWizardKind::ExecutableGame,
+                        "Executable game",
+                    );
+                    ui.selectable_value(
+                        &mut self.export_wizard.export_kind,
+                        ExportWizardKind::CompiledScriptBundle,
+                        "Compiled script bundle",
+                    );
+                });
+                self.export_wizard.require_executable =
+                    self.export_wizard.export_kind == ExportWizardKind::ExecutableGame;
+                ui.horizontal_wrapped(|ui| {
                     ui.label("Target");
                     egui::ComboBox::from_id_source("export_wizard_target")
                         .selected_text(self.export_wizard.target.as_str())
@@ -417,10 +432,15 @@ impl EditorWorkbench {
                                 "macos",
                             );
                         });
-                    ui.checkbox(
-                        &mut self.export_wizard.require_executable,
-                        "Require executable",
-                    );
+                    if self.export_wizard.target == visual_novel_engine::ExportTargetPlatform::Macos
+                    {
+                        ui.colored_label(egui::Color32::from_rgb(245, 190, 100), "experimental");
+                    }
+                    ui.label(if self.export_wizard.require_executable {
+                        "release executable required"
+                    } else {
+                        "script bundle only"
+                    });
                     ui.checkbox(&mut self.export_wizard.dry_run, "Dry-run");
                 });
                 ui.horizontal_wrapped(|ui| {
@@ -444,17 +464,22 @@ impl EditorWorkbench {
                 ui.horizontal_wrapped(|ui| {
                     ui.label("Integrity");
                     egui::ComboBox::from_id_source("export_wizard_integrity")
-                        .selected_text(self.export_wizard.integrity.as_str())
+                        .selected_text(match self.export_wizard.integrity {
+                            visual_novel_engine::BundleIntegrity::None => "unsigned dev",
+                            visual_novel_engine::BundleIntegrity::HmacSha256 => {
+                                "HMAC release signed"
+                            }
+                        })
                         .show_ui(ui, |ui| {
                             ui.selectable_value(
                                 &mut self.export_wizard.integrity,
                                 visual_novel_engine::BundleIntegrity::None,
-                                "none",
+                                "unsigned dev",
                             );
                             ui.selectable_value(
                                 &mut self.export_wizard.integrity,
                                 visual_novel_engine::BundleIntegrity::HmacSha256,
-                                "hmac_sha256",
+                                "HMAC release signed",
                             );
                         });
                     if self.export_wizard.integrity
@@ -478,12 +503,17 @@ impl EditorWorkbench {
                 if let Some(plan) = &self.export_wizard.last_plan {
                     ui.separator();
                     ui.label(format!("layout files: {}", plan.layout.len()));
-                    for warning in &plan.warnings {
-                        ui.label(format!("warning: {warning}"));
-                    }
-                    for error in &plan.errors {
-                        ui.colored_label(egui::Color32::from_rgb(255, 140, 120), error);
-                    }
+                    let blocking = plan
+                        .diagnostics
+                        .iter()
+                        .filter(|diagnostic| diagnostic.blocking_release)
+                        .count();
+                    ui.label(format!(
+                        "diagnostics: {} total, {} blocking release",
+                        plan.diagnostics.len(),
+                        blocking
+                    ));
+                    Self::render_export_diagnostics(ui, &plan.diagnostics);
                     ui.collapsing("Plan JSON", |ui| {
                         let mut json = serde_json::to_string_pretty(plan)
                             .unwrap_or_else(|err| format!("serialization failed: {err}"));
@@ -503,6 +533,29 @@ impl EditorWorkbench {
                         "Executable: {}",
                         report.executable.as_deref().unwrap_or("none")
                     ));
+                    ui.label(format!(
+                        "Manifest: {}",
+                        report
+                            .bundle_file_manifest
+                            .as_deref()
+                            .unwrap_or("meta/bundle_file_manifest.json")
+                    ));
+                    ui.label(format!(
+                        "Compat: {}",
+                        report
+                            .compat_report
+                            .as_deref()
+                            .unwrap_or("meta/compat_report.json")
+                    ));
+                    Self::render_export_diagnostics(ui, &report.diagnostics);
+                }
+                if !self.export_wizard.logs.is_empty() {
+                    ui.separator();
+                    ui.collapsing("Export logs", |ui| {
+                        for line in &self.export_wizard.logs {
+                            ui.label(line);
+                        }
+                    });
                 }
             });
         self.show_export_wizard = open;
@@ -563,6 +616,35 @@ impl EditorWorkbench {
         }
     }
 
+    fn render_export_diagnostics(
+        ui: &mut egui::Ui,
+        diagnostics: &[visual_novel_engine::ExportDiagnostic],
+    ) {
+        if diagnostics.is_empty() {
+            return;
+        }
+        ui.collapsing("Structured diagnostics", |ui| {
+            for diagnostic in diagnostics {
+                let color = if diagnostic.blocking_release || diagnostic.severity == "error" {
+                    egui::Color32::from_rgb(255, 140, 120)
+                } else {
+                    egui::Color32::from_rgb(245, 190, 100)
+                };
+                ui.colored_label(
+                    color,
+                    format!(
+                        "{} [{}] {}",
+                        diagnostic.code, diagnostic.trace_id, diagnostic.message
+                    ),
+                );
+                ui.label(format!("cause: {}", diagnostic.probable_cause));
+                ui.label(format!("action: {}", diagnostic.suggested_action));
+                ui.label(format!("consequence: {}", diagnostic.consequence));
+                ui.separator();
+            }
+        });
+    }
+
     fn export_wizard_spec(&self) -> Result<visual_novel_engine::ExportBundleSpec, String> {
         let project_root = self
             .project_root
@@ -611,6 +693,13 @@ impl EditorWorkbench {
     fn plan_export_wizard(&mut self) {
         self.export_wizard.last_error = None;
         self.export_wizard.last_report = None;
+        self.export_wizard.logs.clear();
+        self.export_wizard.logs.push(format!(
+            "plan: target={} mode={:?} integrity={}",
+            self.export_wizard.target.as_str(),
+            self.export_wizard.export_kind,
+            self.export_wizard.integrity.as_str()
+        ));
         let spec = match self.export_wizard_spec() {
             Ok(spec) => spec,
             Err(err) => {
@@ -621,7 +710,18 @@ impl EditorWorkbench {
         };
         match visual_novel_engine::ExportService::new().plan_export(&spec) {
             Ok(plan) => {
-                let has_errors = !plan.errors.is_empty();
+                let has_errors = plan
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.severity == "error");
+                self.export_wizard.logs.push(format!(
+                    "plan complete: diagnostics={} blocking={}",
+                    plan.diagnostics.len(),
+                    plan.diagnostics
+                        .iter()
+                        .filter(|diagnostic| diagnostic.blocking_release)
+                        .count()
+                ));
                 self.export_wizard.last_plan = Some(plan);
                 self.toast = Some(if has_errors {
                     ToastState::warning("Export plan has blocking errors")
@@ -639,6 +739,9 @@ impl EditorWorkbench {
 
     fn execute_export_wizard(&mut self) {
         self.export_wizard.last_error = None;
+        self.export_wizard
+            .logs
+            .push("execute: validating plan".to_string());
         let spec = match self.export_wizard_spec() {
             Ok(spec) => spec,
             Err(err) => {
@@ -649,10 +752,38 @@ impl EditorWorkbench {
         };
         match visual_novel_engine::ExportService::new().plan_export(&spec) {
             Ok(plan) => {
-                if !plan.errors.is_empty() {
+                if plan
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.severity == "error")
+                {
                     self.export_wizard.last_plan = Some(plan);
-                    self.toast = Some(ToastState::error("Export blocked by plan errors"));
+                    self.toast = Some(ToastState::error("Export blocked by plan diagnostics"));
                     return;
+                }
+                if self.export_wizard.require_executable {
+                    let expected = spec.target_platform.expected_executable_name();
+                    if plan.executable.as_deref() != Some(expected) {
+                        let diagnostics = plan
+                            .diagnostics
+                            .iter()
+                            .filter(|diagnostic| diagnostic.blocking_release)
+                            .map(|diagnostic| {
+                                format!("{} {}", diagnostic.code, diagnostic.trace_id)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        self.export_wizard.last_plan = Some(plan);
+                        self.export_wizard.last_error = Some(format!(
+                            "{} export cannot produce {}; {diagnostics}",
+                            spec.target_platform.as_str(),
+                            expected
+                        ));
+                        self.toast = Some(ToastState::error(
+                            "Export blocked by executable diagnostics",
+                        ));
+                        return;
+                    }
                 }
                 self.export_wizard.last_plan = Some(plan);
             }
@@ -663,6 +794,9 @@ impl EditorWorkbench {
             }
         }
         if self.export_wizard.dry_run {
+            self.export_wizard
+                .logs
+                .push("execute: dry-run stopped before writing bundle".to_string());
             self.toast = Some(ToastState::success(
                 "Export dry-run completed without writing",
             ));
@@ -675,6 +809,12 @@ impl EditorWorkbench {
         };
         match result {
             Ok(report) => {
+                self.export_wizard.logs.push(format!(
+                    "execute complete: launcher={} executable={} compat={}",
+                    report.launcher,
+                    report.executable.as_deref().unwrap_or("none"),
+                    report.compat_report.as_deref().unwrap_or("none")
+                ));
                 self.export_wizard.last_report = Some(report.clone());
                 self.last_export_report = Some(report);
                 self.show_export_report_panel = true;

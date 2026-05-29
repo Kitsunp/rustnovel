@@ -72,6 +72,28 @@ pub struct BundleFileEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportDiagnostic {
+    pub code: String,
+    pub severity: String,
+    pub phase: String,
+    pub target: String,
+    pub trace_id: String,
+    pub message: String,
+    pub probable_cause: String,
+    pub suggested_action: String,
+    pub consequence: String,
+    pub blocking_release: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportBundleReport {
     pub schema: String,
     pub target_platform: String,
@@ -84,16 +106,71 @@ pub struct ExportBundleReport {
     pub assets_copied: usize,
     pub runtime_artifact: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_artifact_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable: Option<String>,
     pub launcher: String,
     pub integrity: String,
     pub bundle_hmac_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundle_file_manifest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compat_report: Option<String>,
     #[serde(default)]
     pub integrity_scope: String,
     #[serde(default)]
     pub capabilities: ExportCapabilityReport,
+    #[serde(default)]
+    pub diagnostics: Vec<ExportDiagnostic>,
+    #[serde(default)]
+    pub smoke_result: ExportRuntimeSmokeResult,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExportRuntimeSmokeCheck {
+    pub code: String,
+    pub status: String,
+    pub phase: String,
+    pub target: String,
+    pub trace_id: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExportRuntimeSmokeResult {
+    pub status: String,
+    pub backend: String,
+    pub details: String,
+    #[serde(default)]
+    pub phase: String,
+    #[serde(default)]
+    pub target: String,
+    #[serde(default)]
+    pub trace_id: String,
+    #[serde(default)]
+    pub checks: Vec<ExportRuntimeSmokeCheck>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportCompatReport {
+    pub schema: String,
+    pub target_platform: String,
+    pub generator_os: String,
+    pub runtime_artifact: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_artifact_sha256: Option<String>,
+    pub expected_executable: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable: Option<String>,
+    pub graphics_backend: String,
+    pub wgpu_fallback: bool,
+    pub assets_copied: usize,
+    pub total_size: u64,
+    pub diagnostics: Vec<ExportDiagnostic>,
+    pub hashes: Vec<BundleFileEntry>,
+    pub bundle_file_manifest_sha256: String,
+    pub bundle_hmac_sha256: Option<String>,
+    pub smoke_result: ExportRuntimeSmokeResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,8 +185,12 @@ pub struct ExportPlan {
     pub layout: Vec<String>,
     pub runtime_artifact: Option<String>,
     pub executable: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
+    #[serde(default)]
+    pub diagnostics: Vec<ExportDiagnostic>,
     pub integrity: String,
     pub capabilities: ExportCapabilityReport,
 }

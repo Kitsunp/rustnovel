@@ -33,6 +33,57 @@ use self::render::{BuiltinSoftwareDrawer, RenderBackend, SoftwareBackend, WgpuBa
 
 // AssetStore and MemoryAssetStore moved to assets.rs
 
+pub const RENDER_BACKEND_ENV: &str = "VNENGINE_RENDER_BACKEND";
+pub const FORCE_WGPU_FAILURE_ENV: &str = "VNENGINE_FORCE_WGPU_FAILURE";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeRenderBackendPreference {
+    Auto,
+    Software,
+    Wgpu,
+}
+
+impl RuntimeRenderBackendPreference {
+    pub fn from_env_value(value: Option<&str>) -> Result<Self, String> {
+        let Some(value) = value else {
+            return Ok(Self::Auto);
+        };
+        match value.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => Ok(Self::Auto),
+            "software" | "pixels" => Ok(Self::Software),
+            "wgpu" | "hardware" => Ok(Self::Wgpu),
+            other => Err(format!(
+                "unsupported {RENDER_BACKEND_ENV} value '{other}' (expected auto, software, or wgpu)"
+            )),
+        }
+    }
+
+    pub fn from_env() -> Self {
+        match Self::from_env_value(std::env::var(RENDER_BACKEND_ENV).ok().as_deref()) {
+            Ok(preference) => preference,
+            Err(err) => {
+                eprintln!("{err}; falling back to auto render backend selection");
+                Self::Auto
+            }
+        }
+    }
+}
+
+pub fn force_wgpu_failure_from_env_value(value: Option<&str>) -> bool {
+    value
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+pub fn force_wgpu_failure_from_env() -> bool {
+    force_wgpu_failure_from_env_value(std::env::var(FORCE_WGPU_FAILURE_ENV).ok().as_deref())
+}
+
 /// Runtime application wrapper. Logic controller.
 pub struct RuntimeApp<I, A, S> {
     engine: Engine,
@@ -273,33 +324,61 @@ where
 
     let size = window.inner_size();
 
-    // Initialize Backend with Fallback
-    let mut backend: Box<dyn RenderBackend> =
-        match WgpuBackend::new(window.clone(), size.width, size.height) {
-            Ok(backend) => {
-                eprintln!("Using WGPU Hardware Backend");
-                Box::new(backend)
-            }
-            Err(err) => {
-                eprintln!(
-                    "WGPU Backend initialization failed: {}. Falling back to Software Backend.",
-                    err
-                );
-                let software = match SoftwareBackend::try_new(
-                    window.clone(),
-                    size.width,
-                    size.height,
-                    Box::new(BuiltinSoftwareDrawer),
-                ) {
-                    Ok(backend) => backend,
-                    Err(err) => {
-                        eprintln!("Software Backend initialization failed: {err}");
+    let backend_preference = RuntimeRenderBackendPreference::from_env();
+    let mut backend: Box<dyn RenderBackend> = match backend_preference {
+        RuntimeRenderBackendPreference::Software => {
+            eprintln!("Using Software Backend ({RENDER_BACKEND_ENV}=software)");
+            let software = match SoftwareBackend::try_new(
+                window.clone(),
+                size.width,
+                size.height,
+                Box::new(BuiltinSoftwareDrawer),
+            ) {
+                Ok(backend) => backend,
+                Err(err) => {
+                    eprintln!("Software Backend initialization failed: {err}");
+                    std::process::exit(1);
+                }
+            };
+            Box::new(software)
+        }
+        RuntimeRenderBackendPreference::Auto | RuntimeRenderBackendPreference::Wgpu => {
+            let wgpu_result = if force_wgpu_failure_from_env() {
+                Err(format!("forced by {FORCE_WGPU_FAILURE_ENV}"))
+            } else {
+                WgpuBackend::new(window.clone(), size.width, size.height)
+            };
+            match wgpu_result {
+                Ok(backend) => {
+                    eprintln!("Using WGPU Hardware Backend");
+                    Box::new(backend)
+                }
+                Err(err) => {
+                    if backend_preference == RuntimeRenderBackendPreference::Wgpu {
+                        eprintln!("WGPU Backend initialization failed: {err}");
                         std::process::exit(1);
                     }
-                };
-                Box::new(software)
+                    eprintln!(
+                        "WGPU Backend initialization failed: {}. Falling back to Software Backend.",
+                        err
+                    );
+                    let software = match SoftwareBackend::try_new(
+                        window.clone(),
+                        size.width,
+                        size.height,
+                        Box::new(BuiltinSoftwareDrawer),
+                    ) {
+                        Ok(backend) => backend,
+                        Err(err) => {
+                            eprintln!("Software Backend initialization failed: {err}");
+                            std::process::exit(1);
+                        }
+                    };
+                    Box::new(software)
+                }
             }
-        };
+        }
+    };
 
     if let Err(err) = event_loop.run(move |event, elwt| {
         match event {

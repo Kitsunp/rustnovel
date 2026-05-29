@@ -574,11 +574,30 @@ fn run_command(cli: Cli, json_output: bool) -> Result<Option<serde_json::Value>>
                 if require_executable {
                     let expected = spec.target_platform.expected_executable_name();
                     if plan.executable.as_deref() != Some(expected) {
-                        anyhow::bail!(
-                            "{} executable export requires runtime_artifact and must produce {}",
+                        let diagnostics = plan
+                            .diagnostics
+                            .iter()
+                            .filter(|diagnostic| diagnostic.blocking_release)
+                            .map(|diagnostic| {
+                                format!(
+                                    "{} trace_id={} phase={} target={} message={} action={}",
+                                    diagnostic.code,
+                                    diagnostic.trace_id,
+                                    diagnostic.phase,
+                                    diagnostic.target,
+                                    diagnostic.message,
+                                    diagnostic.suggested_action
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        let message = format!(
+                            "{} executable export cannot produce '{}'; blocking diagnostics: {}",
                             spec.target_platform.as_str(),
-                            expected
+                            expected,
+                            diagnostics
                         );
+                        return Err(visual_novel_engine::VnError::invalid_script(message).into());
                     }
                 }
                 if json_output {

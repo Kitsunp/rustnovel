@@ -35,7 +35,8 @@ pub use capabilities::ExportCapabilityReport;
 pub use plan::build_export_plan;
 pub use spec::{
     BundleAssetEntry, BundleFileEntry, BundleIntegrity, ExportBundleReport, ExportBundleSpec,
-    ExportPlan, ExportTargetPlatform,
+    ExportCompatReport, ExportDiagnostic, ExportPlan, ExportRuntimeSmokeCheck,
+    ExportRuntimeSmokeResult, ExportTargetPlatform,
 };
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -51,12 +52,52 @@ impl ExportService {
     }
 
     pub fn validate_export_plan(&self, plan: &ExportPlan) -> VnResult<()> {
-        if plan.errors.is_empty() {
+        let blocking_errors = plan
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == "error")
+            .collect::<Vec<_>>();
+        if blocking_errors.is_empty() {
             Ok(())
         } else {
+            let diagnostic_summary = blocking_errors
+                .iter()
+                .map(|diagnostic| {
+                    let mut scope = Vec::new();
+                    if let Some(file) = &diagnostic.file {
+                        scope.push(format!("file={file}"));
+                    }
+                    if let Some(asset) = &diagnostic.asset {
+                        scope.push(format!("asset={asset}"));
+                    }
+                    if let Some(node) = &diagnostic.node {
+                        scope.push(format!("node={node}"));
+                    }
+                    if let Some(field) = &diagnostic.field {
+                        scope.push(format!("field={field}"));
+                    }
+                    let scope = if scope.is_empty() {
+                        "scope=project".to_string()
+                    } else {
+                        scope.join(" ")
+                    };
+                    format!(
+                        "{}: {} trace_id={} phase={} target={} {} cause={} action={} consequence={}",
+                        diagnostic.code,
+                        diagnostic.message,
+                        diagnostic.trace_id,
+                        diagnostic.phase,
+                        diagnostic.target,
+                        scope,
+                        diagnostic.probable_cause,
+                        diagnostic.suggested_action,
+                        diagnostic.consequence
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
             Err(invalid_bundle(format!(
-                "export plan has errors: {}",
-                plan.errors.join("; ")
+                "export plan has blocking diagnostics: {diagnostic_summary}"
             )))
         }
     }
@@ -303,6 +344,12 @@ fn export_bundle_materialized(
         &project_root,
         &runtime_dir,
     )?;
+    let runtime_artifact_rel = runtime_artifact
+        .as_ref()
+        .map(|runtime| runtime.rel_path.clone());
+    let runtime_artifact_sha256 = runtime_artifact
+        .as_ref()
+        .map(|runtime| runtime.sha256.clone());
     let executable_rel = materialize_executable(
         spec.target_platform,
         &output_root,
@@ -331,7 +378,8 @@ fn export_bundle_materialized(
         ),
         assets_manifest: normalize_path_display(Path::new("meta/assets_manifest.json")),
         assets_copied: assets_manifest_entries.len(),
-        runtime_artifact: runtime_artifact.map(|runtime| runtime.rel_path),
+        runtime_artifact: runtime_artifact_rel,
+        runtime_artifact_sha256,
         executable: executable_rel,
         launcher: launcher_rel,
         integrity: spec.integrity.as_str().to_string(),
@@ -339,8 +387,11 @@ fn export_bundle_materialized(
         bundle_file_manifest: Some(normalize_path_display(Path::new(
             "meta/bundle_file_manifest.json",
         ))),
+        compat_report: Some(normalize_path_display(Path::new("meta/compat_report.json"))),
         integrity_scope: integrity_scope.to_string(),
         capabilities: capability_report,
+        diagnostics: plan.diagnostics.clone(),
+        smoke_result: not_run_smoke_result(spec.target_platform),
     };
 
     let report_path = meta_dir.join("package_report.json");
@@ -361,6 +412,7 @@ fn export_bundle_materialized(
     });
     let file_manifest_json = serde_json::to_string_pretty(&file_manifest_payload)
         .map_err(|e| invalid_bundle(format!("serialize bundle file manifest: {e}")))?;
+    let file_manifest_sha256 = sha256_hex(file_manifest_json.as_bytes());
     let file_manifest_out = meta_dir.join("bundle_file_manifest.json");
     fs::write(&file_manifest_out, file_manifest_json.as_bytes()).map_err(|e| {
         invalid_bundle(format!(
@@ -394,8 +446,83 @@ fn export_bundle_materialized(
         })?;
     }
     report.bundle_hmac_sha256 = bundle_hmac_sha256;
+    let report_json = serde_json::to_string_pretty(&report)
+        .map_err(|e| invalid_bundle(format!("serialize package report: {e}")))?;
+    fs::write(&report_path, report_json).map_err(|e| {
+        invalid_bundle(format!(
+            "write package report '{}': {e}",
+            report_path.display()
+        ))
+    })?;
+
+    let compat_report = build_compat_report(
+        spec.target_platform,
+        &report,
+        &file_manifest_entries,
+        &file_manifest_sha256,
+    );
+    let compat_report_path = meta_dir.join("compat_report.json");
+    let compat_report_json = serde_json::to_string_pretty(&compat_report)
+        .map_err(|e| invalid_bundle(format!("serialize compat report: {e}")))?;
+    fs::write(&compat_report_path, compat_report_json).map_err(|e| {
+        invalid_bundle(format!(
+            "write compat report '{}': {e}",
+            compat_report_path.display()
+        ))
+    })?;
 
     Ok(report)
+}
+
+fn build_compat_report(
+    target_platform: ExportTargetPlatform,
+    report: &ExportBundleReport,
+    file_manifest_entries: &[BundleFileEntry],
+    file_manifest_sha256: &str,
+) -> ExportCompatReport {
+    ExportCompatReport {
+        schema: "vnengine.export_compat_report.v1".to_string(),
+        target_platform: target_platform.as_str().to_string(),
+        generator_os: std::env::consts::OS.to_string(),
+        runtime_artifact: report.runtime_artifact.clone(),
+        runtime_artifact_sha256: report.runtime_artifact_sha256.clone(),
+        expected_executable: target_platform.expected_executable_name().to_string(),
+        executable: report.executable.clone(),
+        graphics_backend: "software".to_string(),
+        wgpu_fallback: true,
+        assets_copied: report.assets_copied,
+        total_size: file_manifest_entries.iter().map(|entry| entry.size).sum(),
+        diagnostics: report.diagnostics.clone(),
+        hashes: file_manifest_entries.to_vec(),
+        bundle_file_manifest_sha256: file_manifest_sha256.to_string(),
+        bundle_hmac_sha256: report.bundle_hmac_sha256.clone(),
+        smoke_result: report.smoke_result.clone(),
+    }
+}
+
+fn not_run_smoke_result(target_platform: ExportTargetPlatform) -> ExportRuntimeSmokeResult {
+    let target = target_platform.as_str().to_string();
+    let code = "export.runtime_smoke.not_run";
+    let trace_id = format!(
+        "export-smoke-{}",
+        &sha256_hex(format!("{code}:{target}:not_run").as_bytes())[..16]
+    );
+    ExportRuntimeSmokeResult {
+        status: "not_run".to_string(),
+        backend: "software".to_string(),
+        details: "runtime smoke is executed by CI/package smoke jobs".to_string(),
+        phase: "smoke".to_string(),
+        target: target.clone(),
+        trace_id: trace_id.clone(),
+        checks: vec![ExportRuntimeSmokeCheck {
+            code: code.to_string(),
+            status: "not_run".to_string(),
+            phase: "smoke".to_string(),
+            target,
+            trace_id,
+            message: "Package has not been loaded by the runtime smoke yet.".to_string(),
+        }],
+    }
 }
 
 fn collect_bundle_file_manifest(output_root: &Path) -> VnResult<Vec<BundleFileEntry>> {
@@ -414,6 +541,9 @@ fn collect_bundle_file_manifest(output_root: &Path) -> VnResult<Vec<BundleFileEn
             ))
         })?;
         let rel = normalize_path_display(rel_path);
+        if is_integrity_metadata_path(&rel) {
+            continue;
+        }
         let (sha256, size) = sha256_file(path)?;
         entries.push(BundleFileEntry {
             role: classify_bundle_file_role(&rel).to_string(),
@@ -423,6 +553,16 @@ fn collect_bundle_file_manifest(output_root: &Path) -> VnResult<Vec<BundleFileEn
         });
     }
     Ok(entries)
+}
+
+fn is_integrity_metadata_path(path: &str) -> bool {
+    matches!(
+        path,
+        "meta/package_report.json"
+            | "meta/compat_report.json"
+            | "meta/bundle_file_manifest.json"
+            | "meta/bundle.hmac_sha256"
+    )
 }
 
 fn sha256_file(path: &Path) -> VnResult<(String, u64)> {
@@ -468,29 +608,59 @@ pub fn export_executable_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundle
     ExportService::new().validate_export_plan(&plan)?;
     let expected = target.expected_executable_name();
     if plan.executable.as_deref() != Some(expected) {
-        let hint = match target {
-            ExportTargetPlatform::Windows => ".exe runtime_artifact",
-            ExportTargetPlatform::Linux => "linux runtime_artifact",
-            ExportTargetPlatform::Macos => "macos runtime_artifact",
-        };
-        return Err(invalid_bundle(format!(
-            "{} executable export requires a {hint} and must produce {expected}",
-            target.as_str()
+        return Err(invalid_bundle(executable_requirement_message(
+            target,
+            expected,
+            Some(&plan),
         )));
     }
     let report = export_bundle(spec)?;
     if report.executable.as_deref() != Some(expected) {
-        let hint = match target {
-            ExportTargetPlatform::Windows => ".exe runtime_artifact",
-            ExportTargetPlatform::Linux => "linux runtime_artifact",
-            ExportTargetPlatform::Macos => "macos runtime_artifact",
-        };
-        return Err(invalid_bundle(format!(
-            "{} executable export requires a {hint} and must produce {expected}",
-            target.as_str()
+        return Err(invalid_bundle(executable_requirement_message(
+            target, expected, None,
         )));
     }
     Ok(report)
+}
+
+fn executable_requirement_message(
+    target: ExportTargetPlatform,
+    expected: &str,
+    plan: Option<&ExportPlan>,
+) -> String {
+    let hint = match target {
+        ExportTargetPlatform::Windows => ".exe runtime_artifact",
+        ExportTargetPlatform::Linux => "linux runtime_artifact",
+        ExportTargetPlatform::Macos => "macos runtime_artifact",
+    };
+    let mut message = format!(
+        "{} executable export cannot produce '{}': required input is a matching {hint}",
+        target.as_str(),
+        expected
+    );
+    if let Some(plan) = plan {
+        let diagnostics = plan
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.blocking_release)
+            .map(|diagnostic| {
+                format!(
+                    "{} trace_id={} phase={} target={} message={} action={}",
+                    diagnostic.code,
+                    diagnostic.trace_id,
+                    diagnostic.phase,
+                    diagnostic.target,
+                    diagnostic.message,
+                    diagnostic.suggested_action
+                )
+            })
+            .collect::<Vec<_>>();
+        if !diagnostics.is_empty() {
+            message.push_str("; blocking diagnostics: ");
+            message.push_str(&diagnostics.join("; "));
+        }
+    }
+    message
 }
 
 pub fn export_windows_executable_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
