@@ -9,6 +9,7 @@
 pub mod asset_browser;
 pub mod asset_candidates;
 pub mod asset_import;
+pub mod atomic_io;
 pub mod authoring_adapter;
 pub mod compiler;
 pub mod diagnostics;
@@ -29,6 +30,8 @@ pub mod preview_policy;
 pub mod project_io;
 pub mod quick_fix;
 pub mod resource_service;
+pub mod route_tree_view;
+pub mod scene_frame_presenter;
 pub mod scene_stage;
 pub mod script_sync;
 pub mod timeline_panel;
@@ -51,6 +54,8 @@ pub use node_editor::NodeEditorPanel;
 pub use node_graph::NodeGraph;
 pub use node_types::{ContextMenu, StoryNode, StoryNodeVisualExt, ToastKind, ToastState};
 pub use preview_policy::{BackgroundFit, ComposerPreviewMode};
+pub use route_tree_view::RouteTreeView;
+pub use scene_frame_presenter::EguiSceneFramePresenter;
 pub use timeline_panel::TimelinePanel;
 pub use undo::UndoStack;
 pub use validator::{
@@ -124,9 +129,9 @@ impl Default for EditorApp {
 
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Update timeline if playing (approximately 60 fps)
         if self.workbench.is_playing {
-            self.workbench.update(1);
+            let dt = ctx.input(|input| input.stable_dt);
+            self.workbench.update_seconds(dt);
             ctx.request_repaint();
         }
 

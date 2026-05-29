@@ -20,6 +20,13 @@ impl ExportTargetPlatform {
             Self::Macos => "macos",
         }
     }
+
+    pub fn expected_executable_name(self) -> &'static str {
+        match self {
+            Self::Windows => "game.exe",
+            Self::Linux | Self::Macos => "game",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +64,14 @@ pub struct BundleAssetEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BundleFileEntry {
+    pub path: String,
+    pub sha256: String,
+    pub size: u64,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportBundleReport {
     pub schema: String,
     pub target_platform: String,
@@ -73,6 +88,10 @@ pub struct ExportBundleReport {
     pub launcher: String,
     pub integrity: String,
     pub bundle_hmac_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_file_manifest: Option<String>,
+    #[serde(default)]
+    pub integrity_scope: String,
     #[serde(default)]
     pub capabilities: ExportCapabilityReport,
 }

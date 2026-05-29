@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use visual_novel_engine::LruCache;
 
 #[test]
@@ -27,4 +28,16 @@ fn lru_cache_evicts_oldest_entries_within_byte_budget() {
     assert!(cache.get(&2).is_some());
     assert!(cache.get(&3).is_none());
     assert!(cache.get(&4).is_some());
+}
+
+#[test]
+fn lru_cache_returns_shared_bytes_without_cloning_payloads() {
+    let mut cache = LruCache::<u32>::new(10);
+    cache.insert(1, vec![1, 2, 3, 4]);
+
+    let first = cache.get(&1).expect("first hit");
+    let second = cache.get(&1).expect("second hit");
+
+    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!(first.as_ref(), &[1, 2, 3, 4]);
 }

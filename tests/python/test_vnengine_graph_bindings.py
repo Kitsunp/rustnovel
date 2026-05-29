@@ -94,13 +94,23 @@ class GuiBindingTests(unittest.TestCase):
             (project / "runtime" / "vn-runtime.exe").write_bytes(runtime_bytes)
 
             out = root / "dist"
-            report = json.loads(
-                vn.export_bundle(
-                    str(project),
-                    str(out),
-                    runtime_artifact="runtime/vn-runtime.exe",
-                )
+            plan_obj = vn.plan_export(
+                str(project),
+                str(out),
+                runtime_artifact="runtime/vn-runtime.exe",
             )
+            self.assertTrue(hasattr(plan_obj, "to_dict"))
+            plan = plan_obj.to_dict()
+            self.assertEqual(plan["schema"], "vnengine.export_plan.v1")
+            self.assertEqual(plan["executable"], "game.exe")
+
+            report_obj = vn.export_bundle(
+                str(project),
+                str(out),
+                runtime_artifact="runtime/vn-runtime.exe",
+            )
+            self.assertTrue(hasattr(report_obj, "to_dict"))
+            report = report_obj.to_dict()
 
             self.assertEqual(report["runtime_artifact"], "runtime/vn-runtime.exe")
             self.assertEqual(report["executable"], "game.exe")

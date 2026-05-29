@@ -32,12 +32,11 @@ fn validation_panel_can_collapse_to_toolbar_height() {
 }
 
 #[test]
-fn timeline_can_share_bottom_area_with_validation_report() {
+fn timeline_keeps_its_bottom_budget_when_validation_report_is_visible() {
     let base = editor_panel_layout(1280.0, 720.0, &LayoutOverrides::default()).timeline;
-    let stacked = timeline_panel_layout(base, true);
-    assert!(stacked.default < base.default);
-    assert!(stacked.max <= 160.0);
-    assert!(timeline_panel_layout(base, false).default >= base.default);
+    let with_validation = timeline_panel_layout(base, true);
+    assert_eq!(with_validation, base);
+    assert_eq!(timeline_panel_layout(base, false), base);
 }
 
 #[test]
@@ -81,6 +80,196 @@ fn dragged_panel_override_records_only_real_resize_gestures() {
 }
 
 #[test]
+fn observed_panel_override_records_resizes_without_panel_drag_flag() {
+    assert_eq!(
+        observed_panel_override(None, 260.0, 260.25, 100.0, 400.0),
+        None,
+        "adaptive defaults should stay adaptive when the observed panel size matches the resolver"
+    );
+    assert_eq!(
+        observed_panel_override(None, 340.0, 260.0, 100.0, 400.0),
+        Some(340.0),
+        "egui splitter state must be captured even when the panel body response is not dragged"
+    );
+    assert_eq!(
+        observed_panel_override(Some(340.0), 520.0, 260.0, 100.0, 400.0),
+        Some(400.0),
+        "manual panel sizes must still be clamped to the dynamic layout budget"
+    );
+}
+
+#[test]
+fn screenshot_viewports_keep_composer_budget_after_manual_panel_sizes() {
+    let overrides = LayoutOverrides {
+        dock_reference_width: Some(1275.0),
+        asset_width: Some(420.0),
+        graph_width: Some(760.0),
+        inspector_width: Some(520.0),
+        ..Default::default()
+    };
+    for (width, height) in [(1275.0, 746.0), (1919.0, 1079.0)] {
+        let layout = resolve_editor_dock_layout(
+            width,
+            height,
+            &overrides,
+            EditorDockVisibility {
+                asset_browser: true,
+                graph: true,
+                inspector: true,
+            },
+        );
+        let side_default = layout.asset_browser.unwrap().w
+            + layout.graph.unwrap().w
+            + layout.inspector.unwrap().w;
+        assert!(
+            side_default + layout.composer.w <= width,
+            "resolved docked panels must fit viewport {width}x{height}"
+        );
+        assert!(
+            layout.composer.w + 1.0 >= layout.panel_sizes.central_min.min(width),
+            "composer should receive a positive negotiated budget"
+        );
+        assert!(layout.asset_browser.unwrap().x < layout.graph.unwrap().x);
+        assert!(layout.graph.unwrap().x < layout.composer.x);
+        assert!(layout.composer.x < layout.inspector.unwrap().x);
+        assert!(layout.inspector.unwrap().x + layout.inspector.unwrap().w <= width);
+    }
+}
+
+#[test]
+fn default_window_and_fullscreen_keep_similar_dock_proportions() {
+    let window = resolve_editor_dock_layout(
+        1275.0,
+        746.0,
+        &LayoutOverrides::default(),
+        EditorDockVisibility {
+            asset_browser: true,
+            graph: true,
+            inspector: true,
+        },
+    );
+    let fullscreen = resolve_editor_dock_layout(
+        1919.0,
+        1079.0,
+        &LayoutOverrides::default(),
+        EditorDockVisibility {
+            asset_browser: true,
+            graph: true,
+            inspector: true,
+        },
+    );
+
+    assert_dock_ratios_close(window, fullscreen, 0.025);
+}
+
+#[test]
+fn manual_window_splitter_sizes_scale_to_fullscreen_proportionally() {
+    let overrides = LayoutOverrides {
+        dock_reference_width: Some(1275.0),
+        asset_width: Some(132.0),
+        graph_width: Some(260.0),
+        inspector_width: Some(242.0),
+        ..Default::default()
+    };
+    let window = resolve_editor_dock_layout(
+        1275.0,
+        746.0,
+        &overrides,
+        EditorDockVisibility {
+            asset_browser: true,
+            graph: true,
+            inspector: true,
+        },
+    );
+    let fullscreen = resolve_editor_dock_layout(
+        1919.0,
+        1079.0,
+        &overrides,
+        EditorDockVisibility {
+            asset_browser: true,
+            graph: true,
+            inspector: true,
+        },
+    );
+
+    assert_dock_ratios_close(window, fullscreen, 0.035);
+    assert!(fullscreen.graph.unwrap().w > window.graph.unwrap().w);
+    assert!(fullscreen.inspector.unwrap().w > window.inspector.unwrap().w);
+}
+
+#[test]
+fn legacy_absolute_splitter_sizes_are_interpreted_as_reference_widths() {
+    let overrides = LayoutOverrides {
+        asset_width: Some(132.0),
+        graph_width: Some(260.0),
+        inspector_width: Some(242.0),
+        ..Default::default()
+    };
+    let window = resolve_editor_dock_layout(
+        1275.0,
+        746.0,
+        &overrides,
+        EditorDockVisibility {
+            asset_browser: true,
+            graph: true,
+            inspector: true,
+        },
+    );
+    let fullscreen = resolve_editor_dock_layout(
+        1919.0,
+        1079.0,
+        &overrides,
+        EditorDockVisibility {
+            asset_browser: true,
+            graph: true,
+            inspector: true,
+        },
+    );
+
+    assert_dock_ratios_close(window, fullscreen, 0.035);
+}
+
+#[test]
+fn validation_report_is_not_a_stacked_bottom_panel() {
+    assert_eq!(
+        validation_report_placement(true),
+        ValidationReportPlacement::Inspector
+    );
+    assert_eq!(
+        validation_report_placement(false),
+        ValidationReportPlacement::FloatingWindow
+    );
+    for height in [746.0, 1079.0] {
+        let base = editor_panel_layout(1275.0, height, &LayoutOverrides::default()).timeline;
+        let timeline = timeline_panel_layout(base, true);
+        assert!(
+            timeline.default <= height * 0.25,
+            "timeline consumes {}px in {height}px viewport",
+            timeline.default
+        );
+    }
+}
+
+#[test]
+fn validation_report_uses_compact_body_when_clean() {
+    assert_eq!(validation_report_body_height(520.0, 0), 28.0);
+    let with_issues = validation_report_body_height(520.0, 4);
+    assert!(with_issues >= 120.0);
+    assert!(with_issues <= 360.0);
+    assert!(with_issues < 520.0);
+}
+
+#[test]
+fn capture_widths_use_grouped_toolbar_to_avoid_overflow() {
+    assert_eq!(editor_toolbar_mode(1275.0), EditorToolbarMode::Grouped);
+    assert_eq!(editor_toolbar_mode(1919.0), EditorToolbarMode::Grouped);
+    assert_eq!(
+        editor_toolbar_mode(TOOLBAR_EXPANDED_MIN_WIDTH + 1.0),
+        EditorToolbarMode::Expanded
+    );
+}
+
+#[test]
 fn oversized_width_overrides_keep_composer_visible() {
     let overrides = LayoutOverrides {
         asset_width: Some(288.0),
@@ -103,11 +292,72 @@ fn oversized_width_overrides_keep_composer_visible() {
 fn medium_window_uses_fresh_panel_ids_and_wider_composer_budget() {
     let layout = editor_panel_layout(1272.0, 720.0, &LayoutOverrides::default());
     assert_eq!(layout.id_suffix, "medium");
-    assert!(layout.central_min >= 520.0);
+    assert!(layout.central_min >= 400.0);
+    assert!(layout.central_min <= 520.0);
     assert!(
         layout.asset_browser.max + layout.graph.max + layout.inspector.max + layout.central_min
             <= 1272.0
     );
+}
+
+#[test]
+fn screenshot_width_docks_never_overlap_composer_and_inspector() {
+    for width in [920.0, 1040.0, 1264.0, 1275.0] {
+        let dock = resolve_editor_dock_layout(
+            width,
+            560.0,
+            &LayoutOverrides::default(),
+            EditorDockVisibility {
+                asset_browser: true,
+                graph: true,
+                inspector: true,
+            },
+        );
+        let inspector = dock.inspector.expect("inspector visible");
+        let splitter = dock.inspector_splitter.expect("inspector splitter visible");
+
+        assert!(
+            dock.composer.x + dock.composer.w <= splitter.x + 0.1,
+            "composer body must end before inspector splitter at width {width}"
+        );
+        assert!(
+            splitter.x + splitter.w <= inspector.x + 0.1,
+            "splitter must end before inspector body at width {width}"
+        );
+        assert!(
+            inspector.x + inspector.w <= width + 0.1,
+            "inspector must remain inside viewport at width {width}"
+        );
+    }
+}
+
+#[test]
+fn manual_splitters_can_make_composer_narrow_without_negative_geometry() {
+    let overrides = LayoutOverrides {
+        dock_reference_width: Some(1275.0),
+        asset_width: Some(150.0),
+        graph_width: Some(360.0),
+        inspector_width: Some(300.0),
+        ..Default::default()
+    };
+    let dock = resolve_editor_dock_layout(
+        1000.0,
+        560.0,
+        &overrides,
+        EditorDockVisibility {
+            asset_browser: true,
+            graph: true,
+            inspector: true,
+        },
+    );
+
+    assert!(dock.composer.w >= dock.panel_sizes.central_min - 0.1);
+    assert!(
+        dock.panel_sizes.central_min <= 430.0,
+        "composer minimum should allow the responsive toolbar to adapt instead of blocking resize"
+    );
+    assert!(dock.composer.w > 0.0);
+    assert!(dock.inspector.unwrap().x > dock.composer.x);
 }
 
 #[test]
@@ -178,4 +428,45 @@ fn workspace_layout_normalize_restores_missing_panel_state() {
         );
     }
     assert!(!layout.panel(WorkspacePanelId::Validation).visible);
+}
+
+fn assert_dock_ratios_close(
+    first: EditorDockLayout,
+    second: EditorDockLayout,
+    tolerance: f32,
+) {
+    for (label, first_ratio, second_ratio) in [
+        (
+            "asset",
+            first.asset_browser.unwrap().w / first_width(&first),
+            second.asset_browser.unwrap().w / first_width(&second),
+        ),
+        (
+            "graph",
+            first.graph.unwrap().w / first_width(&first),
+            second.graph.unwrap().w / first_width(&second),
+        ),
+        (
+            "composer",
+            first.composer.w / first_width(&first),
+            second.composer.w / first_width(&second),
+        ),
+        (
+            "inspector",
+            first.inspector.unwrap().w / first_width(&first),
+            second.inspector.unwrap().w / first_width(&second),
+        ),
+    ] {
+        assert!(
+            (first_ratio - second_ratio).abs() <= tolerance,
+            "{label} ratio drifted from {first_ratio:.3} to {second_ratio:.3}"
+        );
+    }
+}
+
+fn first_width(layout: &EditorDockLayout) -> f32 {
+    layout
+        .inspector
+        .map(|rect| rect.x + rect.w)
+        .unwrap_or(layout.composer.x + layout.composer.w)
 }

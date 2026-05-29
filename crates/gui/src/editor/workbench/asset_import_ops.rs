@@ -58,7 +58,12 @@ impl EditorWorkbench {
                             kind.label(),
                             imported
                         )));
-                        let _ = self.sync_graph_to_script();
+                        if let Err(err) = self.sync_graph_to_script() {
+                            self.toast = Some(ToastState::error(format!(
+                                "{} imported but graph sync failed: {err}",
+                                kind.label()
+                            )));
+                        }
                     }
                     Err(err) => {
                         self.toast = Some(ToastState::error(format!(
@@ -384,7 +389,8 @@ impl EditorWorkbench {
         }
         self.node_graph.set_single_selection(Some(node_id));
         self.selected_node = Some(node_id);
-        let _ = self.sync_graph_to_script();
+        self.sync_graph_to_script()
+            .map_err(|err| format!("asset assigned but graph sync failed: {err}"))?;
         Ok(node_id)
     }
 

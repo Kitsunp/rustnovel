@@ -17,6 +17,9 @@ fn matrix_contains_preview_and_runtime_contracts() {
     assert!(contract_matrix()
         .iter()
         .any(|entry| entry.fidelity == FidelityClass::FallbackDegraded));
+    assert!(contract_matrix()
+        .iter()
+        .any(|entry| entry.fidelity == FidelityClass::HeadlessSimulated));
 }
 
 #[test]
@@ -39,11 +42,12 @@ fn raw_dialogue_is_runtime_real() {
 }
 
 #[test]
-fn extcall_generic_node_is_export_supported() {
+fn extcall_generic_node_requires_host_capability_for_export() {
     let contract = contract_for_authoring_node(&StoryNode::Generic(EventRaw::ExtCall {
         command: "hook".to_string(),
         args: vec!["x".to_string()],
     }));
-    assert!(contract.export_supported);
-    assert_eq!(contract.fidelity, FidelityClass::RuntimeReal);
+    assert!(contract.runtime_supported);
+    assert!(!contract.export_supported);
+    assert_eq!(contract.fidelity, FidelityClass::HeadlessSimulated);
 }

@@ -6,7 +6,9 @@
 //! visual novel scripts with timeline, graph, and viewport panels.
 
 fn main() {
-    let _ = tracing_subscriber::fmt::try_init();
+    if let Err(err) = tracing_subscriber::fmt::try_init() {
+        eprintln!("Editor logging already initialized or unavailable: {err}");
+    }
     let initial_project = match parse_initial_project(std::env::args().skip(1)) {
         Ok(value) => value,
         Err(err) => {

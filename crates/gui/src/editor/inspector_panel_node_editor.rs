@@ -207,10 +207,20 @@ impl<'a> InspectorPanel<'a> {
         }
 
         if let Some(profile_id) = actions.save_scene_profile_req {
-            let _ = self.graph.save_scene_profile(profile_id, node_id);
+            if !self.graph.save_scene_profile(profile_id, node_id) {
+                ui.colored_label(
+                    egui::Color32::from_rgb(255, 150, 120),
+                    format!("Could not save scene profile for node {node_id}."),
+                );
+            }
         }
         if let Some(profile_id) = actions.apply_scene_profile_req {
-            let _ = self.graph.apply_scene_profile(&profile_id, node_id);
+            if !self.graph.apply_scene_profile(&profile_id, node_id) {
+                ui.colored_label(
+                    egui::Color32::from_rgb(255, 150, 120),
+                    format!("Could not apply scene profile '{profile_id}' to node {node_id}."),
+                );
+            }
         }
         actions.inspector_action
     }

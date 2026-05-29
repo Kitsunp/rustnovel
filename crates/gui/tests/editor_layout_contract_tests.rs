@@ -1,7 +1,9 @@
 use eframe::egui;
 use visual_novel_engine::{EntityId, PropertyType, Timeline};
 use visual_novel_gui::editor::timeline_panel::{
-    add_keyframe, property_label, ANIMATABLE_PROPERTIES,
+    add_keyframe, keyframe_marker_x, property_label, timeline_lane_rect,
+    timeline_track_list_height, ANIMATABLE_PROPERTIES, TIMELINE_TRACK_LIST_MAX_HEIGHT,
+    TIMELINE_TRACK_LIST_MIN_HEIGHT,
 };
 use visual_novel_gui::editor::undo::{UndoStack, MAX_UNDO_STATES};
 use visual_novel_gui::editor::visual_composer::viewport::composer_viewport_size;
@@ -60,6 +62,37 @@ fn timeline_helpers_create_tracks_and_label_supported_properties() {
     for property in ANIMATABLE_PROPERTIES {
         assert!(!property_label(property).is_empty());
     }
+}
+
+#[test]
+fn timeline_track_geometry_keeps_markers_inside_lane_for_window_sizes() {
+    for width in [220.0, 480.0, 1280.0] {
+        let row = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 28.0));
+        let lane = timeline_lane_rect(row);
+        assert!(lane.left() >= row.left());
+        assert!(lane.right() <= row.right());
+        assert!(lane.width() >= 1.0);
+
+        let start = keyframe_marker_x(lane, 0, 120);
+        let middle = keyframe_marker_x(lane, 60, 120);
+        let end = keyframe_marker_x(lane, 120, 120);
+        assert!(start >= lane.left() && start <= lane.right());
+        assert!(middle > start && middle < end);
+        assert!(end >= lane.left() && end <= lane.right());
+    }
+}
+
+#[test]
+fn timeline_track_list_height_is_stable_for_compact_and_fullscreen_modes() {
+    assert_eq!(
+        timeline_track_list_height(12.0),
+        TIMELINE_TRACK_LIST_MIN_HEIGHT
+    );
+    assert_eq!(
+        timeline_track_list_height(900.0),
+        TIMELINE_TRACK_LIST_MAX_HEIGHT
+    );
+    assert_eq!(timeline_track_list_height(96.0), 96.0);
 }
 
 #[test]

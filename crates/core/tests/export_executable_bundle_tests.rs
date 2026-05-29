@@ -113,9 +113,10 @@ fn minimal_macho() -> Vec<u8> {
 #[test]
 fn windows_executable_bundle_rejects_missing_runtime_exe() {
     let (_tmp, project_root) = build_project_fixture();
+    let output_root = project_root.join("dist_missing_runtime");
     let err = export_windows_executable_bundle(windows_spec(
         project_root.clone(),
-        project_root.join("dist_missing_runtime"),
+        output_root.clone(),
         None,
     ))
     .expect_err("missing exe runtime must fail");
@@ -123,6 +124,10 @@ fn windows_executable_bundle_rejects_missing_runtime_exe() {
     assert!(
         err.to_string().contains(".exe runtime_artifact"),
         "unexpected error: {err}"
+    );
+    assert!(
+        !output_root.exists(),
+        "failed executable export must not leave a partial bundle"
     );
 }
 

@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 use tempfile::TempDir;
 use visual_novel_engine::{
     export_bundle,
@@ -55,6 +57,47 @@ fn export_bundle_hmac_integrity_writes_signature() {
     let signature_file =
         fs::read_to_string(out.join("meta/bundle.hmac_sha256")).expect("signature file");
     assert_eq!(signature, signature_file);
+    let file_manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(out.join("meta/bundle_file_manifest.json"))
+            .expect("bundle file manifest"),
+    )
+    .expect("manifest json");
+    assert_eq!(
+        file_manifest["integrity_scope"],
+        "bundle_file_manifest_v2_signed_manifest_covers_payload_files"
+    );
+    assert_eq!(file_manifest["manifest_version"], 2);
+    let manifest_files = file_manifest["files"].as_array().expect("files array");
+    assert!(manifest_files
+        .iter()
+        .any(|entry| entry["path"] == "scripts/compiled.vnc"));
+    assert!(manifest_files
+        .iter()
+        .any(|entry| entry["path"] == "launch.sh"));
+    assert!(manifest_files
+        .iter()
+        .any(|entry| entry["path"] == "meta/package_report.json"));
+    assert!(!manifest_files
+        .iter()
+        .any(|entry| entry["path"] == "meta/bundle_file_manifest.json"));
+    assert!(!manifest_files
+        .iter()
+        .any(|entry| entry["path"] == "meta/bundle.hmac_sha256"));
+    assert_eq!(
+        report.integrity_scope,
+        "bundle_file_manifest_v2_signed_manifest_covers_payload_files"
+    );
+    let manifest_text =
+        fs::read_to_string(out.join("meta/bundle_file_manifest.json")).expect("manifest text");
+    let mut mac = Hmac::<Sha256>::new_from_slice(b"top-secret").expect("hmac key");
+    mac.update(manifest_text.as_bytes());
+    let expected = mac
+        .finalize()
+        .into_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert_eq!(signature, expected);
     assert!(Path::new(&out.join("launch.sh")).is_file());
 }
 

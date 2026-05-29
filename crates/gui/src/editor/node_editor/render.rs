@@ -21,7 +21,8 @@ impl<'a> NodeEditorPanel<'a> {
         }
 
         // 1. Handle Drag Start (Nodes)
-        if response.drag_started_by(egui::PointerButton::Primary) && !ui.input(|i| i.modifiers.ctrl)
+        if response.drag_started_by(egui::PointerButton::Primary)
+            && !ui.input(|i| i.modifiers.ctrl || i.key_down(egui::Key::Space))
         {
             if let Some(pos) = response.interact_pointer_pos() {
                 // Check ports first (priority over node move)
@@ -72,7 +73,9 @@ impl<'a> NodeEditorPanel<'a> {
                     }
                 }
 
-                if self.graph.dragging_node.is_none() && !ui.input(|i| i.modifiers.ctrl) {
+                if self.graph.dragging_node.is_none()
+                    && !ui.input(|i| i.modifiers.ctrl || i.key_down(egui::Key::Space))
+                {
                     let graph_pos = self.screen_to_graph(rect, pos);
                     self.graph.marquee_start = Some(graph_pos);
                     self.graph.marquee_current = Some(graph_pos);
@@ -98,7 +101,6 @@ impl<'a> NodeEditorPanel<'a> {
         if response.drag_stopped() {
             self.graph.dragging_node = None;
             if let Some((from, _)) = self.graph.connecting_from {
-                let mut dropped_on_node = false;
                 if let Some(pos) = response.interact_pointer_pos() {
                     for (to_id, _, to_pos) in nodes.iter().rev() {
                         let screen_pos = self.graph_to_screen(rect, *to_pos);
@@ -116,12 +118,10 @@ impl<'a> NodeEditorPanel<'a> {
                                 .map(|(_, port)| port)
                                 .unwrap_or(0);
                             self.graph.connect_or_branch(from, port, *to_id);
-                            dropped_on_node = true;
                             break;
                         }
                     }
                 }
-                let _ = dropped_on_node;
                 self.graph.cancel_connection();
             }
             self.finish_marquee_selection(ui);
@@ -427,9 +427,11 @@ impl<'a> NodeEditorPanel<'a> {
                 self.graph.set_single_selection(Some(id));
             }
         }
-        if let Some((id, pos)) = right_clicked_node {
+        let context_click_without_drag =
+            response.secondary_clicked() && response.drag_delta().length_sq() <= 16.0;
+        if let Some((id, pos)) = right_clicked_node.filter(|_| context_click_without_drag) {
             self.graph.context_menu = Some(ContextMenu::for_node(id, pos));
-        } else if response.secondary_clicked() {
+        } else if context_click_without_drag {
             if let Some(pos) = response
                 .interact_pointer_pos()
                 .filter(|pos| rect.contains(*pos))

@@ -1,6 +1,7 @@
 use super::audio::PyAudio;
 use super::conversion::{event_to_python, ui_state_to_python};
-use super::types::{vn_error_to_py, PyResourceConfig};
+use super::types::{vn_error_to_py, PyResourceConfig, PyRouteTree, PySceneFrame};
+use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyDictMethods, PyList, PyListMethods};
 use std::collections::BTreeSet;
@@ -111,6 +112,9 @@ impl PyEngine {
             character_dict.set_item("name", character.name.as_ref())?;
             character_dict.set_item("expression", character.expression.as_deref())?;
             character_dict.set_item("position", character.position.as_deref())?;
+            character_dict.set_item("x", character.x)?;
+            character_dict.set_item("y", character.y)?;
+            character_dict.set_item("scale", character.scale)?;
             characters.append(character_dict)?;
         }
         dict.set_item("characters", characters)?;
@@ -138,6 +142,14 @@ impl PyEngine {
         let event = self.inner.current_event().map_err(vn_error_to_py)?;
         let ui = UiState::from_event(&event, self.inner.visual_state());
         ui_state_to_python(&ui, py)
+    }
+
+    fn route_tree(&self) -> PyRouteTree {
+        self.inner.route_tree().into()
+    }
+
+    fn scene_frame(&self) -> PySceneFrame {
+        self.inner.scene_frame().into()
     }
 
     fn get_last_audio_commands<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
@@ -202,9 +214,9 @@ impl PyEngine {
 
     fn get_memory_usage<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
         let dict = PyDict::new(py);
-        dict.set_item("current_texture_bytes", 0usize)?;
         dict.set_item("max_texture_memory", self.max_texture_memory)?;
         dict.set_item("max_script_bytes", self.resource_limits.max_script_bytes)?;
+        dict.set_item("texture_memory_available", false)?;
         Ok(dict.into())
     }
 
@@ -224,8 +236,10 @@ impl PyEngine {
         Ok(list.into())
     }
 
-    fn is_loading(&self) -> bool {
-        false
+    fn is_loading(&self) -> PyResult<bool> {
+        Err(PyNotImplementedError::new_err(
+            "loading state is not available in the headless Python engine",
+        ))
     }
 
     fn register_handler(&mut self, callback: Py<PyAny>) {

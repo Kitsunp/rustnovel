@@ -251,7 +251,7 @@ fn validate_reports_scene_patch_and_generic_limits() {
 }
 
 #[test]
-fn extcall_generic_is_exportable_and_preserves_trace_context() {
+fn extcall_generic_requires_host_capability_and_preserves_trace_context() {
     let dir = tempdir().expect("tempdir");
     let project_root = dir.path().join("renpy_project");
     let game_dir = project_root.join("game");
@@ -310,10 +310,10 @@ label start:
 
     let issues = validate_with_asset_probe(&graph, |_asset| true);
     assert!(
-        !issues
+        issues
             .iter()
             .any(|issue| issue.code == LintCode::ContractUnsupportedExport),
-        "ExtCall generic should be exportable by contract"
+        "ExtCall generic must require an explicit host/runtime capability"
     );
 
     let trace_issue = issues

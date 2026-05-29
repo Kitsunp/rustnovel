@@ -124,10 +124,9 @@ fn render_event_ui(
         Ok(event) => {
             if player.should_skip_current(&event, engine) {
                 if matches!(event, EventCompiled::ExtCall { .. }) {
-                    let _ = engine.resume();
-                    audio_commands.extend(engine.take_audio_commands());
-                } else if let Ok((cmd, _)) = engine.step() {
-                    audio_commands.extend(cmd);
+                    resume_engine(engine, toast, &mut audio_commands);
+                } else {
+                    step_engine(engine, toast, &mut audio_commands);
                 }
                 ctx.request_repaint_after(Duration::from_millis(16));
                 return audio_commands;
@@ -174,9 +173,7 @@ fn render_event_ui(
                         )
                     };
                     if should_advance {
-                        if let Ok((cmd, _)) = engine.step() {
-                            audio_commands.extend(cmd);
-                        }
+                        step_engine(engine, toast, &mut audio_commands);
                     }
                 }
                 EventCompiled::Choice(c) => {
@@ -236,9 +233,7 @@ fn render_event_ui(
                         content::render_scene(ui, player, now_sec)
                     };
                     if should_advance {
-                        if let Ok((cmd, _)) = engine.step() {
-                            audio_commands.extend(cmd);
-                        }
+                        step_engine(engine, toast, &mut audio_commands);
                     }
                 }
                 EventCompiled::Transition(t) => {
@@ -246,14 +241,14 @@ fn render_event_ui(
                         ui,
                         ctx,
                         engine,
+                        toast,
                         t.kind,
                         t.duration_ms,
                         &mut audio_commands,
                     );
                 }
                 EventCompiled::ExtCall { .. } => {
-                    let _ = engine.resume();
-                    audio_commands.extend(engine.take_audio_commands());
+                    resume_engine(engine, toast, &mut audio_commands);
                     ctx.request_repaint_after(Duration::from_millis(16));
                 }
                 EventCompiled::Jump { .. }
@@ -263,9 +258,7 @@ fn render_event_ui(
                 | EventCompiled::Patch(_)
                 | EventCompiled::AudioAction(_)
                 | EventCompiled::SetCharacterPosition(_) => {
-                    if let Ok((cmd, _)) = engine.step() {
-                        audio_commands.extend(cmd);
-                    }
+                    step_engine(engine, toast, &mut audio_commands);
                     ctx.request_repaint_after(Duration::from_millis(16));
                 }
             }
@@ -295,6 +288,38 @@ fn render_event_ui(
         &mut audio_commands,
     );
     audio_commands
+}
+
+fn step_engine(
+    engine: &mut Engine,
+    toast: &mut Option<ToastState>,
+    audio_commands: &mut Vec<AudioCommand>,
+) {
+    match engine.step() {
+        Ok((cmd, _)) => audio_commands.extend(cmd),
+        Err(err) => {
+            *toast = Some(ToastState::error(format!(
+                "Engine step failed at ip {}: {err}",
+                engine.state().position
+            )));
+        }
+    }
+}
+
+fn resume_engine(
+    engine: &mut Engine,
+    toast: &mut Option<ToastState>,
+    audio_commands: &mut Vec<AudioCommand>,
+) {
+    match engine.resume() {
+        Ok(()) => audio_commands.extend(engine.take_audio_commands()),
+        Err(err) => {
+            *toast = Some(ToastState::error(format!(
+                "Engine resume failed at ip {}: {err}",
+                engine.state().position
+            )));
+        }
+    }
 }
 
 fn render_player_menu_preview(
@@ -574,20 +599,10 @@ fn render_preview_history_tab(ui: &mut egui::Ui, engine: &Engine) {
 }
 
 fn render_preview_routes_tab(ui: &mut egui::Ui, engine: &Engine) {
-    if engine.choice_history().is_empty() {
-        ui.label("No choices selected in this run yet.");
-        return;
-    }
-    egui::ScrollArea::vertical()
-        .max_height(320.0)
-        .show(ui, |ui| {
-            for (idx, entry) in engine.choice_history().iter().enumerate() {
-                ui.colored_label(
-                    egui::Color32::from_rgb(235, 238, 245),
-                    crate::player_route_history_label(idx, entry),
-                );
-            }
-        });
+    let route_tree = engine.route_tree();
+    crate::editor::RouteTreeView::new(&route_tree)
+        .with_choice_history(engine.choice_history())
+        .ui(ui);
 }
 
 fn render_preview_system_tab(

@@ -98,8 +98,10 @@ fn extcall_simulation_fidelity_contract() {
     let runtime_contract = crate::runtime::contract_for_authoring_node(&ext_node);
     assert_eq!(
         runtime_contract.fidelity,
-        crate::runtime::FidelityClass::RuntimeReal
+        crate::runtime::FidelityClass::HeadlessSimulated
     );
+    assert!(runtime_contract.runtime_supported);
+    assert!(!runtime_contract.export_supported);
 
     let result = compiler::compile_authoring_graph(&graph, None);
     let dry_run = result.dry_run_report.expect("dry-run report");

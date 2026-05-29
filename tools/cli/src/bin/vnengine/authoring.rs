@@ -5,8 +5,9 @@ use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use visual_novel_engine::authoring::{
     apply_authoring_document_command_headless, composer, load_authoring_document_or_script,
-    validate_authoring_graph_with_project_root, AuthoringCommand as CoreAuthoringCommand,
-    AuthoringDocument, AuthoringDocumentCommand, AuthoringValidationReport, LintSeverity,
+    source_looks_like_authoring_document, validate_authoring_graph_with_project_root,
+    AuthoringCommand as CoreAuthoringCommand, AuthoringDocument, AuthoringDocumentCommand,
+    AuthoringValidationReport, LintSeverity,
 };
 use visual_novel_engine::{run_repro_case, ReproCase};
 
@@ -72,6 +73,16 @@ pub struct ApplyCommandArgs {
     pub in_place: bool,
     #[arg(long, default_value_t = false)]
     pub json: bool,
+    #[arg(long, default_value_t = false)]
+    pub dry_run: bool,
+}
+
+#[derive(Serialize)]
+struct ApplyCommandReport {
+    dry_run: bool,
+    wrote: bool,
+    output: Option<String>,
+    outcome: visual_novel_engine::authoring::AuthoringDocumentCommandOutcome,
 }
 
 #[derive(Subcommand)]
@@ -196,25 +207,40 @@ fn run_apply_command(args: ApplyCommandArgs) -> Result<()> {
         apply_authoring_document_command_headless(document, command).map_err(anyhow::Error::msg)?;
     let document = result.document;
     let outcome = result.outcome;
-    write_mutated_document(
-        &args.project,
-        args.output.as_deref(),
-        args.in_place,
-        &document,
-    )?;
+    let output_path = target_mutation_path(&args.project, args.output.as_deref(), args.in_place);
+    if !args.dry_run {
+        write_mutated_document(
+            &args.project,
+            args.output.as_deref(),
+            args.in_place,
+            &document,
+        )?;
+    }
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&outcome)?);
+        if args.dry_run {
+            let report = ApplyCommandReport {
+                dry_run: true,
+                wrote: false,
+                output: output_path.map(|path| path.display().to_string()),
+                outcome,
+            };
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            println!("{}", serde_json::to_string_pretty(&outcome)?);
+        }
     } else {
         println!(
-            "{} {}",
-            outcome.operation.operation_id, outcome.operation.operation_kind
+            "{} {}{}",
+            outcome.operation.operation_id,
+            outcome.operation.operation_kind,
+            if args.dry_run { " dry-run" } else { "" }
         );
     }
     Ok(())
 }
 
 fn explain_diagnostic(args: &ExplainArgs) -> Result<()> {
-    let _ =
+    let _document =
         load_authoring_document_or_script(&args.project).context("load authoring/script entry")?;
     let report = read_report(&args.report)?;
     let Some(issue) = report.explain(&args.diagnostic_id) else {
@@ -401,11 +427,18 @@ fn build_validation_report(
 fn load_authoring_document(path: &Path) -> Result<AuthoringDocument> {
     let source =
         std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    if source_looks_like_authoring_document(&source) {
+        return AuthoringDocument::from_json(&source)
+            .with_context(|| format!("parse authoring document {}", path.display()));
+    }
     match AuthoringDocument::from_json(&source) {
         Ok(document) => Ok(document),
-        Err(_) => Ok(AuthoringDocument::new(load_authoring_document_or_script(
-            path,
-        )?)),
+        Err(err) => {
+            let graph = load_authoring_document_or_script(path).with_context(|| {
+                format!("load legacy runtime script after authoring parse failed ({err})")
+            })?;
+            Ok(AuthoringDocument::new(graph))
+        }
     }
 }
 
@@ -421,6 +454,14 @@ fn write_mutated_document(
         output.ok_or_else(|| anyhow::anyhow!("mutating command requires --output or --in-place"))?
     };
     write_json(path, document)
+}
+
+fn target_mutation_path(input: &Path, output: Option<&Path>, in_place: bool) -> Option<PathBuf> {
+    if in_place {
+        Some(input.to_path_buf())
+    } else {
+        output.map(Path::to_path_buf)
+    }
 }
 
 fn apply_document_command(
@@ -451,7 +492,8 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(value)?;
-    std::fs::write(path, json).with_context(|| format!("write {}", path.display()))?;
+    super::atomic_write(path, json.as_bytes())
+        .with_context(|| format!("write {}", path.display()))?;
     Ok(())
 }
 

@@ -13,7 +13,9 @@ use std::sync::Arc;
 // use pixels::{Pixels, SurfaceTexture}; // Removed unused imports
 // Logic moved to software.rs
 use visual_novel_engine::{
-    runtime::{AudioCommand, Engine, EventCompiled, UiState, VisualState},
+    runtime::{
+        AudioCommand, Engine, EventCompiled, PrefetchMode, SceneFrame, UiState, VisualState,
+    },
     RenderOutput, TextRenderer,
 };
 use winit::{
@@ -26,6 +28,7 @@ use winit::{
 pub use self::assets::{AssetStore, MemoryAssetStore};
 pub use self::audio::{audio_duration, Audio, AudioCapabilities, RodioBackend, SilentAudio};
 pub use self::input::{ConfigurableInput, Input, InputAction};
+pub use self::render::RuntimeSceneFramePresenter;
 use self::render::{BuiltinSoftwareDrawer, RenderBackend, SoftwareBackend, WgpuBackend};
 
 // AssetStore and MemoryAssetStore moved to assets.rs
@@ -38,6 +41,7 @@ pub struct RuntimeApp<I, A, S> {
     audio: A,
     assets: S,
     ui: UiState,
+    scene_frame: SceneFrame,
     last_bgm_path: Option<String>,
     prefetch_depth: usize,
 }
@@ -59,6 +63,7 @@ where
         let event = engine.current_event()?;
         let visual = Self::derive_visual(&engine, &event);
         let ui = UiState::from_event(&event, &visual);
+        let scene_frame = engine.scene_frame();
         let mut app = Self {
             engine,
             visual,
@@ -66,6 +71,7 @@ where
             audio,
             assets,
             ui,
+            scene_frame,
             last_bgm_path: None,
             prefetch_depth: Self::DEFAULT_PREFETCH_DEPTH,
         };
@@ -109,6 +115,10 @@ where
         &self.ui
     }
 
+    pub fn scene_frame(&self) -> &SceneFrame {
+        &self.scene_frame
+    }
+
     pub fn prefetch_depth(&self) -> usize {
         self.prefetch_depth
     }
@@ -129,7 +139,7 @@ where
                 self.prefetch_upcoming_assets();
             }
             InputAction::Choose(index) => {
-                let _ = self.engine.choose(index)?;
+                self.engine.choose(index)?;
                 let audio_commands = self.engine.take_audio_commands();
                 self.refresh_state()?;
                 self.apply_audio_commands(&audio_commands);
@@ -146,6 +156,7 @@ where
         let event = self.engine.current_event()?;
         self.visual = Self::derive_visual(&self.engine, &event);
         self.ui = UiState::from_event(&event, &self.visual);
+        self.scene_frame = self.engine.scene_frame();
         Ok(())
     }
 
@@ -199,8 +210,16 @@ where
         if self.prefetch_depth == 0 {
             return;
         }
-        for path in self.engine.peek_next_asset_paths(self.prefetch_depth) {
-            let _ = self.assets.load_bytes(&path);
+        for path in self
+            .engine
+            .peek_next_asset_paths_with_mode(PrefetchMode::BranchAware {
+                depth: self.prefetch_depth,
+                max_assets: self.prefetch_depth.saturating_mul(8).max(8),
+            })
+        {
+            if let Err(err) = self.assets.load_bytes(&path) {
+                eprintln!("prefetch failed for '{path}': {err}");
+            }
         }
     }
 
@@ -289,7 +308,10 @@ where
                     elwt.exit();
                 }
                 WindowEvent::Resized(size) => {
-                    backend.resize(size.width, size.height);
+                    if let Err(e) = backend.resize(size.width, size.height) {
+                        eprintln!("Resize error: {}", e);
+                        elwt.exit();
+                    }
                 }
                 WindowEvent::RedrawRequested => {
                     if let Err(e) = backend.render(app.ui()) {

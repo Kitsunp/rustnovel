@@ -1,8 +1,11 @@
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
+use walkdir::WalkDir;
 
 use crate::error::VnResult;
 use crate::load_runtime_script_from_entry;
@@ -31,12 +34,137 @@ use materialize::{copy_runtime_artifact, materialize_executable, write_launcher}
 pub use capabilities::ExportCapabilityReport;
 pub use plan::build_export_plan;
 pub use spec::{
-    BundleAssetEntry, BundleIntegrity, ExportBundleReport, ExportBundleSpec, ExportPlan,
-    ExportTargetPlatform,
+    BundleAssetEntry, BundleFileEntry, BundleIntegrity, ExportBundleReport, ExportBundleSpec,
+    ExportPlan, ExportTargetPlatform,
 };
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ExportService;
+
+impl ExportService {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn plan_export(&self, spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
+        build_export_plan(spec)
+    }
+
+    pub fn validate_export_plan(&self, plan: &ExportPlan) -> VnResult<()> {
+        if plan.errors.is_empty() {
+            Ok(())
+        } else {
+            Err(invalid_bundle(format!(
+                "export plan has errors: {}",
+                plan.errors.join("; ")
+            )))
+        }
+    }
+
+    pub fn execute_export(&self, spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
+        let plan = self.plan_export(&spec)?;
+        self.validate_export_plan(&plan)?;
+        export_bundle_atomic(spec)
+    }
+}
+
 pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
-    let _plan = build_export_plan(&spec)?;
+    ExportService::new().execute_export(spec)
+}
+
+fn export_bundle_atomic(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
+    let final_output_root = spec.output_root.clone();
+    let parent = final_output_root
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    fs::create_dir_all(&parent)
+        .map_err(|e| invalid_bundle(format!("create output parent '{}': {e}", parent.display())))?;
+    let output_name = final_output_root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("bundle");
+    let nonce = Uuid::new_v4();
+    let staging_root = parent.join(format!(".{output_name}.staging-{nonce}"));
+    let backup_root = parent.join(format!(".{output_name}.rollback-{nonce}"));
+
+    let mut staging_spec = spec;
+    staging_spec.output_root = staging_root.clone();
+    match export_bundle_materialized(staging_spec, &final_output_root) {
+        Ok(report) => {
+            let output_root = final_output_root
+                .canonicalize()
+                .unwrap_or(final_output_root);
+            publish_staged_bundle(&staging_root, &output_root, &backup_root)?;
+            Ok(report)
+        }
+        Err(err) => {
+            if let Err(cleanup_err) = fs::remove_dir_all(&staging_root) {
+                return Err(invalid_bundle(format!(
+                    "{err}; additionally failed to remove staging '{}': {cleanup_err}",
+                    staging_root.display()
+                )));
+            }
+            Err(err)
+        }
+    }
+}
+
+fn publish_staged_bundle(staging: &Path, final_output: &Path, backup: &Path) -> VnResult<()> {
+    if backup.exists() {
+        return Err(invalid_bundle(format!(
+            "rollback path already exists '{}'",
+            backup.display()
+        )));
+    }
+    let had_existing = final_output.exists();
+    if had_existing {
+        fs::rename(final_output, backup).map_err(|e| {
+            invalid_bundle(format!(
+                "prepare rollback '{}' -> '{}': {e}",
+                final_output.display(),
+                backup.display()
+            ))
+        })?;
+    }
+
+    match fs::rename(staging, final_output) {
+        Ok(()) => {
+            if had_existing {
+                fs::remove_dir_all(backup).map_err(|e| {
+                    invalid_bundle(format!("remove rollback '{}': {e}", backup.display()))
+                })?;
+            }
+            Ok(())
+        }
+        Err(err) => {
+            let restore_error = if had_existing {
+                fs::rename(backup, final_output).err()
+            } else {
+                None
+            };
+            if let Some(restore_error) = restore_error {
+                return Err(invalid_bundle(format!(
+                    "publish staged bundle '{}' -> '{}': {err}; rollback restore failed: {restore_error}",
+                    staging.display(),
+                    final_output.display()
+                )));
+            }
+            Err(invalid_bundle(format!(
+                "publish staged bundle '{}' -> '{}': {err}",
+                staging.display(),
+                final_output.display()
+            )))
+        }
+    }
+}
+
+fn export_bundle_materialized(
+    spec: ExportBundleSpec,
+    reported_output_root: &Path,
+) -> VnResult<ExportBundleReport> {
+    let plan = build_export_plan(&spec)?;
+    ExportService::new().validate_export_plan(&plan)?;
     let project_root = spec
         .project_root
         .canonicalize()
@@ -187,45 +315,14 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
     });
     let launcher_rel = write_launcher(spec.target_platform, &output_root, launch_target)?;
 
-    let bundle_hmac_sha256 = match spec.integrity {
-        BundleIntegrity::None => None,
-        BundleIntegrity::HmacSha256 => {
-            let key = spec
-                .hmac_key
-                .as_deref()
-                .filter(|v| !v.trim().is_empty())
-                .ok_or_else(|| invalid_bundle("integrity=hmac_sha256 requires hmac_key"))?;
-            let mut mac = HmacSha256::new_from_slice(key.as_bytes())
-                .map_err(|e| invalid_bundle(format!("init hmac: {e}")))?;
-            mac.update(&compiled_bytes);
-            mac.update(assets_manifest_json.as_bytes());
-            let manifest_bytes = fs::read(&manifest_out).map_err(|e| {
-                invalid_bundle(format!(
-                    "read bundle manifest for hmac '{}': {e}",
-                    manifest_out.display()
-                ))
-            })?;
-            mac.update(&manifest_bytes);
-            Some(to_hex(mac.finalize().into_bytes().as_slice()))
-        }
-    };
+    let integrity_scope = "bundle_file_manifest_v2_signed_manifest_covers_payload_files";
 
-    if let Some(signature) = &bundle_hmac_sha256 {
-        let signature_path = meta_dir.join("bundle.hmac_sha256");
-        fs::write(&signature_path, signature).map_err(|e| {
-            invalid_bundle(format!(
-                "write bundle signature '{}': {e}",
-                signature_path.display()
-            ))
-        })?;
-    }
-
-    let report = ExportBundleReport {
+    let mut report = ExportBundleReport {
         schema: "vnengine.export_bundle_report.v1".to_string(),
         target_platform: spec.target_platform.as_str().to_string(),
         output_layout_version: spec.output_layout_version,
         project_root: normalize_path_display(&project_root),
-        output_root: normalize_path_display(&output_root),
+        output_root: normalize_path_display(reported_output_root),
         script_source: normalize_path_display(
             Path::new("scripts").join(&runtime_script_rel).as_path(),
         ),
@@ -238,7 +335,11 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
         executable: executable_rel,
         launcher: launcher_rel,
         integrity: spec.integrity.as_str().to_string(),
-        bundle_hmac_sha256,
+        bundle_hmac_sha256: None,
+        bundle_file_manifest: Some(normalize_path_display(Path::new(
+            "meta/bundle_file_manifest.json",
+        ))),
+        integrity_scope: integrity_scope.to_string(),
         capabilities: capability_report,
     };
 
@@ -252,16 +353,132 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
         ))
     })?;
 
+    let file_manifest_entries = collect_bundle_file_manifest(&output_root)?;
+    let file_manifest_payload = serde_json::json!({
+        "manifest_version": 2,
+        "integrity_scope": integrity_scope,
+        "files": &file_manifest_entries,
+    });
+    let file_manifest_json = serde_json::to_string_pretty(&file_manifest_payload)
+        .map_err(|e| invalid_bundle(format!("serialize bundle file manifest: {e}")))?;
+    let file_manifest_out = meta_dir.join("bundle_file_manifest.json");
+    fs::write(&file_manifest_out, file_manifest_json.as_bytes()).map_err(|e| {
+        invalid_bundle(format!(
+            "write bundle file manifest '{}': {e}",
+            file_manifest_out.display()
+        ))
+    })?;
+
+    let bundle_hmac_sha256 = match spec.integrity {
+        BundleIntegrity::None => None,
+        BundleIntegrity::HmacSha256 => {
+            let key = spec
+                .hmac_key
+                .as_deref()
+                .filter(|v| !v.trim().is_empty())
+                .ok_or_else(|| invalid_bundle("integrity=hmac_sha256 requires hmac_key"))?;
+            let mut mac = HmacSha256::new_from_slice(key.as_bytes())
+                .map_err(|e| invalid_bundle(format!("init hmac: {e}")))?;
+            mac.update(file_manifest_json.as_bytes());
+            Some(to_hex(mac.finalize().into_bytes().as_slice()))
+        }
+    };
+
+    if let Some(signature) = &bundle_hmac_sha256 {
+        let signature_path = meta_dir.join("bundle.hmac_sha256");
+        fs::write(&signature_path, signature).map_err(|e| {
+            invalid_bundle(format!(
+                "write bundle signature '{}': {e}",
+                signature_path.display()
+            ))
+        })?;
+    }
+    report.bundle_hmac_sha256 = bundle_hmac_sha256;
+
     Ok(report)
+}
+
+fn collect_bundle_file_manifest(output_root: &Path) -> VnResult<Vec<BundleFileEntry>> {
+    let mut entries = Vec::new();
+    for entry in WalkDir::new(output_root).sort_by_file_name() {
+        let entry = entry.map_err(|e| invalid_bundle(format!("walk bundle output: {e}")))?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let rel_path = path.strip_prefix(output_root).map_err(|e| {
+            invalid_bundle(format!(
+                "strip bundle root '{}' from '{}': {e}",
+                output_root.display(),
+                path.display()
+            ))
+        })?;
+        let rel = normalize_path_display(rel_path);
+        let (sha256, size) = sha256_file(path)?;
+        entries.push(BundleFileEntry {
+            role: classify_bundle_file_role(&rel).to_string(),
+            path: rel,
+            sha256,
+            size,
+        });
+    }
+    Ok(entries)
+}
+
+fn sha256_file(path: &Path) -> VnResult<(String, u64)> {
+    let mut file = fs::File::open(path)
+        .map_err(|e| invalid_bundle(format!("open file for sha256 '{}': {e}", path.display())))?;
+    let mut hasher = Sha256::new();
+    let mut size = 0u64;
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buf).map_err(|e| {
+            invalid_bundle(format!("read file for sha256 '{}': {e}", path.display()))
+        })?;
+        if read == 0 {
+            break;
+        }
+        size += read as u64;
+        hasher.update(&buf[..read]);
+    }
+    Ok((to_hex(hasher.finalize().as_slice()), size))
+}
+
+fn classify_bundle_file_role(path: &str) -> &'static str {
+    if path.starts_with("scripts/") {
+        "script"
+    } else if path.starts_with("assets/") {
+        "asset"
+    } else if path.starts_with("runtime/") {
+        "runtime"
+    } else if path == "game.exe" || path == "game" {
+        "executable"
+    } else if path.starts_with("launch") {
+        "launcher"
+    } else if path.starts_with("meta/") {
+        "metadata"
+    } else {
+        "other"
+    }
 }
 
 pub fn export_executable_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
     let target = spec.target_platform;
+    let plan = build_export_plan(&spec)?;
+    ExportService::new().validate_export_plan(&plan)?;
+    let expected = target.expected_executable_name();
+    if plan.executable.as_deref() != Some(expected) {
+        let hint = match target {
+            ExportTargetPlatform::Windows => ".exe runtime_artifact",
+            ExportTargetPlatform::Linux => "linux runtime_artifact",
+            ExportTargetPlatform::Macos => "macos runtime_artifact",
+        };
+        return Err(invalid_bundle(format!(
+            "{} executable export requires a {hint} and must produce {expected}",
+            target.as_str()
+        )));
+    }
     let report = export_bundle(spec)?;
-    let expected = match target {
-        ExportTargetPlatform::Windows => "game.exe",
-        ExportTargetPlatform::Linux | ExportTargetPlatform::Macos => "game",
-    };
     if report.executable.as_deref() != Some(expected) {
         let hint = match target {
             ExportTargetPlatform::Windows => ".exe runtime_artifact",

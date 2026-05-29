@@ -148,7 +148,11 @@ impl EditorWorkbench {
         self.node_graph = previous_graph;
         self.node_graph.mark_modified();
         self.rebuild_authoring_session_from_fields();
-        let _ = self.sync_graph_to_script();
+        if let Err(err) = self.sync_graph_to_script() {
+            self.toast = Some(ToastState::warning(format!(
+                "Quick-fix revert restored graph; runtime preview sync failed: {err}"
+            )));
+        }
         self.record_editor_operation_now(
             "revert",
             "Reverted last quick-fix snapshot",
@@ -234,7 +238,11 @@ impl EditorWorkbench {
         });
 
         let previous_diag_id = issue.diagnostic_id();
-        let _ = self.sync_graph_to_script();
+        if let Err(err) = self.sync_graph_to_script() {
+            self.toast = Some(ToastState::warning(format!(
+                "Quick-fix applied; runtime preview sync failed: {err}"
+            )));
+        }
         self.selected_issue = self
             .validation_issues
             .iter()

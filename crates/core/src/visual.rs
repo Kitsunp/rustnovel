@@ -1,14 +1,17 @@
 //! Visual state handling for scenes.
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 
+use crate::error::{VnError, VnResult};
 use crate::event::{
     CharacterPlacementCompiled, ScenePatchCompiled, SceneUpdateCompiled,
     SetCharacterPositionCompiled, SharedStr,
 };
 
 /// Current visual state for rendering.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct VisualState {
     pub background: Option<SharedStr>,
     pub music: Option<SharedStr>,
@@ -36,19 +39,27 @@ impl VisualState {
     /// Applies a partial scene patch to the visual state.
     pub fn apply_patch(&mut self, patch: &ScenePatchCompiled) {
         if let Some(background) = &patch.background {
-            self.background = Some(background.clone());
+            if background.as_ref().is_empty() {
+                self.background = None;
+            } else {
+                self.background = Some(background.clone());
+            }
         }
         if let Some(music) = &patch.music {
-            self.music = Some(music.clone());
+            if music.as_ref().is_empty() {
+                self.music = None;
+            } else {
+                self.music = Some(music.clone());
+            }
         }
         if !patch.remove.is_empty() {
             let remove = patch
                 .remove
                 .iter()
                 .map(|name| name.as_ref())
-                .collect::<Vec<_>>();
+                .collect::<HashSet<_>>();
             self.characters
-                .retain(|character| !remove.contains(&character.name.as_ref()));
+                .retain(|character| !remove.contains(character.name.as_ref()));
         }
         for patch_update in &patch.update {
             if let Some(existing) =
@@ -59,6 +70,15 @@ impl VisualState {
                 }
                 if let Some(position) = &patch_update.position {
                     existing.position = Some(position.clone());
+                }
+                if patch_update.x.is_some() {
+                    existing.x = patch_update.x;
+                }
+                if patch_update.y.is_some() {
+                    existing.y = patch_update.y;
+                }
+                if patch_update.scale.is_some() {
+                    existing.scale = patch_update.scale;
                 }
             }
         }
@@ -83,10 +103,13 @@ impl VisualState {
     }
 
     /// Sets a character's absolute position and scale.
-    pub fn set_character_position(&mut self, pos: &SetCharacterPositionCompiled) {
+    pub fn set_character_position(&mut self, pos: &SetCharacterPositionCompiled) -> VnResult<()> {
         let matching_count = character_name_match_count(&self.characters, pos.name.as_ref());
         if matching_count > 1 {
-            return;
+            return Err(VnError::InvalidScript(format!(
+                "ambiguous character position update for '{}' matched {matching_count} instances",
+                pos.name.as_ref()
+            )));
         }
         if let Some(existing) =
             unique_character_by_name_mut(&mut self.characters, pos.name.as_ref())
@@ -94,7 +117,7 @@ impl VisualState {
             existing.x = Some(pos.x);
             existing.y = Some(pos.y);
             existing.scale = pos.scale;
-            return;
+            return Ok(());
         }
 
         self.characters.push(CharacterPlacementCompiled {
@@ -105,6 +128,7 @@ impl VisualState {
             y: Some(pos.y),
             scale: pos.scale,
         });
+        Ok(())
     }
 }
 

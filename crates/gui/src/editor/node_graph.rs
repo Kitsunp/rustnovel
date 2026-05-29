@@ -119,12 +119,24 @@ impl NodeGraph {
     /// Adds a node at the specified position. Returns the node ID.
     pub fn add_node(&mut self, node: StoryNode, pos: egui::Pos2) -> u32 {
         let id = self.authoring.next_node_id();
-        self.apply_authoring_command(AuthoringCommand::CreateNode {
-            node_id: id,
-            node,
-            position: AuthoringPosition::new(pos.x, pos.y),
-        })
-        .expect("next GUI node id should be accepted by AuthoringDocumentSession");
+        if self
+            .apply_authoring_command(AuthoringCommand::CreateNode {
+                node_id: id,
+                node,
+                position: AuthoringPosition::new(pos.x, pos.y),
+            })
+            .is_none()
+        {
+            let details = format!("Failed to create node {id} through AuthoringDocumentSession");
+            eprintln!("{details}");
+            self.queue_operation_hint(
+                "node_create_failed",
+                details,
+                Some(format!("graph.nodes[{id}]")),
+                false,
+            );
+            return id;
+        }
         self.queue_operation_hint(
             "node_created",
             format!("Created node {id}"),

@@ -99,6 +99,81 @@ fn package_command_creates_bundle_layout() {
 }
 
 #[test]
+fn package_command_global_json_emits_envelope_only() {
+    let (_tmp, project_root) = build_project_fixture();
+    let output_root = project_root.join("dist_json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("--json")
+        .arg("package")
+        .arg(project_root.as_os_str())
+        .arg("--output")
+        .arg(output_root.as_os_str())
+        .arg("--target")
+        .arg("windows")
+        .output()
+        .expect("run package command");
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json envelope");
+    assert_eq!(envelope["ok"], serde_json::json!(true));
+    assert_eq!(envelope["code"], serde_json::json!("ok"));
+    assert_eq!(
+        envelope["data"]["schema"],
+        serde_json::json!("vnengine.export_bundle_report.v1")
+    );
+    assert_eq!(envelope["data"]["assets_copied"], serde_json::json!(1));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("packaged project =>"));
+}
+
+#[test]
+fn package_command_plan_dry_run_does_not_write_bundle() {
+    let (_tmp, project_root) = build_project_fixture();
+    let output_root = project_root.join("dist_plan");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("--json")
+        .arg("package")
+        .arg(project_root.as_os_str())
+        .arg("--output")
+        .arg(output_root.as_os_str())
+        .arg("--target")
+        .arg("windows")
+        .arg("--dry-run")
+        .output()
+        .expect("run package plan command");
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json envelope");
+    assert_eq!(envelope["ok"], serde_json::json!(true));
+    assert_eq!(
+        envelope["data"]["schema"],
+        serde_json::json!("vnengine.export_plan.v1")
+    );
+    assert!(
+        !output_root.exists(),
+        "dry-run package must not materialize bundle"
+    );
+}
+
+#[test]
 fn package_command_require_executable_rejects_missing_runtime() {
     let (_tmp, project_root) = build_project_fixture();
     let output_root = project_root.join("dist_requires_exe");

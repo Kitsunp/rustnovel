@@ -38,8 +38,7 @@ pub trait Audio {
         AudioCapabilities::SILENT
     }
     fn play_music(&mut self, id: &str);
-    fn play_music_with_options(&mut self, id: &str, loop_playback: bool, volume: Option<f32>) {
-        let _ = (loop_playback, volume);
+    fn play_music_with_options(&mut self, id: &str, _loop_playback: bool, _volume: Option<f32>) {
         self.play_music(id);
     }
     fn play_music_with_options_at(
@@ -47,9 +46,8 @@ pub trait Audio {
         id: &str,
         loop_playback: bool,
         volume: Option<f32>,
-        start_at: Duration,
+        _start_at: Duration,
     ) {
-        let _ = start_at;
         self.play_music_with_options(id, loop_playback, volume);
     }
     fn play_music_with_transition(
@@ -57,34 +55,25 @@ pub trait Audio {
         id: &str,
         loop_playback: bool,
         volume: Option<f32>,
-        fade_in: Option<Duration>,
+        _fade_in: Option<Duration>,
     ) {
-        let _ = fade_in;
         self.play_music_with_options(id, loop_playback, volume);
     }
     fn stop_music(&mut self);
-    fn stop_music_with_fade(&mut self, fade_out: Option<Duration>) {
-        let _ = fade_out;
+    fn stop_music_with_fade(&mut self, _fade_out: Option<Duration>) {
         self.stop_music();
     }
-    fn set_music_volume(&mut self, volume: f32) {
-        let _ = volume;
-    }
+    fn set_music_volume(&mut self, _volume: f32) {}
     fn play_sfx(&mut self, id: &str);
-    fn play_sfx_with_volume(&mut self, id: &str, volume: Option<f32>) {
-        let _ = volume;
+    fn play_sfx_with_volume(&mut self, id: &str, _volume: Option<f32>) {
         self.play_sfx(id);
     }
-    fn set_sfx_volume(&mut self, volume: f32) {
-        let _ = volume;
-    }
+    fn set_sfx_volume(&mut self, _volume: f32) {}
     fn stop_sfx(&mut self) {}
     fn play_voice_with_volume(&mut self, id: &str, volume: Option<f32>) {
         self.play_sfx_with_volume(id, volume);
     }
-    fn set_voice_volume(&mut self, volume: f32) {
-        let _ = volume;
-    }
+    fn set_voice_volume(&mut self, _volume: f32) {}
     fn stop_voice(&mut self) {}
 }
 
@@ -187,14 +176,15 @@ impl RodioBackend {
         })
     }
 
-    fn load_audio_bytes_cached(&mut self, id: &str) -> Result<Vec<u8>, String> {
+    fn load_audio_bytes_cached(&mut self, id: &str) -> Result<Arc<[u8]>, String> {
         let key = id.to_string();
         if let Some(cached) = self.audio_cache.get(&key) {
-            return Ok(cached.clone());
+            return Ok(cached);
         }
 
         let bytes = self.assets.load_bytes(id)?;
-        self.audio_cache.insert(key, bytes.clone());
+        let bytes = Arc::<[u8]>::from(bytes);
+        self.audio_cache.insert_shared(key, Arc::clone(&bytes));
         Ok(bytes)
     }
 

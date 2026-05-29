@@ -45,6 +45,30 @@
             "string",
             "null"
           ]
+        },
+        "scale": {
+          "default": null,
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "x": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "y": {
+          "default": null,
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
         }
       }
     },
@@ -364,12 +388,14 @@
               }
             },
             "background": {
+              "default": null,
               "type": [
                 "string",
                 "null"
               ]
             },
             "music": {
+              "default": null,
               "type": [
                 "string",
                 "null"

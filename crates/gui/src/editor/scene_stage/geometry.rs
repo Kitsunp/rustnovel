@@ -1,4 +1,5 @@
 use eframe::egui;
+use tracing::warn;
 use visual_novel_engine::{
     runtime::{EventCompiled, VisualState},
     EntityKind, SceneState, Transform,
@@ -36,7 +37,11 @@ pub fn display_visual_for_event(current: &VisualState, event: &EventCompiled) ->
     match event {
         EventCompiled::Scene(scene) => visual.apply_scene(scene),
         EventCompiled::Patch(patch) => visual.apply_patch(patch),
-        EventCompiled::SetCharacterPosition(pos) => visual.set_character_position(pos),
+        EventCompiled::SetCharacterPosition(pos) => {
+            if let Err(err) = visual.set_character_position(pos) {
+                warn!("preview visual position update failed: {err}");
+            }
+        }
         _ => {}
     }
     visual
@@ -47,13 +52,18 @@ pub fn scene_from_visual_state(visual: &VisualState) -> SceneState {
     if let Some(background) = &visual.background {
         let mut transform = Transform::at(0, 0);
         transform.z_order = -100;
-        let _ = scene.spawn_with_transform(
-            transform,
-            EntityKind::Image(visual_novel_engine::ImageData {
-                path: background.clone(),
-                tint: None,
-            }),
-        );
+        if scene
+            .spawn_with_transform(
+                transform,
+                EntityKind::Image(visual_novel_engine::ImageData {
+                    path: background.clone(),
+                    tint: None,
+                }),
+            )
+            .is_none()
+        {
+            eprintln!("Failed to spawn preview background entity for '{background}'");
+        }
     }
     for (index, character) in visual.characters.iter().enumerate() {
         let default_x = 220 + (index as i32) * 180;
@@ -64,13 +74,21 @@ pub fn scene_from_visual_state(visual: &VisualState) -> SceneState {
         );
         transform.z_order = index as i32;
         transform.scale = (character.scale.unwrap_or(1.0).clamp(0.1, 4.0) * 1000.0) as u32;
-        let _ = scene.spawn_with_transform(
-            transform,
-            EntityKind::Character(visual_novel_engine::CharacterData {
-                name: character.name.clone(),
-                expression: character.expression.clone(),
-            }),
-        );
+        if scene
+            .spawn_with_transform(
+                transform,
+                EntityKind::Character(visual_novel_engine::CharacterData {
+                    name: character.name.clone(),
+                    expression: character.expression.clone(),
+                }),
+            )
+            .is_none()
+        {
+            eprintln!(
+                "Failed to spawn preview character entity for '{}'",
+                character.name
+            );
+        }
     }
     scene
 }

@@ -131,7 +131,14 @@ fn collect_rpy_files(
     options: &ImportRenpyOptions,
 ) -> VnResult<Vec<PathBuf>> {
     let mut files = Vec::new();
-    for entry in WalkDir::new(scan_root).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(scan_root) {
+        let entry = entry.map_err(|e| {
+            let path = e
+                .path()
+                .map(normalize_path)
+                .unwrap_or_else(|| normalize_path(scan_root));
+            invalid_import(format!("scan '{path}': {e}"))
+        })?;
         if !entry.file_type().is_file() {
             continue;
         }

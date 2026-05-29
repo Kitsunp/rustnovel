@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::event::{CharacterPlacementRaw, CondRaw, EventRaw, ScenePatchRaw};
+use crate::execution_contract::contract_for_authoring_node;
 
 pub const NODE_VERTICAL_SPACING: f32 = 90.0;
 
@@ -121,13 +122,6 @@ impl StoryNode {
     }
 
     pub fn export_supported(&self) -> bool {
-        !matches!(
-            self,
-            StoryNode::Start | StoryNode::End | StoryNode::Generic(_)
-        ) || matches!(
-            self,
-            StoryNode::SubgraphCall { .. }
-                | StoryNode::Generic(EventRaw::ExtCall { .. } | EventRaw::SetFlag { .. })
-        )
+        contract_for_authoring_node(self).export_supported
     }
 }

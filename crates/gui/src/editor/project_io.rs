@@ -170,7 +170,8 @@ pub fn save_authoring_document_with_metadata(
         .to_json()
         .map_err(|e| EditorError::CompileError(format!("Serialization error: {}", e)))?;
 
-    std::fs::write(path, json).map_err(EditorError::IoError)?;
+    crate::editor::atomic_io::atomic_replace(path, json.as_bytes())
+        .map_err(EditorError::IoError)?;
 
     Ok(())
 }
@@ -181,6 +182,7 @@ pub fn export_runtime_script(path: &std::path::Path, graph: &NodeGraph) -> Resul
     let json = script
         .to_json()
         .map_err(|e| EditorError::CompileError(format!("Serialization error: {}", e)))?;
-    std::fs::write(path, json).map_err(EditorError::IoError)?;
+    crate::editor::atomic_io::atomic_replace(path, json.as_bytes())
+        .map_err(EditorError::IoError)?;
     Ok(())
 }

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::authoring::{LintSeverity, NodeGraph, StoryNode};
+use crate::event::EventRaw;
 use crate::{VnError, VnResult};
 
 use super::export::to_script_lossy_for_diagnostics;
@@ -31,7 +32,7 @@ pub(super) fn validate_strict_graph_export(graph: &NodeGraph) -> VnResult<()> {
 
     for (node_id, node, _) in graph.nodes() {
         validate_reachability(*node_id, node, &fragment_node_ids, &flow.reachable)?;
-        if !node.is_marker() && !node.export_supported() {
+        if !node_allowed_in_strict_script(node) {
             return Err(VnError::invalid_script(format!(
                 "node {node_id} is not export-supported"
             )));
@@ -42,6 +43,12 @@ pub(super) fn validate_strict_graph_export(graph: &NodeGraph) -> VnResult<()> {
     validate_fragment_issues(graph)?;
     validate_fragment_internal_reachability(graph)?;
     validate_connections_exist(graph, &node_lookup)
+}
+
+fn node_allowed_in_strict_script(node: &StoryNode) -> bool {
+    node.is_marker()
+        || node.export_supported()
+        || matches!(node, StoryNode::Generic(EventRaw::ExtCall { .. }))
 }
 
 fn validate_reachability(

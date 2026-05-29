@@ -1,18 +1,18 @@
-use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use std::hash::{Hash, Hasher};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::editor::compiler::CompilationResult;
+use sha2::{Digest, Sha256};
 use visual_novel_engine::authoring::{collect_authoring_asset_refs, should_probe_asset_exists};
 
 use super::EditorWorkbench;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CompilationCacheKey {
-    graph_hash: u64,
+    graph_sha256: String,
     project_root: Option<PathBuf>,
-    asset_state_hash: u64,
+    asset_state_sha256: String,
 }
 
 #[derive(Clone)]
@@ -66,21 +66,18 @@ impl CompilationCacheKey {
         graph: &crate::editor::node_graph::NodeGraph,
         project_root: Option<&Path>,
     ) -> Self {
-        let mut hasher = DefaultHasher::new();
-        serde_json::to_vec(graph)
-            .unwrap_or_default()
-            .hash(&mut hasher);
+        let graph_sha256 = serde_json::to_vec(graph)
+            .map(|bytes| sha256_bytes(&bytes))
+            .unwrap_or_else(|err| format!("serialization_error:{err}"));
         let project_root = project_root.map(Path::to_path_buf);
-        project_root.hash(&mut hasher);
-        let asset_state_hash = project_root
+        let asset_state_sha256 = project_root
             .as_deref()
             .map(|root| hash_referenced_asset_state(graph, root))
             .unwrap_or_default();
-        asset_state_hash.hash(&mut hasher);
         Self {
-            graph_hash: hasher.finish(),
+            graph_sha256,
             project_root,
-            asset_state_hash,
+            asset_state_sha256,
         }
     }
 }
@@ -88,14 +85,15 @@ impl CompilationCacheKey {
 fn hash_referenced_asset_state(
     graph: &crate::editor::node_graph::NodeGraph,
     project_root: &Path,
-) -> u64 {
-    let mut hasher = DefaultHasher::new();
+) -> String {
+    let mut hasher = Sha256::new();
     for asset in collect_authoring_asset_refs(graph.authoring_graph()) {
         let asset = asset.trim();
         if !should_probe_asset_exists(asset) {
             continue;
         }
-        asset.hash(&mut hasher);
+        hasher.update(asset.as_bytes());
+        hasher.update([0]);
         let path = Path::new(asset);
         let candidate = if path.is_absolute() {
             path.to_path_buf()
@@ -104,20 +102,53 @@ fn hash_referenced_asset_state(
         };
         match fs::metadata(&candidate) {
             Ok(metadata) => {
-                true.hash(&mut hasher);
-                metadata.is_file().hash(&mut hasher);
-                metadata.len().hash(&mut hasher);
-                if let Ok(modified) = metadata.modified() {
-                    modified.hash(&mut hasher);
+                hasher.update([1, metadata.is_file() as u8]);
+                hasher.update(metadata.len().to_le_bytes());
+                if metadata.is_file() {
+                    match sha256_file(&candidate) {
+                        Ok(file_hash) => hasher.update(file_hash.as_bytes()),
+                        Err(err) => hasher.update(format!("read_error:{err}").as_bytes()),
+                    }
                 }
             }
             Err(error) => {
-                false.hash(&mut hasher);
-                error.kind().hash(&mut hasher);
+                hasher.update([0]);
+                hasher.update(format!("{:?}", error.kind()).as_bytes());
             }
         }
+        hasher.update([0xff]);
     }
-    hasher.finish()
+    hex_lower(&hasher.finalize())
+}
+
+fn sha256_file(path: &Path) -> Result<String, std::io::Error> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex_lower(&hasher.finalize()))
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex_lower(&hasher.finalize())
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 impl EditorWorkbench {

@@ -48,10 +48,15 @@ impl AsyncLoader {
                 };
 
                 inflight_thread.fetch_sub(1, Ordering::Release);
-                drop(result_tx.send(LoadResult {
-                    id: request.id,
-                    data,
-                }));
+                if result_tx
+                    .send(LoadResult {
+                        id: request.id,
+                        data,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
             }
         });
 
@@ -66,7 +71,10 @@ impl AsyncLoader {
     pub fn enqueue(&self, id: AssetId, path: PathBuf) {
         self.inflight.fetch_add(1, Ordering::Release);
         // Blocks if too many requests are inflight (Backpressure)
-        let _ = self.sender.send(LoadRequest { id, path });
+        if let Err(err) = self.sender.send(LoadRequest { id, path }) {
+            self.inflight.fetch_sub(1, Ordering::Release);
+            eprintln!("async loader enqueue failed: {err}");
+        }
     }
 
     pub fn try_recv(&self) -> Option<LoadResult> {

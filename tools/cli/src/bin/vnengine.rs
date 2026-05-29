@@ -1,15 +1,19 @@
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{self, ExitCode};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use visual_novel_engine::{
-    compute_script_id, load_runtime_script_from_entry, run_repro_case,
+    compute_script_id, load_runtime_script_from_entry, resolve_layout, run_repro_case,
     runtime::{Engine, ScriptCompiled, UiTrace},
-    BundleIntegrity, ExportBundleSpec, ExportTargetPlatform, ImportFallbackPolicy, ImportProfile,
-    ReproCase, ResourceLimiter, SaveData, SecurityPolicy, AUTH_SAVE_KEY, SCRIPT_SCHEMA_VERSION,
+    validate_ui_theme, BundleIntegrity, ExportBundleSpec, ExportService, ExportTargetPlatform,
+    ImportFallbackPolicy, ImportProfile, LayoutPolicy, ReproCase, ResourceLimiter, SaveData,
+    SecurityPolicy, StageProfile, UiTheme, AUTH_SAVE_KEY, SCRIPT_SCHEMA_VERSION,
 };
 use vnengine_assets::{AssetEntry, AssetManifest};
 use walkdir::WalkDir;
@@ -22,6 +26,9 @@ mod package;
 #[derive(Parser)]
 #[command(author, version, about = "Visual Novel Engine CLI")]
 struct Cli {
+    /// Emit a stable JSON envelope on stdout.
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -49,6 +56,14 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
     },
+    /// Migrate a legacy script JSON to the current schema.
+    MigrateScript {
+        script: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        in_place: bool,
+    },
     /// Produce an execution trace for a script JSON file.
     Trace {
         script: PathBuf,
@@ -58,6 +73,28 @@ enum Command {
         format: Option<TraceFormat>,
         #[arg(short, long)]
         output: PathBuf,
+        /// Return a failing exit code when engine step/choose/resume fails.
+        #[arg(long, default_value_t = false)]
+        fail_on_engine_error: bool,
+    },
+    /// Print the native route tree for a script.
+    RouteTree { script: PathBuf },
+    /// Print read/progress snapshots from a script or save.
+    ReadModel { input: PathBuf },
+    /// Theme tooling.
+    Theme {
+        #[command(subcommand)]
+        command: ThemeCommand,
+    },
+    /// Resolve a display/stage/theme layout.
+    Layout {
+        #[command(subcommand)]
+        command: LayoutCommand,
+    },
+    /// Common export service commands.
+    Export {
+        #[command(subcommand)]
+        command: ExportCommand,
     },
     /// Verify a save file against a compiled script.
     VerifySave {
@@ -142,7 +179,81 @@ enum Command {
         /// Fail unless the bundle produces a top-level native executable (game.exe on Windows, game on Linux/macOS).
         #[arg(long)]
         require_executable: bool,
+        /// Build and validate the export plan without writing bundle artifacts.
+        #[arg(long)]
+        dry_run: bool,
+        /// Alias for --dry-run that emphasizes the planned JSON/report output.
+        #[arg(long)]
+        plan: bool,
+        /// Explicitly execute the package operation (default when no plan/dry-run flag is set).
+        #[arg(long)]
+        execute: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum ThemeCommand {
+    /// Validate a UiTheme JSON file.
+    Validate { theme: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum LayoutCommand {
+    /// Resolve layout JSON from display/stage/policy files.
+    Resolve {
+        #[arg(long)]
+        display: PathBuf,
+        #[arg(long)]
+        stage: Option<PathBuf>,
+        #[arg(long)]
+        policy: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ExportCommand {
+    /// Build and validate an export plan without writing bundle artifacts.
+    Plan(ExportCliArgs),
+    /// Execute an export plan/spec through the shared ExportService.
+    Execute(ExportCliArgs),
+}
+
+#[derive(clap::Args)]
+struct ExportCliArgs {
+    /// Project root containing `project.vnm` and entry script.
+    project: PathBuf,
+    /// Output folder for bundle artifacts.
+    #[arg(short, long)]
+    output: PathBuf,
+    /// Target platform profile.
+    #[arg(long, value_enum, default_value_t = PackageTargetArg::Windows)]
+    target: PackageTargetArg,
+    /// Optional entry script path relative to project root.
+    #[arg(long)]
+    entry_script: Option<PathBuf>,
+    /// Optional runtime artifact (absolute or project-relative) to embed in bundle.
+    #[arg(long)]
+    runtime_artifact: Option<PathBuf>,
+    /// Bundle integrity mode.
+    #[arg(long, value_enum, default_value_t = PackageIntegrityArg::None)]
+    integrity: PackageIntegrityArg,
+    /// HMAC key when `--integrity hmac-sha256`.
+    #[arg(long)]
+    hmac_key: Option<String>,
+    /// Output layout version stamped in report.
+    #[arg(long, default_value_t = 1)]
+    layout_version: u16,
+    /// Fail unless the bundle produces a top-level native executable.
+    #[arg(long)]
+    require_executable: bool,
+}
+
+#[derive(Serialize)]
+struct CliEnvelope {
+    ok: bool,
+    code: String,
+    data: Option<serde_json::Value>,
+    error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -249,34 +360,148 @@ impl From<PackageIntegrityArg> for BundleIntegrity {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
     let cli = Cli::parse();
+    let json = cli.json;
+    let suppress_envelope = matches!(&cli.command, Command::Authoring { .. });
+    match run_command(cli, json) {
+        Ok(data) => {
+            if json && !suppress_envelope {
+                print_json_envelope(CliEnvelope {
+                    ok: true,
+                    code: "ok".to_string(),
+                    data,
+                    error: None,
+                });
+            }
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            let (code, exit_code) = classify_error(&err);
+            if json && !suppress_envelope {
+                print_json_envelope(CliEnvelope {
+                    ok: false,
+                    code: code.to_string(),
+                    data: None,
+                    error: Some(err.to_string()),
+                });
+            } else {
+                eprintln!("{err:#}");
+            }
+            ExitCode::from(exit_code)
+        }
+    }
+}
+
+fn classify_error(err: &anyhow::Error) -> (&'static str, u8) {
+    if err.chain().any(|cause| {
+        cause
+            .downcast_ref::<visual_novel_engine::VnError>()
+            .is_some()
+    }) {
+        ("engine_error", 2)
+    } else if err
+        .chain()
+        .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
+    {
+        ("io_error", 3)
+    } else {
+        ("error", 1)
+    }
+}
+
+fn run_command(cli: Cli, json_output: bool) -> Result<Option<serde_json::Value>> {
     match cli.command {
-        Command::Validate { script } => validate_script(&script),
+        Command::Validate { script } => {
+            validate_script(&script)?;
+            Ok(Some(serde_json::json!({
+                "schema": "vnengine.cli.validate.v1",
+                "script": normalize_cli_path(&script),
+                "valid": true
+            })))
+        }
         Command::AuthoringValidate {
             script,
             project_root,
             output,
-        } => authoring::validate_authoring_script(
-            &script,
-            project_root.as_deref(),
-            output.as_deref(),
-        ),
-        Command::Authoring { command } => authoring::run_authoring_command(command),
-        Command::Compile { script, output } => compile_script(&script, &output),
+        } => {
+            authoring::validate_authoring_script(
+                &script,
+                project_root.as_deref(),
+                output.as_deref(),
+            )?;
+            Ok(None)
+        }
+        Command::Authoring { command } => {
+            authoring::run_authoring_command(command)?;
+            Ok(None)
+        }
+        Command::Compile { script, output } => {
+            let report = compile_script(&script, &output)?;
+            Ok(Some(report))
+        }
+        Command::MigrateScript {
+            script,
+            output,
+            in_place,
+        } => migrate_script_command(&script, output.as_deref(), in_place),
         Command::Trace {
             script,
             steps,
             format,
             output,
-        } => trace_script(&script, steps, format, &output),
-        Command::VerifySave { save, script } => verify_save(&save, &script),
-        Command::Manifest { assets, output } => build_manifest(&assets, &output),
+            fail_on_engine_error,
+        } => {
+            trace_script(&script, steps, format, &output, fail_on_engine_error)?;
+            Ok(Some(serde_json::json!({
+                "schema": "vnengine.cli.trace.v1",
+                "script": normalize_cli_path(&script),
+                "output": normalize_cli_path(&output),
+                "steps_requested": steps,
+                "fail_on_engine_error": fail_on_engine_error
+            })))
+        }
+        Command::RouteTree { script } => route_tree_command(&script),
+        Command::ReadModel { input } => read_model_command(&input),
+        Command::Theme { command } => match command {
+            ThemeCommand::Validate { theme } => theme_validate_command(&theme),
+        },
+        Command::Layout { command } => match command {
+            LayoutCommand::Resolve {
+                display,
+                stage,
+                policy,
+            } => layout_resolve_command(&display, stage.as_deref(), policy.as_deref()),
+        },
+        Command::Export { command } => match command {
+            ExportCommand::Plan(args) => export_plan_command(args),
+            ExportCommand::Execute(args) => export_execute_command(args),
+        },
+        Command::VerifySave { save, script } => {
+            verify_save(&save, &script)?;
+            Ok(Some(serde_json::json!({
+                "schema": "vnengine.cli.verify_save.v1",
+                "save": normalize_cli_path(&save),
+                "script": normalize_cli_path(&script),
+                "valid": true
+            })))
+        }
+        Command::Manifest { assets, output } => {
+            build_manifest(&assets, &output)?;
+            Ok(Some(serde_json::json!({
+                "schema": "vnengine.cli.manifest.v1",
+                "assets": normalize_cli_path(&assets),
+                "output": normalize_cli_path(&output)
+            })))
+        }
         Command::ReproRun {
             repro,
             output,
             strict,
-        } => run_repro_bundle(&repro, output.as_deref(), strict),
+        } => {
+            run_repro_bundle(&repro, output.as_deref(), strict)?;
+            Ok(None)
+        }
         Command::ImportRenpy {
             project,
             output,
@@ -289,19 +514,22 @@ fn main() -> Result<()> {
             fallback_policy,
             entry_label,
             report,
-        } => package::import_renpy(package::ImportRenpyCliOptions {
-            project: &project,
-            output: &output,
-            profile: profile.into(),
-            include_patterns: include_pattern,
-            exclude_patterns: exclude_pattern,
-            include_tl: include_tl.then_some(true),
-            include_ui: include_ui.then_some(true),
-            strict_mode,
-            fallback_policy: fallback_policy.into(),
-            entry_label: &entry_label,
-            report: report.as_deref(),
-        }),
+        } => {
+            package::import_renpy(package::ImportRenpyCliOptions {
+                project: &project,
+                output: &output,
+                profile: profile.into(),
+                include_patterns: include_pattern,
+                exclude_patterns: exclude_pattern,
+                include_tl: include_tl.then_some(true),
+                include_ui: include_ui.then_some(true),
+                strict_mode,
+                fallback_policy: fallback_policy.into(),
+                entry_label: &entry_label,
+                report: report.as_deref(),
+            })?;
+            Ok(None)
+        }
         Command::Package {
             project,
             output,
@@ -312,8 +540,18 @@ fn main() -> Result<()> {
             hmac_key,
             layout_version,
             require_executable,
-        } => package::package_project(
-            ExportBundleSpec {
+            dry_run,
+            plan,
+            execute,
+        } => {
+            let mode_count = [dry_run, plan, execute]
+                .into_iter()
+                .filter(|flag| *flag)
+                .count();
+            if mode_count > 1 {
+                anyhow::bail!("package accepts only one of --dry-run, --plan or --execute");
+            }
+            let spec = ExportBundleSpec {
                 project_root: project,
                 output_root: output,
                 target_platform: target.into(),
@@ -322,9 +560,283 @@ fn main() -> Result<()> {
                 integrity: integrity.into(),
                 output_layout_version: layout_version,
                 hmac_key,
-            },
-            require_executable,
-        ),
+            };
+            if dry_run || plan {
+                let plan = ExportService::new().plan_export(&spec)?;
+                ExportService::new().validate_export_plan(&plan)?;
+                if require_executable {
+                    let expected = spec.target_platform.expected_executable_name();
+                    if plan.executable.as_deref() != Some(expected) {
+                        anyhow::bail!(
+                            "{} executable export requires runtime_artifact and must produce {}",
+                            spec.target_platform.as_str(),
+                            expected
+                        );
+                    }
+                }
+                if json_output {
+                    Ok(Some(serde_json::to_value(plan)?))
+                } else {
+                    println!(
+                        "package plan => target={} layout={} files={} integrity={} executable={}",
+                        plan.target_platform,
+                        plan.output_layout_version,
+                        plan.layout.len(),
+                        plan.integrity,
+                        plan.executable.as_deref().unwrap_or("none")
+                    );
+                    Ok(None)
+                }
+            } else if json_output {
+                let report = if require_executable {
+                    visual_novel_engine::export_executable_bundle(spec)?
+                } else {
+                    ExportService::new().execute_export(spec)?
+                };
+                Ok(Some(serde_json::to_value(report)?))
+            } else {
+                package::package_project(spec, require_executable)?;
+                Ok(None)
+            }
+        }
+    }
+}
+
+fn print_json_envelope(envelope: CliEnvelope) {
+    match serde_json::to_string_pretty(&envelope) {
+        Ok(json) => println!("{json}"),
+        Err(err) => {
+            println!(
+                "{{\"ok\":false,\"code\":\"envelope_serialization_error\",\"data\":null,\"error\":\"{}\"}}",
+                err
+            );
+        }
+    }
+}
+
+fn normalize_cli_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+pub(crate) fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create output parent {}", parent.display()))?;
+    }
+    let temp_path = unique_sibling_path(path, "tmp");
+    let mut temp_file = fs::File::create(&temp_path)
+        .with_context(|| format!("create temp output {}", temp_path.display()))?;
+    temp_file
+        .write_all(content)
+        .with_context(|| format!("write temp output {}", temp_path.display()))?;
+    temp_file
+        .sync_all()
+        .with_context(|| format!("sync temp output {}", temp_path.display()))?;
+    drop(temp_file);
+
+    if path.exists() {
+        let rollback_path = unique_sibling_path(path, "rollback");
+        fs::rename(path, &rollback_path).with_context(|| {
+            format!(
+                "prepare rollback {} -> {}",
+                path.display(),
+                rollback_path.display()
+            )
+        })?;
+        match fs::rename(&temp_path, path) {
+            Ok(()) => {
+                if let Err(err) = remove_file_with_diagnostic(
+                    &rollback_path,
+                    "remove rollback after atomic write",
+                ) {
+                    eprintln!("{err:#}");
+                }
+            }
+            Err(err) => {
+                let restore_result = fs::rename(&rollback_path, path).with_context(|| {
+                    format!(
+                        "restore rollback {} -> {} after publish failure",
+                        rollback_path.display(),
+                        path.display()
+                    )
+                });
+                cleanup_temp_with_diagnostic(&temp_path);
+                restore_result?;
+                return Err(err).with_context(|| {
+                    format!(
+                        "publish temp output {} -> {}",
+                        temp_path.display(),
+                        path.display()
+                    )
+                });
+            }
+        }
+    } else if let Err(err) = fs::rename(&temp_path, path) {
+        cleanup_temp_with_diagnostic(&temp_path);
+        return Err(err).with_context(|| {
+            format!(
+                "publish temp output {} -> {}",
+                temp_path.display(),
+                path.display()
+            )
+        });
+    }
+
+    Ok(())
+}
+
+fn unique_sibling_path(path: &Path, role: &str) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("output");
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    parent.join(format!(".{name}.{role}-{}-{nanos}", process::id()))
+}
+
+fn remove_file_with_diagnostic(path: &Path, context: &str) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("{context}: {}", path.display())),
+    }
+}
+
+fn cleanup_temp_with_diagnostic(path: &Path) {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => eprintln!("failed to remove temp output {}: {err}", path.display()),
+    }
+}
+
+fn route_tree_command(script: &Path) -> Result<Option<serde_json::Value>> {
+    let script_raw = load_runtime_script_from_entry(script).context("load script")?;
+    let engine = Engine::new(
+        script_raw,
+        SecurityPolicy::default(),
+        ResourceLimiter::default(),
+    )?;
+    Ok(Some(serde_json::to_value(engine.route_tree())?))
+}
+
+fn read_model_command(input: &Path) -> Result<Option<serde_json::Value>> {
+    if let Ok(bytes) = fs::read(input) {
+        if let Ok(save) = SaveData::from_any_binary(&bytes, AUTH_SAVE_KEY) {
+            return Ok(Some(serde_json::json!({
+                "schema": "vnengine.cli.read_model.v1",
+                "source": "save",
+                "read_model": save.state.read_model,
+                "route_progress": save.state.route_progress
+            })));
+        }
+    }
+
+    let script_raw = load_runtime_script_from_entry(input).context("load script or save")?;
+    let max_steps = script_raw.events.len().saturating_mul(4).saturating_add(32);
+    let mut engine = Engine::new(
+        script_raw,
+        SecurityPolicy::default(),
+        ResourceLimiter::default(),
+    )?;
+    for _ in 0..max_steps {
+        let event = match engine.current_event() {
+            Ok(event) => event,
+            Err(visual_novel_engine::VnError::EndOfScript) => break,
+            Err(err) => return Err(err).context("read-model current_event"),
+        };
+        match event {
+            visual_novel_engine::runtime::EventCompiled::Choice(choice) => {
+                if choice.options.is_empty() {
+                    break;
+                }
+                engine.choose(0)?;
+            }
+            visual_novel_engine::runtime::EventCompiled::ExtCall { .. } => engine.resume()?,
+            _ => {
+                let (_audio, _change) = engine.step()?;
+            }
+        }
+    }
+    Ok(Some(serde_json::json!({
+        "schema": "vnengine.cli.read_model.v1",
+        "source": "script",
+        "read_model": engine.read_model_snapshot(),
+        "route_progress": engine.route_progress_snapshot()
+    })))
+}
+
+fn theme_validate_command(theme_path: &Path) -> Result<Option<serde_json::Value>> {
+    let raw =
+        fs::read_to_string(theme_path).with_context(|| format!("read {}", theme_path.display()))?;
+    let theme: UiTheme = serde_json::from_str(&raw)
+        .with_context(|| format!("parse theme {}", theme_path.display()))?;
+    let report = validate_ui_theme(&theme);
+    Ok(Some(serde_json::to_value(report)?))
+}
+
+fn layout_resolve_command(
+    display: &Path,
+    stage: Option<&Path>,
+    policy: Option<&Path>,
+) -> Result<Option<serde_json::Value>> {
+    let display_raw =
+        fs::read_to_string(display).with_context(|| format!("read {}", display.display()))?;
+    let display = serde_json::from_str(&display_raw)
+        .with_context(|| format!("parse display {}", display.display()))?;
+    let stage = match stage {
+        Some(path) => {
+            let raw =
+                fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+            serde_json::from_str(&raw).with_context(|| format!("parse stage {}", path.display()))?
+        }
+        None => StageProfile::default(),
+    };
+    let policy = match policy {
+        Some(path) => {
+            let raw =
+                fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+            serde_json::from_str(&raw)
+                .with_context(|| format!("parse policy {}", path.display()))?
+        }
+        None => LayoutPolicy::default(),
+    };
+    Ok(Some(serde_json::to_value(resolve_layout(
+        display, stage, policy,
+    ))?))
+}
+
+fn export_plan_command(args: ExportCliArgs) -> Result<Option<serde_json::Value>> {
+    let spec = export_spec_from_args(args);
+    let plan = ExportService::new().plan_export(&spec)?;
+    Ok(Some(serde_json::to_value(plan)?))
+}
+
+fn export_execute_command(args: ExportCliArgs) -> Result<Option<serde_json::Value>> {
+    let require_executable = args.require_executable;
+    let spec = export_spec_from_args(args);
+    let report = if require_executable {
+        visual_novel_engine::export_executable_bundle(spec)?
+    } else {
+        ExportService::new().execute_export(spec)?
+    };
+    Ok(Some(serde_json::to_value(report)?))
+}
+
+fn export_spec_from_args(args: ExportCliArgs) -> ExportBundleSpec {
+    ExportBundleSpec {
+        project_root: args.project,
+        output_root: args.output,
+        target_platform: args.target.into(),
+        entry_script: args.entry_script,
+        runtime_artifact: args.runtime_artifact,
+        integrity: args.integrity.into(),
+        output_layout_version: args.layout_version,
+        hmac_key: args.hmac_key,
     }
 }
 
@@ -338,15 +850,47 @@ fn validate_script(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn compile_script(path: &Path, output: &Path) -> Result<()> {
+fn migrate_script_command(
+    script: &Path,
+    output: Option<&Path>,
+    in_place: bool,
+) -> Result<Option<serde_json::Value>> {
+    if !in_place && output.is_none() {
+        anyhow::bail!("migrate-script requires --output or --in-place");
+    }
+    let source =
+        fs::read_to_string(script).with_context(|| format!("read {}", script.display()))?;
+    let (migrated, report) =
+        visual_novel_engine::migrate_script_json_to_current(&source).context("migrate script")?;
+    let output_path = if in_place {
+        script
+    } else {
+        output.ok_or_else(|| anyhow::anyhow!("migrate-script requires --output or --in-place"))?
+    };
+    atomic_write(output_path, migrated.as_bytes())?;
+    Ok(Some(serde_json::json!({
+        "schema": "vnengine.cli.migrate_script.v1",
+        "input": normalize_cli_path(script),
+        "output": normalize_cli_path(output_path),
+        "changed": report.changed(),
+        "migration": report
+    })))
+}
+
+fn compile_script(path: &Path, output: &Path) -> Result<serde_json::Value> {
     let script = load_runtime_script_from_entry(path).context("load script")?;
     let compiled = script.compile()?;
     let bytes = compiled.to_binary()?;
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(output, bytes).with_context(|| format!("write {}", output.display()))?;
-    Ok(())
+    atomic_write(output, &bytes)?;
+    Ok(serde_json::json!({
+        "schema": "vnengine.cli.compile.v1",
+        "script": normalize_cli_path(path),
+        "output": normalize_cli_path(output),
+        "bytes_written": fs::metadata(output).map(|metadata| metadata.len()).unwrap_or(0)
+    }))
 }
 
 fn trace_script(
@@ -354,6 +898,7 @@ fn trace_script(
     steps: usize,
     requested_format: Option<TraceFormat>,
     output: &Path,
+    fail_on_engine_error: bool,
 ) -> Result<()> {
     let format = requested_format.unwrap_or_else(|| TraceFormat::inferred_from_output(output));
     if !format.matches_output_extension(output) {
@@ -372,7 +917,13 @@ fn trace_script(
     for step in 0..steps {
         let event = match engine.current_event() {
             Ok(event) => event,
-            Err(_) => break,
+            Err(err) => {
+                if fail_on_engine_error {
+                    return Err(err).context("trace current_event");
+                }
+                eprintln!("trace stopped at step {step}: current_event failed: {err}");
+                break;
+            }
         };
         let view = visual_novel_engine::runtime::TraceUiView::from_event(&event);
         let state = visual_novel_engine::runtime::StateDigest::from_state(
@@ -380,16 +931,17 @@ fn trace_script(
             engine.script().flag_count as usize,
         );
         trace.push(step as u32, view, state);
-        match &event {
-            visual_novel_engine::runtime::EventCompiled::Choice(_) => {
-                let _ = engine.choose(0);
+        let advance_result = match &event {
+            visual_novel_engine::runtime::EventCompiled::Choice(_) => engine.choose(0).map(|_| ()),
+            visual_novel_engine::runtime::EventCompiled::ExtCall { .. } => engine.resume(),
+            _ => engine.step().map(|_| ()),
+        };
+        if let Err(err) = advance_result {
+            if fail_on_engine_error {
+                return Err(err).with_context(|| format!("trace advance step {step}"));
             }
-            visual_novel_engine::runtime::EventCompiled::ExtCall { .. } => {
-                let _ = engine.resume();
-            }
-            _ => {
-                let _ = engine.step();
-            }
+            eprintln!("trace stopped at step {step}: engine advance failed: {err}");
+            break;
         }
     }
     let envelope = TraceEnvelope {
@@ -404,7 +956,7 @@ fn trace_script(
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(output, content).with_context(|| format!("write {}", output.display()))?;
+    atomic_write(output, content.as_bytes())?;
     Ok(())
 }
 
@@ -426,7 +978,8 @@ fn build_manifest(root: &Path, output: &Path) -> Result<()> {
         .canonicalize()
         .with_context(|| format!("canonicalize {}", root.display()))?;
     let mut assets = std::collections::BTreeMap::new();
-    for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(root) {
+        let entry = entry.with_context(|| format!("walk {}", root.display()))?;
         let path = entry.path();
         if path.is_dir() {
             continue;
@@ -439,10 +992,7 @@ fn build_manifest(root: &Path, output: &Path) -> Result<()> {
         if !canonical_path.starts_with(&canonical_root) {
             anyhow::bail!("manifest asset escapes root: {}", path.display());
         }
-        let bytes = fs::read(&canonical_path)
-            .with_context(|| format!("read {}", canonical_path.display()))?;
-        let size = bytes.len() as u64;
-        let sha256 = sha256_hex(&bytes);
+        let (sha256, size) = sha256_file_hex(&canonical_path)?;
         assets.insert(rel_str, AssetEntry { sha256, size });
     }
     let manifest = AssetManifest {
@@ -453,14 +1003,30 @@ fn build_manifest(root: &Path, output: &Path) -> Result<()> {
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(output, json).with_context(|| format!("write {}", output.display()))?;
+    atomic_write(output, json.as_bytes())?;
     Ok(())
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+fn sha256_file_hex(path: &Path) -> Result<(String, u64)> {
+    let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut hasher = Sha256::new();
-    hasher.update(bytes);
+    let mut size = 0u64;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .with_context(|| format!("read {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        size = size.saturating_add(read as u64);
+        hasher.update(&buffer[..read]);
+    }
     let digest = hasher.finalize();
+    Ok((digest_hex(&digest), size))
+}
+
+fn digest_hex(digest: &[u8]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

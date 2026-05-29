@@ -74,51 +74,90 @@ fn detect_reachable_cycle_nodes(
     adjacency: &BTreeMap<NodeId, Vec<NodeId>>,
     start_nodes: &[NodeId],
 ) -> Vec<NodeId> {
-    let mut visited = BTreeSet::new();
-    let mut active = BTreeSet::new();
+    let mut node_set = BTreeSet::new();
+    for (from, targets) in adjacency {
+        node_set.insert(*from);
+        node_set.extend(targets.iter().copied());
+    }
+    node_set.extend(start_nodes.iter().copied());
+    let reachable = reachable_nodes(&node_set, adjacency, start_nodes);
+    let reverse = reverse_adjacency(adjacency);
+    let finish_order = finish_order_iterative(adjacency, &reachable);
+    let mut seen = BTreeSet::new();
     let mut cycle_nodes = BTreeSet::new();
 
-    for start in start_nodes {
-        detect_cycles_from(
-            adjacency,
-            *start,
-            &mut visited,
-            &mut active,
-            &mut cycle_nodes,
-        );
+    for node in finish_order.into_iter().rev() {
+        if !reachable.contains(&node) || !seen.insert(node) {
+            continue;
+        }
+        let mut component = Vec::new();
+        let mut stack = vec![node];
+        while let Some(current) = stack.pop() {
+            component.push(current);
+            if let Some(targets) = reverse.get(&current) {
+                for target in targets {
+                    if reachable.contains(target) && seen.insert(*target) {
+                        stack.push(*target);
+                    }
+                }
+            }
+        }
+        let self_loop = component.iter().any(|member| {
+            adjacency
+                .get(member)
+                .is_some_and(|targets| targets.contains(member))
+        });
+        if component.len() > 1 || self_loop {
+            cycle_nodes.extend(component);
+        }
     }
 
     cycle_nodes.into_iter().collect()
 }
 
-fn detect_cycles_from(
-    adjacency: &BTreeMap<NodeId, Vec<NodeId>>,
-    node_id: NodeId,
-    visited: &mut BTreeSet<NodeId>,
-    active: &mut BTreeSet<NodeId>,
-    cycle_nodes: &mut BTreeSet<NodeId>,
-) {
-    if active.contains(&node_id) {
-        cycle_nodes.insert(node_id);
-        return;
-    }
-    if !visited.insert(node_id) {
-        return;
-    }
-
-    active.insert(node_id);
-    if let Some(targets) = adjacency.get(&node_id) {
+fn reverse_adjacency(adjacency: &BTreeMap<NodeId, Vec<NodeId>>) -> BTreeMap<NodeId, Vec<NodeId>> {
+    let mut reverse = BTreeMap::<NodeId, Vec<NodeId>>::new();
+    for (from, targets) in adjacency {
+        reverse.entry(*from).or_default();
         for target in targets {
-            if active.contains(target) {
-                cycle_nodes.insert(node_id);
-                cycle_nodes.insert(*target);
+            reverse.entry(*target).or_default().push(*from);
+        }
+    }
+    for targets in reverse.values_mut() {
+        targets.sort_unstable();
+        targets.dedup();
+    }
+    reverse
+}
+
+fn finish_order_iterative(
+    adjacency: &BTreeMap<NodeId, Vec<NodeId>>,
+    reachable: &BTreeSet<NodeId>,
+) -> Vec<NodeId> {
+    let mut visited = BTreeSet::new();
+    let mut order = Vec::new();
+    for start in reachable {
+        if visited.contains(start) {
+            continue;
+        }
+        let mut stack = vec![(*start, false)];
+        while let Some((node, expanded)) = stack.pop() {
+            if expanded {
+                order.push(node);
                 continue;
             }
-            detect_cycles_from(adjacency, *target, visited, active, cycle_nodes);
-            if cycle_nodes.contains(target) {
-                cycle_nodes.insert(node_id);
+            if !visited.insert(node) {
+                continue;
+            }
+            stack.push((node, true));
+            if let Some(targets) = adjacency.get(&node) {
+                for target in targets.iter().rev() {
+                    if reachable.contains(target) && !visited.contains(target) {
+                        stack.push((*target, false));
+                    }
+                }
             }
         }
     }
-    active.remove(&node_id);
+    order
 }

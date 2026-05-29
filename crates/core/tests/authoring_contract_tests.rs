@@ -7,8 +7,8 @@ use visual_novel_engine::authoring::{
 };
 use visual_novel_engine::{
     runtime::{
-        CharacterPlacementRaw, CondRaw, DialogueRaw, Engine, EventRaw, SceneTransitionRaw,
-        SceneUpdateRaw, ScriptRaw,
+        AudioActionRaw, CharacterPlacementRaw, CondRaw, DialogueRaw, Engine, EventRaw,
+        SceneTransitionRaw, SceneUpdateRaw, ScriptRaw,
     },
     AssetId, ReproCase, ResourceLimiter, SecurityPolicy,
 };
@@ -87,6 +87,22 @@ fn label_out_of_range_contract() {
         .compile()
         .expect_err("compiler must reject labels beyond events.len()");
     assert!(format!("{compile_err}").contains("points outside events"));
+
+    let start_at_eof = ScriptRaw::new(
+        vec![EventRaw::Dialogue(DialogueRaw {
+            speaker: "Narrator".to_string(),
+            text: "Done".to_string(),
+        })],
+        BTreeMap::from([("start".to_string(), 1)]),
+    );
+    let err = SecurityPolicy::default()
+        .validate_raw(&start_at_eof, ResourceLimiter::default())
+        .expect_err("start cannot point at EOF sentinel");
+    assert!(format!("{err}").contains("start label"));
+    let err = start_at_eof
+        .compile()
+        .expect_err("compiler must reject start at EOF sentinel");
+    assert!(format!("{err}").contains("start label"));
 }
 
 #[test]
@@ -126,6 +142,38 @@ fn path_traversal_encoded_windows_unc_contract() {
     SecurityPolicy::default()
         .validate_raw(&safe, ResourceLimiter::default())
         .expect("normal relative asset path stays valid");
+}
+
+#[test]
+fn security_policy_rejects_invalid_audio_and_transition_tokens() {
+    let invalid_audio = ScriptRaw::new(
+        vec![EventRaw::AudioAction(AudioActionRaw {
+            channel: "bgm".to_string(),
+            action: "play".to_string(),
+            asset: Some("audio/theme.ogg".to_string()),
+            volume: Some(2.0),
+            fade_duration_ms: Some(100),
+            loop_playback: Some(true),
+        })],
+        BTreeMap::from([("start".to_string(), 0)]),
+    );
+    let err = SecurityPolicy::default()
+        .validate_raw(&invalid_audio, ResourceLimiter::default())
+        .expect_err("invalid audio volume rejected");
+    assert!(format!("{err}").contains("audio volume"));
+
+    let invalid_transition = ScriptRaw::new(
+        vec![EventRaw::Transition(SceneTransitionRaw {
+            kind: "cut".to_string(),
+            duration_ms: 10,
+            color: Some("red".to_string()),
+        })],
+        BTreeMap::from([("start".to_string(), 0)]),
+    );
+    let err = SecurityPolicy::default()
+        .validate_raw(&invalid_transition, ResourceLimiter::default())
+        .expect_err("invalid transition color rejected");
+    assert!(format!("{err}").contains("transition color"));
 }
 
 #[test]
@@ -435,7 +483,7 @@ fn prefetch_uses_expression_asset_not_character_name() {
 fn transition_is_observable_from_ui_and_engine() {
     let script = ScriptRaw::new(
         vec![EventRaw::Transition(SceneTransitionRaw {
-            kind: "fade".to_string(),
+            kind: "cut".to_string(),
             duration_ms: 250,
             color: Some("#000000".to_string()),
         })],
@@ -453,7 +501,7 @@ fn transition_is_observable_from_ui_and_engine() {
         ui.pending_transition
             .as_ref()
             .map(|transition| transition.kind.as_str()),
-        Some("fade")
+        Some("cut")
     );
     engine.step().expect("step transition");
     assert!(engine.pending_transition().is_some());

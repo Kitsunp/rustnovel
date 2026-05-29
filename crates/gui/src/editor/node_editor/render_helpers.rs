@@ -106,13 +106,11 @@ impl<'a> NodeEditorPanel<'a> {
     }
 
     pub fn render_status_bar(&self, painter: &egui::Painter, rect: egui::Rect) {
-        let hint = if self.graph.connecting_from.is_some() {
-            "Drag to node to connect - Esc cancels"
-        } else if self.graph.marquee_start.is_some() {
-            "Release to select nodes - Shift adds to selection"
-        } else {
-            "Drag from socket to connect - drag empty canvas to select - Ctrl+drag pans"
-        };
+        let hint = node_status_hint(
+            rect.width(),
+            self.graph.connecting_from.is_some(),
+            self.graph.marquee_start.is_some(),
+        );
         painter.text(
             rect.max - egui::vec2(10.0, 10.0),
             egui::Align2::RIGHT_BOTTOM,
@@ -136,5 +134,27 @@ impl<'a> NodeEditorPanel<'a> {
         let additive = ui.input(|i| i.modifiers.shift);
         self.graph
             .select_nodes_in_rect(egui::Rect::from_two_pos(start, current), additive);
+    }
+}
+
+pub fn node_status_hint(width: f32, connecting: bool, marquee: bool) -> &'static str {
+    if connecting {
+        if width < 360.0 {
+            "Connect - Esc"
+        } else {
+            "Drag to node to connect - Esc cancels"
+        }
+    } else if marquee {
+        if width < 360.0 {
+            "Release to select"
+        } else {
+            "Release to select nodes - Shift adds"
+        }
+    } else if width < 300.0 {
+        "Left select | Space pan"
+    } else if width < 520.0 {
+        "Left-drag selects - Space/right drag pans"
+    } else {
+        "Socket drag connects - empty left-drag selects - right/middle drag or Space+drag pans"
     }
 }

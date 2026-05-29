@@ -1,4 +1,6 @@
 use crate::error::{VnError, VnResult};
+use crate::schema_policy::{validate_script_schema_value, SchemaPolicy};
+use crate::script::ScriptRaw;
 use crate::version::SCRIPT_SCHEMA_VERSION;
 use serde_json::Value;
 
@@ -87,28 +89,47 @@ pub fn migrate_script_json_to_current(input: &str) -> VnResult<(String, Migratio
 }
 
 fn migrate_script_json_value_inner(input: &mut Value) -> Result<MigrationReport, MigrationError> {
-    let from_version = detect_script_version(input)?;
-    if from_version == SCRIPT_SCHEMA_VERSION {
+    let root = input.as_object_mut().ok_or_else(|| {
+        MigrationError::InvalidEnvelope("script payload must be a JSON object".to_string())
+    })?;
+    let schema =
+        validate_script_schema_value(root.get("script_schema_version"), SchemaPolicy::Migrating)
+            .map_err(|err| MigrationError::InvalidEnvelope(err.to_string()))?;
+    let from_version = schema
+        .found_version
+        .clone()
+        .unwrap_or_else(|| "missing".to_string());
+    if schema.found_version.as_deref() == Some(SCRIPT_SCHEMA_VERSION) {
         return Ok(MigrationReport {
             from_version: from_version.clone(),
             to_version: from_version,
             entries: Vec::new(),
         });
     }
-    Err(MigrationError::UnsupportedVersion(from_version))
-}
-
-fn detect_script_version(input: &Value) -> Result<String, MigrationError> {
-    let root = input.as_object().ok_or_else(|| {
-        MigrationError::InvalidEnvelope("script payload must be a JSON object".to_string())
+    root.insert(
+        "script_schema_version".to_string(),
+        Value::String(SCRIPT_SCHEMA_VERSION.to_string()),
+    );
+    let migrated = serde_json::to_string(input).map_err(|err| MigrationError::StepFailed {
+        step_id: "schema_policy_migrate_to_current".to_string(),
+        from_version: from_version.clone(),
+        to_version: SCRIPT_SCHEMA_VERSION.to_string(),
+        message: err.to_string(),
     })?;
-    let Some(raw_version) = root.get("script_schema_version") else {
-        return Err(MigrationError::InvalidEnvelope(
-            "missing script_schema_version".to_string(),
-        ));
-    };
-    let version = raw_version.as_str().ok_or_else(|| {
-        MigrationError::InvalidEnvelope("script_schema_version must be a string".to_string())
+    ScriptRaw::from_json(&migrated).map_err(|err| MigrationError::StepFailed {
+        step_id: "schema_policy_migrate_to_current".to_string(),
+        from_version: from_version.clone(),
+        to_version: SCRIPT_SCHEMA_VERSION.to_string(),
+        message: err.to_string(),
     })?;
-    Ok(version.to_string())
+    Ok(MigrationReport {
+        from_version: from_version.clone(),
+        to_version: SCRIPT_SCHEMA_VERSION.to_string(),
+        entries: vec![MigrationTraceEntry {
+            step_id: "schema_policy_migrate_to_current".to_string(),
+            from_version,
+            to_version: SCRIPT_SCHEMA_VERSION.to_string(),
+            changed: true,
+        }],
+    })
 }

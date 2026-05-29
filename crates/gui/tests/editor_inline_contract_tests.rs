@@ -136,6 +136,9 @@ fn execution_contract_matrix_contains_all_fidelity_classes() {
     assert!(contract_matrix()
         .iter()
         .any(|entry| entry.fidelity == FidelityClass::FallbackDegraded));
+    assert!(contract_matrix()
+        .iter()
+        .any(|entry| entry.fidelity == FidelityClass::HeadlessSimulated));
 }
 
 #[test]
@@ -155,8 +158,9 @@ fn execution_contract_classifies_story_markers_and_extcall() {
         command: "hook".to_string(),
         args: vec!["x".to_string()],
     }));
-    assert!(extcall.export_supported);
-    assert_eq!(extcall.fidelity, FidelityClass::RuntimeReal);
+    assert!(extcall.runtime_supported);
+    assert!(!extcall.export_supported);
+    assert_eq!(extcall.fidelity, FidelityClass::HeadlessSimulated);
 }
 
 #[test]

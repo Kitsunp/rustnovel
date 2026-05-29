@@ -161,7 +161,7 @@ impl EditorWorkbench {
             .save_file();
 
         if let Some(path) = path {
-            match std::fs::write(&path, bytes) {
+            match crate::editor::atomic_io::atomic_replace(&path, &bytes) {
                 Ok(_) => {
                     self.toast = Some(ToastState::success("Exported .vnproject successfully"));
                 }
@@ -238,6 +238,8 @@ impl EditorWorkbench {
 
         match package_result {
             Ok(report) => {
+                self.last_export_report = Some(report.clone());
+                self.show_export_report_panel = true;
                 self.toast = Some(ToastState::success(format!(
                     "Bundle packaged: assets={} launcher={} executable={}",
                     report.assets_copied,
@@ -280,7 +282,7 @@ impl EditorWorkbench {
             .save_file();
 
         if let Some(path) = path {
-            match std::fs::write(&path, payload) {
+            match crate::editor::atomic_io::atomic_replace(&path, payload.as_bytes()) {
                 Ok(_) => {
                     self.toast = Some(ToastState::success("Dry-run repro exported"));
                 }

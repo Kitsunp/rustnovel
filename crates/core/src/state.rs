@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 use serde::{Deserialize, Serialize};
 
 use crate::event::DialogueCompiled;
+use crate::route_tree::{ReadModelSnapshot, RouteProgressSnapshot};
 use crate::visual::VisualState;
 
 const HISTORY_LIMIT: usize = 200;
@@ -17,6 +18,10 @@ pub struct EngineState {
     pub vars: Vec<i32>,
     pub visual: VisualState,
     pub history: VecDeque<DialogueCompiled>,
+    #[serde(default)]
+    pub read_model: Option<ReadModelSnapshot>,
+    #[serde(default)]
+    pub route_progress: Option<RouteProgressSnapshot>,
 }
 
 impl EngineState {
@@ -28,6 +33,8 @@ impl EngineState {
             vars: Vec::new(),
             visual: VisualState::default(),
             history: VecDeque::with_capacity(HISTORY_LIMIT),
+            read_model: None,
+            route_progress: None,
         }
     }
 

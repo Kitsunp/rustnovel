@@ -33,6 +33,7 @@ pub fn render_transition(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
     engine: &mut Engine,
+    toast: &mut Option<ToastState>,
     kind: u8,
     duration_ms: u32,
     audio_commands: &mut Vec<AudioCommand>,
@@ -64,8 +65,14 @@ pub fn render_transition(
     );
 
     if progress >= 1.0 || ui.button("Skip Transition").clicked() {
-        if let Ok((cmd, _)) = engine.step() {
-            audio_commands.extend(cmd);
+        match engine.step() {
+            Ok((cmd, _)) => audio_commands.extend(cmd),
+            Err(err) => {
+                *toast = Some(ToastState::error(format!(
+                    "Transition advance failed at ip {}: {err}",
+                    engine.state().position
+                )));
+            }
         }
         ctx.data_mut(|data| data.remove::<(u32, f64)>(transition_id));
     } else {
@@ -273,12 +280,21 @@ pub fn render_choice(
             .clicked()
         {
             info!("Choice selected: {} ({})", option.text.as_ref(), i);
-            let _ = engine.choose(i);
-            audio_commands.extend(engine.take_audio_commands());
-            *toast = Some(ToastState::success(format!(
-                "Selected: {}",
-                option.text.as_ref()
-            )));
+            match engine.choose(i) {
+                Ok(_) => {
+                    audio_commands.extend(engine.take_audio_commands());
+                    *toast = Some(ToastState::success(format!(
+                        "Selected: {}",
+                        option.text.as_ref()
+                    )));
+                }
+                Err(err) => {
+                    *toast = Some(ToastState::error(format!(
+                        "Choice failed at ip {}: {err}",
+                        engine.state().position
+                    )));
+                }
+            }
         }
         ui.add_space(5.0);
     }
@@ -356,9 +372,18 @@ pub fn render_choice_overlay(
     });
     if let Some((idx, option)) = selected {
         info!("Choice selected: {} ({})", option, idx);
-        let _ = engine.choose(idx);
-        audio_commands.extend(engine.take_audio_commands());
-        *toast = Some(ToastState::success(format!("Selected: {option}")));
+        match engine.choose(idx) {
+            Ok(_) => {
+                audio_commands.extend(engine.take_audio_commands());
+                *toast = Some(ToastState::success(format!("Selected: {option}")));
+            }
+            Err(err) => {
+                *toast = Some(ToastState::error(format!(
+                    "Choice failed at ip {}: {err}",
+                    engine.state().position
+                )));
+            }
+        }
     }
 }
 

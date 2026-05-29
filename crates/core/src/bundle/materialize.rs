@@ -149,13 +149,16 @@ fn make_executable(_path: &Path) -> VnResult<()> {
     Ok(())
 }
 
-fn has_extension(path: &Path, expected: &str) -> bool {
+pub(super) fn has_extension(path: &Path, expected: &str) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case(expected))
 }
 
-fn runtime_artifact_matches_target(path: &Path, target: ExportTargetPlatform) -> VnResult<bool> {
+pub(super) fn runtime_artifact_matches_target(
+    path: &Path,
+    target: ExportTargetPlatform,
+) -> VnResult<bool> {
     let bytes = fs::read(path)
         .map_err(|e| invalid_bundle(format!("read runtime artifact '{}': {e}", path.display())))?;
     Ok(match target {

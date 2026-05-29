@@ -10,6 +10,7 @@ from vnengine.types import (
     CharacterPlacement,
     Dialogue,
     JumpIf,
+    LEGACY_READ_ONLY,
     Script,
     SCRIPT_SCHEMA_VERSION,
     SetCharacterPosition,
@@ -36,13 +37,27 @@ class TypesTests(unittest.TestCase):
         )
         self.assertEqual(script.to_json(), expected)
 
-    def test_script_accepts_missing_schema_version_for_legacy(self):
-        parsed = Script.from_json('{"events": [], "labels": {"start": 0}}')
+    def test_script_rejects_missing_schema_version_by_default(self):
+        with self.assertRaises(ValueError):
+            Script.from_json('{"events": [], "labels": {"start": 0}}')
+
+    def test_script_accepts_missing_schema_version_only_with_legacy_policy(self):
+        parsed = Script.from_json(
+            '{"events": [], "labels": {"start": 0}}',
+            schema_policy=LEGACY_READ_ONLY,
+        )
         self.assertEqual(parsed.labels["start"], 0)
 
-    def test_script_accepts_legacy_major_schema_version(self):
+    def test_script_rejects_legacy_major_schema_version_by_default(self):
+        with self.assertRaises(ValueError):
+            Script.from_json(
+                '{"script_schema_version":"0.9","events":[],"labels":{"start":0}}'
+            )
+
+    def test_script_accepts_legacy_major_schema_version_only_with_policy(self):
         parsed = Script.from_json(
-            '{"script_schema_version":"0.9","events":[],"labels":{"start":0}}'
+            '{"script_schema_version":"0.9","events":[],"labels":{"start":0}}',
+            schema_policy=LEGACY_READ_ONLY,
         )
         self.assertEqual(parsed.labels["start"], 0)
 

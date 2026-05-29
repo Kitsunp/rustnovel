@@ -35,6 +35,47 @@ fn test_workbench_initialization() {
 }
 
 #[test]
+fn workbench_update_uses_supplied_delta_ticks_and_seconds() {
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    let mut track = visual_novel_engine::Track::new(
+        visual_novel_engine::EntityId::new(2),
+        visual_novel_engine::PropertyType::PositionY,
+    );
+    track
+        .add_keyframe(visual_novel_engine::Keyframe::new(
+            120,
+            0,
+            visual_novel_engine::Easing::Linear,
+        ))
+        .unwrap();
+    workbench.timeline.add_track(track).unwrap();
+    workbench.is_playing = true;
+
+    workbench.update(30);
+    assert_eq!(workbench.timeline.current_time(), 30);
+    workbench.update_seconds(0.5);
+    assert_eq!(workbench.timeline.current_time(), 60);
+}
+
+#[test]
+fn export_wizard_initializes_project_defaults_without_executing() {
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    let tmp = tempfile::tempdir().expect("tempdir");
+    workbench.project_root = Some(tmp.path().to_path_buf());
+    workbench.manifest = Some(visual_novel_engine::ProjectManifest::new("game", "studio"));
+
+    workbench.open_export_wizard();
+
+    assert!(workbench.show_export_wizard);
+    assert!(workbench.export_wizard.dry_run);
+    assert!(workbench
+        .export_wizard
+        .output_root
+        .contains(workbench.export_wizard.target.as_str()));
+    assert_eq!(workbench.export_wizard.entry_script, "main.json");
+}
+
+#[test]
 fn play_mode_refuses_empty_workbench_without_stale_preview_state() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);

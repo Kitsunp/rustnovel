@@ -95,7 +95,11 @@ impl EditorWorkbench {
             self.undo_stack.push(undo_snapshot);
         }
         self.node_graph.clear_modified();
-        let _ = self.sync_graph_to_script();
+        if let Err(err) = self.sync_graph_to_script() {
+            self.toast = Some(ToastState::error(format!(
+                "Graph sync failed after editor mutation: {err}"
+            )));
+        }
     }
 
     pub fn apply_graph_undo(&mut self) -> bool {

@@ -164,6 +164,32 @@ fn isolated_preview_mode_label_overrides_runtime_inheritance_badge() {
     assert_eq!(label, "Preview: Isolated node");
 }
 
+#[test]
+fn composer_chrome_layout_switches_to_multirow_controls_before_overlap() {
+    let narrow = super::composer_chrome_layout(360.0);
+    assert_eq!(narrow.mode, super::ComposerChromeMode::Narrow);
+    assert!(!narrow.show_full_labels);
+    assert!(narrow.preview_width <= 96.0);
+
+    let compact = super::composer_chrome_layout(560.0);
+    assert_eq!(compact.mode, super::ComposerChromeMode::Compact);
+    assert!(!compact.show_full_labels);
+    assert!(compact.preview_width < super::composer_chrome_layout(900.0).preview_width);
+
+    let full = super::composer_chrome_layout(900.0);
+    assert_eq!(full.mode, super::ComposerChromeMode::Full);
+    assert!(full.show_full_labels);
+}
+
+#[test]
+fn visual_composer_heading_shrinks_for_narrow_docks() {
+    assert_eq!(super::visual_composer_heading_label(360.0), "Composer");
+    assert_eq!(
+        super::visual_composer_heading_label(560.0),
+        "Visual Composer"
+    );
+}
+
 fn inherited_background_scene() -> (
     visual_novel_engine::SceneState,
     std::collections::HashMap<u32, u32>,

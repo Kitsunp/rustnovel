@@ -31,6 +31,11 @@ impl SecurityPolicy {
                     "label '{label}' points outside events"
                 )));
             }
+            if label == "start" && *index >= script.events.len() {
+                return Err(VnError::InvalidScript(
+                    "start label must point to an executable event".to_string(),
+                ));
+            }
         }
 
         for event in &script.events {
@@ -101,10 +106,14 @@ impl SecurityPolicy {
                 }
                 EventRaw::Patch(patch) => {
                     if let Some(bg) = &patch.background {
-                        validate_path(bg, "background image", limits)?;
+                        if !bg.is_empty() {
+                            validate_path(bg, "background image", limits)?;
+                        }
                     }
                     if let Some(music) = &patch.music {
-                        validate_path(music, "music file", limits)?;
+                        if !music.is_empty() {
+                            validate_path(music, "music file", limits)?;
+                        }
                     }
                     for character in &patch.add {
                         validate_path(&character.name, "character name", limits)?;
@@ -118,6 +127,9 @@ impl SecurityPolicy {
                                 ));
                             }
                         }
+                        if let Some(scale) = character.scale {
+                            validate_positive_scale(scale, "character scale")?;
+                        }
                     }
                     for character in &patch.update {
                         validate_path(&character.name, "character name", limits)?;
@@ -130,6 +142,9 @@ impl SecurityPolicy {
                                     "character position".to_string(),
                                 ));
                             }
+                        }
+                        if let Some(scale) = character.scale {
+                            validate_positive_scale(scale, "character patch scale")?;
                         }
                     }
                     for name in &patch.remove {
@@ -180,16 +195,35 @@ impl SecurityPolicy {
                     if let Some(asset) = &action.asset {
                         validate_path(asset, "audio asset", limits)?;
                     }
+                    if let Some(volume) = action.volume {
+                        if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+                            return Err(VnError::InvalidScript(
+                                "audio volume must be finite and in 0.0..=1.0".to_string(),
+                            ));
+                        }
+                    }
+                    if let Some(duration) = action.fade_duration_ms {
+                        if duration > 600_000 {
+                            return Err(VnError::InvalidScript(
+                                "audio fade duration must be <= 600000ms".to_string(),
+                            ));
+                        }
+                    }
                 }
-                EventRaw::Transition(_) => {}
+                EventRaw::Transition(transition) => {
+                    if transition.duration_ms > 600_000 {
+                        return Err(VnError::InvalidScript(
+                            "transition duration must be <= 600000ms".to_string(),
+                        ));
+                    }
+                    if let Some(color) = &transition.color {
+                        validate_hex_color(color, "transition color")?;
+                    }
+                }
                 EventRaw::SetCharacterPosition(pos) => {
                     validate_path(&pos.name, "character name", limits)?;
                     if let Some(scale) = pos.scale {
-                        if !scale.is_finite() || scale <= 0.0 {
-                            return Err(VnError::InvalidScript(
-                                "set_character_position scale must be > 0".to_string(),
-                            ));
-                        }
+                        validate_positive_scale(scale, "set_character_position scale")?;
                     }
                 }
             }
@@ -264,6 +298,26 @@ fn validate_path(
     if is_unsafe_resource_path(path) {
         return Err(crate::error::VnError::SecurityPolicy(format!(
             "{name} path is unsafe"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_positive_scale(scale: f32, name: &str) -> VnResult<()> {
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err(VnError::InvalidScript(format!("{name} must be > 0")));
+    }
+    Ok(())
+}
+
+fn validate_hex_color(color: &str, name: &str) -> VnResult<()> {
+    let bytes = color.as_bytes();
+    let valid_len = bytes.len() == 7 || bytes.len() == 9;
+    let valid_hex =
+        bytes.first() == Some(&b'#') && bytes.iter().skip(1).all(|byte| byte.is_ascii_hexdigit());
+    if !valid_len || !valid_hex {
+        return Err(VnError::InvalidScript(format!(
+            "{name} must be #RRGGBB or #RRGGBBAA"
         )));
     }
     Ok(())

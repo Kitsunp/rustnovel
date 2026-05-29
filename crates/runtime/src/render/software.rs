@@ -40,9 +40,14 @@ impl<'a> SoftwareBackend<'a> {
 }
 
 impl<'a> RenderBackend for SoftwareBackend<'a> {
-    fn resize(&mut self, width: u32, height: u32) {
-        let _ = self.pixels.resize_surface(width, height);
-        let _ = self.pixels.resize_buffer(width, height);
+    fn resize(&mut self, width: u32, height: u32) -> Result<(), String> {
+        self.pixels
+            .resize_surface(width, height)
+            .map_err(|err| format!("software resize surface failed: {err}"))?;
+        self.pixels
+            .resize_buffer(width, height)
+            .map_err(|err| format!("software resize buffer failed: {err}"))?;
+        Ok(())
     }
 
     fn render(&mut self, ui: &UiState) -> Result<(), String> {

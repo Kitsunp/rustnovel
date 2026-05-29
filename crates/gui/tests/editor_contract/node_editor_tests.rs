@@ -3,10 +3,35 @@ use crate::editor::node_types::{node_visual_height, StoryNode, NODE_WIDTH};
 use eframe::egui;
 
 #[test]
-fn test_node_editor_panel_creation() {
+fn node_editor_panel_creation_paints_canvas_and_keeps_graph_state() {
     let mut graph = NodeGraph::new();
     let mut undo = UndoStack::new();
-    let _panel = NodeEditorPanel::new(&mut graph, &mut undo);
+    let node_id = graph.add_node(StoryNode::Start, egui::pos2(120.0, 90.0));
+    let ctx = egui::Context::default();
+    let output = ctx.run(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(640.0, 420.0),
+            )),
+            ..Default::default()
+        },
+        |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                NodeEditorPanel::new(&mut graph, &mut undo).ui(ui);
+            });
+        },
+    );
+
+    assert!(
+        !output.shapes.is_empty(),
+        "NodeEditorPanel should paint the grid and nodes in a real egui frame"
+    );
+    assert_eq!(graph.get_node(node_id), Some(&StoryNode::Start));
+    assert!(
+        graph.context_menu.is_none(),
+        "passive render should not synthesize context menus"
+    );
 }
 
 #[test]
@@ -142,6 +167,65 @@ fn graph_shortcuts_are_scoped_to_hover_or_active_graph_interaction() {
     assert!(
         !graph_shortcut_scope_active(false, false),
         "node editor shortcuts must not steal keys from composer/inspector panels"
+    );
+}
+
+#[test]
+fn canvas_drag_modes_keep_pan_and_marquee_selection_distinct() {
+    let none = egui::Modifiers::default();
+    let ctrl = egui::Modifiers {
+        ctrl: true,
+        ..Default::default()
+    };
+
+    assert_eq!(
+        canvas_drag_mode(true, false, false, none, false),
+        CanvasDragMode::MarqueeSelect,
+        "plain left drag on empty canvas keeps marquee multi-select"
+    );
+    assert_eq!(
+        canvas_drag_mode(true, false, false, ctrl, false),
+        CanvasDragMode::Pan,
+        "Ctrl+left drag pans for keyboard users"
+    );
+    assert_eq!(
+        canvas_drag_mode(true, false, false, none, true),
+        CanvasDragMode::Pan,
+        "Space+left drag pans like common graph editors"
+    );
+    assert_eq!(
+        canvas_drag_mode(false, true, false, none, false),
+        CanvasDragMode::Pan,
+        "middle mouse drag pans without stealing marquee selection"
+    );
+    assert_eq!(
+        canvas_drag_mode(false, false, true, none, false),
+        CanvasDragMode::Pan,
+        "right mouse drag pans while right click remains available for menu"
+    );
+}
+
+#[test]
+fn logic_graph_labels_shrink_inside_narrow_docks() {
+    assert_eq!(logic_graph_heading_label(180.0), "Graph");
+    assert_eq!(logic_graph_heading_label(320.0), "Logic Graph");
+    assert_eq!(node_editor_heading_label(180.0), "Nodes");
+    assert_eq!(node_editor_heading_label(320.0), "Node Editor");
+    assert!(node_toolbar_is_compact(320.0));
+    assert!(!node_toolbar_is_compact(520.0));
+}
+
+#[test]
+fn node_status_hint_uses_short_copy_when_graph_panel_is_narrow() {
+    assert_eq!(
+        node_status_hint(260.0, false, false),
+        "Left select | Space pan"
+    );
+    assert_eq!(node_status_hint(260.0, true, false), "Connect - Esc");
+    assert_eq!(node_status_hint(260.0, false, true), "Release to select");
+    assert!(
+        node_status_hint(640.0, false, false).len()
+            > node_status_hint(260.0, false, false).len()
     );
 }
 

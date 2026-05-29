@@ -464,7 +464,11 @@ Event = Union[
 
 
 from .script_types import (  # noqa: E402,F401  (loaded after event classes exist)
+    LEGACY_READ_ONLY,
+    MIGRATING,
+    STRICT_CURRENT,
     Script,
+    SchemaPolicy,
     cond_from_dict,
     event_from_dict,
     normalize_character_patches,

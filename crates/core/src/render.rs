@@ -1,7 +1,5 @@
 //! Rendering helpers for compiled events.
 
-use std::fmt::Write;
-
 use crate::event::{EventCompiled, SceneUpdateCompiled};
 use crate::visual::VisualState;
 
@@ -24,10 +22,14 @@ impl TextRenderer {
     fn render_scene(&self, scene: &SceneUpdateCompiled, visual: &VisualState) -> String {
         let mut output = String::with_capacity(128);
         if let Some(background) = scene.background.as_deref().or(visual.background.as_deref()) {
-            let _ = writeln!(output, "Background: {background}");
+            output.push_str("Background: ");
+            output.push_str(background);
+            output.push('\n');
         }
         if let Some(music) = scene.music.as_deref().or(visual.music.as_deref()) {
-            let _ = writeln!(output, "Music: {music}");
+            output.push_str("Music: ");
+            output.push_str(music);
+            output.push('\n');
         }
         if !visual.characters.is_empty() {
             let mut roster = String::with_capacity(visual.characters.len() * 24);
@@ -37,13 +39,18 @@ impl TextRenderer {
                 }
                 roster.push_str(character.name.as_ref());
                 if let Some(expression) = &character.expression {
-                    let _ = write!(roster, " ({expression})");
+                    roster.push_str(" (");
+                    roster.push_str(expression.as_ref());
+                    roster.push(')');
                 }
                 if let Some(position) = &character.position {
-                    let _ = write!(roster, " @ {position}");
+                    roster.push_str(" @ ");
+                    roster.push_str(position.as_ref());
                 }
             }
-            let _ = writeln!(output, "Characters: {roster}");
+            output.push_str("Characters: ");
+            output.push_str(&roster);
+            output.push('\n');
         }
         if output.is_empty() {
             "Scene updated".to_string()
@@ -63,11 +70,16 @@ impl RenderBackend for TextRenderer {
             EventCompiled::Choice(choice) => {
                 let mut options = String::with_capacity(choice.options.len().saturating_mul(12));
                 for (idx, option) in choice.options.iter().enumerate() {
-                    let _ = writeln!(options, "{}. {}", idx + 1, option.text);
+                    options.push_str(&(idx + 1).to_string());
+                    options.push_str(". ");
+                    options.push_str(option.text.as_ref());
+                    options.push('\n');
                 }
                 options.truncate(options.trim_end_matches('\n').len());
                 let mut text = String::with_capacity(choice.prompt.len() + 1 + options.len());
-                let _ = write!(text, "{}\n{}", choice.prompt, options);
+                text.push_str(choice.prompt.as_ref());
+                text.push('\n');
+                text.push_str(&options);
                 text
             }
             EventCompiled::Scene(scene) => self.render_scene(scene, visual),

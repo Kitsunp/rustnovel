@@ -14,8 +14,8 @@ pub const COMPILED_FORMAT_VERSION: u16 = 2;
 
 /// Current format version for save files.
 /// Increment when EngineState serialization changes.
-/// v3: Migrated save payload encoding from bincode to postcard.
-pub const SAVE_FORMAT_VERSION: u16 = 3;
+/// v4: Added optional read-model and route-progress snapshots.
+pub const SAVE_FORMAT_VERSION: u16 = 4;
 
 /// Magic bytes for compiled script binaries.
 pub const SCRIPT_BINARY_MAGIC: [u8; 4] = *b"VNSC";

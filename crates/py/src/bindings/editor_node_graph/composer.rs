@@ -1,3 +1,4 @@
+use pyo3::exceptions::PyValueError;
 use visual_novel_engine::authoring::composer::{
     apply_layer_overrides, compose_scene_snapshot as build_composer_snapshot,
     list_layered_objects as collect_layered_objects,
@@ -81,18 +82,46 @@ impl PyNodeGraph {
         stage_layer_names()
     }
 
-    pub(super) fn py_set_layer_visible(&mut self, object_id: &str, visible: bool) {
-        let _ = self.apply_document_command(AuthoringDocumentCommand::SetLayerVisible {
+    pub(super) fn py_set_layer_visible(
+        &mut self,
+        object_id: &str,
+        visible: bool,
+    ) -> pyo3::PyResult<()> {
+        if self
+            .session
+            .read_model()
+            .composer_layer(object_id)
+            .is_some_and(|layer| layer.visible == visible)
+        {
+            return Ok(());
+        }
+        self.apply_document_command(AuthoringDocumentCommand::SetLayerVisible {
             object_id: object_id.to_string(),
             visible,
-        });
+        })
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(())
     }
 
-    pub(super) fn py_set_layer_locked(&mut self, object_id: &str, locked: bool) {
-        let _ = self.apply_document_command(AuthoringDocumentCommand::SetLayerLocked {
+    pub(super) fn py_set_layer_locked(
+        &mut self,
+        object_id: &str,
+        locked: bool,
+    ) -> pyo3::PyResult<()> {
+        if self
+            .session
+            .read_model()
+            .composer_layer(object_id)
+            .is_some_and(|layer| layer.locked == locked)
+        {
+            return Ok(());
+        }
+        self.apply_document_command(AuthoringDocumentCommand::SetLayerLocked {
             object_id: object_id.to_string(),
             locked,
-        });
+        })
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(())
     }
 
     pub(super) fn py_move_scene_object(

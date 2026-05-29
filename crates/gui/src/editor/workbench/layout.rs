@@ -3,6 +3,20 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const WORKSPACE_LAYOUT_SCHEMA_VERSION: u32 = 1;
+pub const DEFAULT_DOCK_REFERENCE_WIDTH: f32 = 1280.0;
+pub const TOOLBAR_EXPANDED_MIN_WIDTH: f32 = 2400.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditorToolbarMode {
+    Grouped,
+    Expanded,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValidationReportPlacement {
+    Inspector,
+    FloatingWindow,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum WorkspacePanelId {
@@ -103,6 +117,29 @@ fn workspace_layout_schema_version() -> u32 {
     WORKSPACE_LAYOUT_SCHEMA_VERSION
 }
 
+pub fn editor_toolbar_mode(available_width: f32) -> EditorToolbarMode {
+    if available_width >= TOOLBAR_EXPANDED_MIN_WIDTH {
+        EditorToolbarMode::Expanded
+    } else {
+        EditorToolbarMode::Grouped
+    }
+}
+
+pub fn validation_report_placement(inspector_visible: bool) -> ValidationReportPlacement {
+    if inspector_visible {
+        ValidationReportPlacement::Inspector
+    } else {
+        ValidationReportPlacement::FloatingWindow
+    }
+}
+
+pub fn validation_report_body_height(available_height: f32, issue_count: usize) -> f32 {
+    if issue_count == 0 {
+        return 28.0;
+    }
+    (available_height * 0.42).clamp(120.0, 360.0)
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceLayout {
     #[serde(default = "workspace_layout_schema_version")]
@@ -182,6 +219,25 @@ pub struct EditorPanelLayout {
     pub id_suffix: &'static str,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EditorDockVisibility {
+    pub asset_browser: bool,
+    pub graph: bool,
+    pub inspector: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EditorDockLayout {
+    pub asset_browser: Option<WorkspacePanelRect>,
+    pub graph: Option<WorkspacePanelRect>,
+    pub composer: WorkspacePanelRect,
+    pub inspector: Option<WorkspacePanelRect>,
+    pub asset_splitter: Option<WorkspacePanelRect>,
+    pub graph_splitter: Option<WorkspacePanelRect>,
+    pub inspector_splitter: Option<WorkspacePanelRect>,
+    pub panel_sizes: EditorPanelLayout,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ValidationPanelLayout {
     pub min: f32,
@@ -226,9 +282,9 @@ pub fn editor_panel_layout(
     } else if compact {
         260.0
     } else if medium {
-        520.0
+        (width * 0.34).clamp(400.0, 520.0)
     } else {
-        560.0
+        (width * 0.34).clamp(480.0, 1440.0)
     };
     let id_suffix = if compact {
         "compact"
@@ -238,27 +294,31 @@ pub fn editor_panel_layout(
         "wide"
     };
 
+    let dock_reference_width = dock_reference_width(overrides);
     let mut layout = EditorPanelLayout {
         asset_browser: apply_width_override(
             panel_size(width, asset_min, 0.11, 0.14),
             overrides.asset_width,
             width,
+            dock_reference_width,
         ),
         graph: apply_width_override(
             panel_size(width, graph_min, 0.27, 0.32),
             overrides.graph_width,
             width,
+            dock_reference_width,
         ),
         inspector: apply_width_override(
             panel_size(width, inspector_min, 0.19, 0.24),
             overrides.inspector_width,
             width,
+            dock_reference_width,
         ),
         timeline: apply_height_override(
             PanelSize {
                 min: if compact { 72.0 } else { 96.0 },
-                default: (height * 0.26).clamp(120.0, 220.0),
-                max: (height * 0.50).clamp(160.0, 360.0),
+                default: (height * 0.22).clamp(96.0, 180.0),
+                max: (height * 0.42).clamp(140.0, 320.0),
             },
             overrides.timeline_height,
             height,
@@ -268,6 +328,153 @@ pub fn editor_panel_layout(
     };
     fit_side_panels_to_central_budget(&mut layout, width);
     layout
+}
+
+pub fn resolve_editor_dock_layout(
+    available_width: f32,
+    available_height: f32,
+    overrides: &LayoutOverrides,
+    visibility: EditorDockVisibility,
+) -> EditorDockLayout {
+    const SPLITTER: f32 = 10.0;
+
+    let width = available_width.max(1.0);
+    let height = available_height.max(1.0);
+    let splitter_count = [
+        visibility.asset_browser,
+        visibility.graph,
+        visibility.inspector,
+    ]
+    .into_iter()
+    .filter(|visible| *visible)
+    .count() as f32;
+    let content_width = (width - splitter_count * SPLITTER).max(1.0);
+    let panel_sizes = editor_panel_layout(content_width, height, overrides);
+
+    let asset_min = if visibility.asset_browser {
+        panel_sizes.asset_browser.min
+    } else {
+        0.0
+    };
+    let graph_min = if visibility.graph {
+        panel_sizes.graph.min
+    } else {
+        0.0
+    };
+    let inspector_min = if visibility.inspector {
+        panel_sizes.inspector.min
+    } else {
+        0.0
+    };
+    let min_side = asset_min + graph_min + inspector_min;
+    let central_min = panel_sizes
+        .central_min
+        .min((content_width - min_side).max(96.0))
+        .max(0.0);
+    let side_budget = (content_width - central_min).max(0.0);
+
+    let mut asset_w = if visibility.asset_browser {
+        panel_sizes.asset_browser.default
+    } else {
+        0.0
+    };
+    let mut graph_w = if visibility.graph {
+        panel_sizes.graph.default
+    } else {
+        0.0
+    };
+    let mut inspector_w = if visibility.inspector {
+        panel_sizes.inspector.default
+    } else {
+        0.0
+    };
+
+    let mut side_widths = [asset_w, graph_w, inspector_w];
+    shrink_widths_proportionally(
+        &mut side_widths,
+        [asset_min, graph_min, inspector_min],
+        side_budget,
+    );
+    asset_w = side_widths[0];
+    graph_w = side_widths[1];
+    inspector_w = side_widths[2];
+
+    let composer_w = (content_width - asset_w - graph_w - inspector_w).max(1.0);
+    let mut x = 0.0;
+    let asset_browser = visibility.asset_browser.then(|| {
+        let rect = WorkspacePanelRect {
+            x,
+            y: 0.0,
+            w: asset_w,
+            h: height,
+        };
+        x += asset_w;
+        rect
+    });
+    let asset_splitter = visibility.asset_browser.then(|| {
+        let rect = WorkspacePanelRect {
+            x,
+            y: 0.0,
+            w: SPLITTER,
+            h: height,
+        };
+        x += SPLITTER;
+        rect
+    });
+    let graph = visibility.graph.then(|| {
+        let rect = WorkspacePanelRect {
+            x,
+            y: 0.0,
+            w: graph_w,
+            h: height,
+        };
+        x += graph_w;
+        rect
+    });
+    let graph_splitter = visibility.graph.then(|| {
+        let rect = WorkspacePanelRect {
+            x,
+            y: 0.0,
+            w: SPLITTER,
+            h: height,
+        };
+        x += SPLITTER;
+        rect
+    });
+    let composer = WorkspacePanelRect {
+        x,
+        y: 0.0,
+        w: composer_w,
+        h: height,
+    };
+    x += composer_w;
+    let inspector_splitter = visibility.inspector.then(|| {
+        let rect = WorkspacePanelRect {
+            x,
+            y: 0.0,
+            w: SPLITTER,
+            h: height,
+        };
+        x += SPLITTER;
+        rect
+    });
+    let inspector = visibility.inspector.then_some(WorkspacePanelRect {
+        x,
+        y: 0.0,
+        w: inspector_w,
+        h: height,
+    });
+
+    EditorDockLayout {
+        asset_browser,
+        graph,
+        composer,
+        inspector,
+        asset_splitter,
+        graph_splitter,
+        inspector_splitter,
+        panel_sizes,
+    }
 }
 
 pub fn validation_panel_layout(
@@ -284,26 +491,21 @@ pub fn validation_panel_layout(
         };
     }
 
+    let automatic_default = (height * 0.14).clamp(84.0, 140.0);
+    let max = (height * 0.58).clamp(180.0, 720.0);
     let default = overrides
         .validation_height
-        .unwrap_or_else(|| (height * 0.30).clamp(110.0, 240.0))
-        .clamp(80.0, height * 0.82);
+        .unwrap_or(automatic_default)
+        .clamp(80.0, max);
     ValidationPanelLayout {
         min: 34.0,
         default,
-        max: (height * 0.82).clamp(180.0, 720.0),
+        max,
     }
 }
 
-pub fn timeline_panel_layout(base: PanelSize, stacked_with_validation: bool) -> PanelSize {
-    if !stacked_with_validation {
-        return base;
-    }
-    PanelSize {
-        min: base.min.min(56.0),
-        default: base.default.min(96.0).max(base.min.min(56.0)),
-        max: base.max.min(160.0).max(base.min.min(56.0)),
-    }
+pub fn timeline_panel_layout(base: PanelSize, _validation_visible: bool) -> PanelSize {
+    base
 }
 
 pub fn dragged_panel_override(
@@ -324,6 +526,30 @@ pub fn dragged_panel_override(
     }
 }
 
+pub fn observed_panel_override(
+    current: Option<f32>,
+    measured: f32,
+    adaptive_default: f32,
+    min: f32,
+    max: f32,
+) -> Option<f32> {
+    if !measured.is_finite() {
+        return current;
+    }
+    let next = measured.clamp(min, max);
+    if let Some(value) = current {
+        if (value - next).abs() < 1.0 {
+            current
+        } else {
+            Some(next)
+        }
+    } else if (adaptive_default - next).abs() >= 1.0 {
+        Some(next)
+    } else {
+        None
+    }
+}
+
 fn panel_size(width: f32, min: f32, default_ratio: f32, max_ratio: f32) -> PanelSize {
     let max = (width * max_ratio).max(min);
     PanelSize {
@@ -337,13 +563,30 @@ fn apply_width_override(
     mut size: PanelSize,
     override_width: Option<f32>,
     total_width: f32,
+    reference_width: f32,
 ) -> PanelSize {
     if let Some(width) = override_width {
-        let width = width.clamp(size.min, total_width * 0.48);
+        let width = scaled_width_override(width, total_width, reference_width)
+            .clamp(size.min, total_width * 0.48);
         size.default = width;
         size.max = size.max.max(width).min(total_width * 0.52);
     }
     size
+}
+
+fn dock_reference_width(overrides: &LayoutOverrides) -> f32 {
+    overrides
+        .dock_reference_width
+        .filter(|width| width.is_finite() && *width >= 360.0)
+        .unwrap_or(DEFAULT_DOCK_REFERENCE_WIDTH)
+}
+
+fn scaled_width_override(width: f32, total_width: f32, reference_width: f32) -> f32 {
+    if !width.is_finite() {
+        return width;
+    }
+    let reference_width = reference_width.max(360.0);
+    width * (total_width.max(1.0) / reference_width)
 }
 
 fn apply_height_override(
@@ -373,22 +616,53 @@ fn fit_side_panels_to_central_budget(layout: &mut EditorPanelLayout, total_width
 }
 
 fn shrink_defaults_to_budget(layout: &mut EditorPanelLayout, side_budget: f32) {
-    let total_default =
-        layout.asset_browser.default + layout.graph.default + layout.inspector.default;
-    let mut overflow = (total_default - side_budget).max(0.0);
-    overflow = shrink_panel_default(&mut layout.graph, overflow);
-    overflow = shrink_panel_default(&mut layout.asset_browser, overflow);
-    let _ = shrink_panel_default(&mut layout.inspector, overflow);
+    let mut widths = [
+        layout.asset_browser.default,
+        layout.graph.default,
+        layout.inspector.default,
+    ];
+    shrink_widths_proportionally(
+        &mut widths,
+        [
+            layout.asset_browser.min,
+            layout.graph.min,
+            layout.inspector.min,
+        ],
+        side_budget,
+    );
+    layout.asset_browser.default = widths[0];
+    layout.graph.default = widths[1];
+    layout.inspector.default = widths[2];
 }
 
-fn shrink_panel_default(panel: &mut PanelSize, overflow: f32) -> f32 {
-    if overflow <= 0.0 {
-        return 0.0;
+fn shrink_widths_proportionally(widths: &mut [f32; 3], minimums: [f32; 3], budget: f32) {
+    let mut overflow = (widths.iter().sum::<f32>() - budget).max(0.0);
+    while overflow > 0.1 {
+        let removable = [
+            (widths[0] - minimums[0]).max(0.0),
+            (widths[1] - minimums[1]).max(0.0),
+            (widths[2] - minimums[2]).max(0.0),
+        ];
+        let removable_total = removable.iter().sum::<f32>();
+        if removable_total <= 0.1 {
+            break;
+        }
+
+        let mut removed_total = 0.0;
+        for index in 0..widths.len() {
+            if removable[index] <= 0.0 {
+                continue;
+            }
+            let share = overflow * (removable[index] / removable_total);
+            let removed = share.min(removable[index]);
+            widths[index] -= removed;
+            removed_total += removed;
+        }
+        if removed_total <= 0.1 {
+            break;
+        }
+        overflow -= removed_total;
     }
-    let removable = (panel.default - panel.min).max(0.0);
-    let removed = removable.min(overflow);
-    panel.default -= removed;
-    overflow - removed
 }
 
 fn clamp_maxima_to_budget(layout: &mut EditorPanelLayout, side_budget: f32) {
@@ -431,11 +705,23 @@ fn panel_max_with_other_minimums(side_budget: f32, own_min: f32, other_mins: f32
 }
 
 fn shrink_maxima_to_budget(layout: &mut EditorPanelLayout, side_budget: f32) {
-    let total_max = layout.asset_browser.max + layout.graph.max + layout.inspector.max;
-    let mut overflow = (total_max - side_budget).max(0.0);
-    overflow = shrink_panel_max(&mut layout.graph, overflow);
-    overflow = shrink_panel_max(&mut layout.inspector, overflow);
-    let _ = shrink_panel_max(&mut layout.asset_browser, overflow);
+    let mut maxima = [
+        layout.asset_browser.max,
+        layout.graph.max,
+        layout.inspector.max,
+    ];
+    shrink_widths_proportionally(
+        &mut maxima,
+        [
+            layout.asset_browser.min,
+            layout.graph.min,
+            layout.inspector.min,
+        ],
+        side_budget,
+    );
+    layout.asset_browser.max = maxima[0];
+    layout.graph.max = maxima[1];
+    layout.inspector.max = maxima[2];
 
     layout.asset_browser.default = layout
         .asset_browser
@@ -449,14 +735,4 @@ fn shrink_maxima_to_budget(layout: &mut EditorPanelLayout, side_budget: f32) {
         .inspector
         .default
         .clamp(layout.inspector.min, layout.inspector.max);
-}
-
-fn shrink_panel_max(panel: &mut PanelSize, overflow: f32) -> f32 {
-    if overflow <= 0.0 {
-        return 0.0;
-    }
-    let removable = (panel.max - panel.min).max(0.0);
-    let removed = removable.min(overflow);
-    panel.max -= removed;
-    overflow - removed
 }

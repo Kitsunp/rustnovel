@@ -74,8 +74,22 @@ const JUMP_IF: EventExecutionContract = runtime_real("JumpIf");
 const AUDIO_ACTION: EventExecutionContract = runtime_real("AudioAction");
 const TRANSITION: EventExecutionContract = runtime_real("Transition");
 const CHARACTER_PLACEMENT: EventExecutionContract = runtime_real("SetCharacterPosition");
-const EXT_CALL: EventExecutionContract = runtime_real("ExtCall");
-const SUBGRAPH_CALL: EventExecutionContract = runtime_real("SubgraphCall");
+const EXT_CALL: EventExecutionContract = EventExecutionContract {
+    event_name: "ExtCall",
+    editor_supported: true,
+    preview_supported: true,
+    runtime_supported: true,
+    export_supported: false,
+    fidelity: FidelityClass::HeadlessSimulated,
+};
+const SUBGRAPH_CALL: EventExecutionContract = EventExecutionContract {
+    event_name: "SubgraphCall",
+    editor_supported: true,
+    preview_supported: true,
+    runtime_supported: false,
+    export_supported: true,
+    fidelity: FidelityClass::PreviewOnly,
+};
 
 const GENERIC_EVENT: EventExecutionContract = EventExecutionContract {
     event_name: "Generic/EventRaw",

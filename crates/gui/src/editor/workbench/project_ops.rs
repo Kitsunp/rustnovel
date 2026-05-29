@@ -2,7 +2,9 @@ use super::*;
 
 impl EditorWorkbench {
     pub fn load_project(&mut self, path: std::path::PathBuf) {
-        let _ = self.load_project_with_status(path, true);
+        if let Err(err) = self.load_project_with_status(path, true) {
+            self.toast = Some(ToastState::error(format!("Project load failed: {err}")));
+        }
     }
 
     pub fn load_project_with_status(

@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub(super) struct CachedBytes {
-    pub data: Vec<u8>,
+    pub data: Arc<[u8]>,
     pub bytes: usize,
     pub last_used: u64,
 }
@@ -25,15 +26,15 @@ impl ByteCache {
         }
     }
 
-    pub(super) fn get(&mut self, key: &str) -> Option<Vec<u8>> {
+    pub(super) fn get(&mut self, key: &str) -> Option<Arc<[u8]>> {
         self.usage_counter = self.usage_counter.wrapping_add(1);
         self.entries.get_mut(key).map(|entry| {
             entry.last_used = self.usage_counter;
-            entry.data.clone()
+            Arc::clone(&entry.data)
         })
     }
 
-    pub(super) fn insert(&mut self, key: String, data: Vec<u8>) {
+    pub(super) fn insert(&mut self, key: String, data: Arc<[u8]>) {
         let bytes = data.len();
         if bytes > self.max_bytes {
             return;

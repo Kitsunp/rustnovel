@@ -209,24 +209,43 @@ pub fn compile_authoring_graph(
         }
         Err(err) => {
             let message = format!("Strict authoring export failed: {err}");
-            phase_trace.push(PhaseTrace {
-                phase: CompilationPhase::ScriptCompile,
-                ok: false,
-                detail: message.clone(),
-            });
-            issues.push(LintIssue::error(
-                None,
-                ValidationPhase::Compile,
-                LintCode::CompileError,
-                message.clone(),
-            ));
-            return CompilationResult {
-                script,
-                engine_result: Err(message),
-                issues,
-                phase_trace,
-                dry_run_report,
-            };
+            if strict_export_failure_is_preview_compatible(graph, &message) {
+                phase_trace.push(PhaseTrace {
+                    phase: CompilationPhase::ScriptCompile,
+                    ok: false,
+                    detail: format!(
+                        "{message}; continuing with diagnostic runtime script for preview/dry-run"
+                    ),
+                });
+                issues.push(LintIssue::warning(
+                    None,
+                    ValidationPhase::Compile,
+                    LintCode::CompileError,
+                    format!(
+                        "{message}; preview/dry-run will continue, export remains blocked until the unsupported node is replaced or handled by a target capability"
+                    ),
+                ));
+                graph.to_script_lossy_for_diagnostics()
+            } else {
+                phase_trace.push(PhaseTrace {
+                    phase: CompilationPhase::ScriptCompile,
+                    ok: false,
+                    detail: message.clone(),
+                });
+                issues.push(LintIssue::error(
+                    None,
+                    ValidationPhase::Compile,
+                    LintCode::CompileError,
+                    message.clone(),
+                ));
+                return CompilationResult {
+                    script,
+                    engine_result: Err(message),
+                    issues,
+                    phase_trace,
+                    dry_run_report,
+                };
+            }
         }
     };
     script = strict_script;
@@ -376,6 +395,13 @@ pub fn compile_authoring_graph(
         phase_trace,
         dry_run_report,
     }
+}
+
+fn strict_export_failure_is_preview_compatible(graph: &NodeGraph, message: &str) -> bool {
+    message.contains("not export-supported")
+        && graph
+            .nodes()
+            .any(|(_, node, _)| !node.is_marker() && !node.export_supported())
 }
 
 fn append_route_dry_run_issues(

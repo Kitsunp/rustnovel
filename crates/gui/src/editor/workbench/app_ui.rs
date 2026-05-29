@@ -18,6 +18,12 @@ impl EditorWorkbench {
         self.handle_save_confirmation(ctx);
         self.handle_fix_confirmation(ctx);
         self.render_player_menu_settings_window(ctx);
+        self.render_theme_editor_window(ctx);
+        self.render_export_wizard_window(ctx);
+        self.render_scene_frame_inspector_window(ctx);
+        self.render_export_report_panel(ctx);
+        self.render_profiler_cache_panel(ctx);
+        self.render_layout_debug_overlay(ctx);
         self.persist_layout_prefs_if_changed();
     }
 
@@ -58,35 +64,86 @@ impl EditorWorkbench {
             if ui.button("Menu Player").clicked() {
                 self.show_player_menu_settings = true;
             }
+            if ui.button("Theme").clicked() {
+                self.show_theme_editor = true;
+            }
             if ui.button("Guardar").clicked() {
                 self.prepare_save_confirmation();
             }
-            if ui.button("Exportar .vnproject").clicked() {
-                self.export_compiled_project();
-            }
-            if ui.button("Empaquetar Bundle").clicked() {
-                self.package_bundle_native();
-            }
-            if ui.button("Exportar Repro Dry Run").clicked() {
-                self.export_dry_run_repro();
-            }
-            if ui.button("Exportar Repro Case").clicked() {
-                self.export_repro_case();
-            }
-            if ui.button("Importar Repro Case").clicked() {
-                self.import_repro_case();
-            }
-            if ui.button("Ejecutar Repro Cargado").clicked() {
-                self.run_loaded_repro_case();
-            }
-            if ui.button("Exportar Reporte Diagnostico").clicked() {
-                self.export_diagnostic_report();
-            }
-            if ui.button("Importar Reporte Diagnostico").clicked() {
-                self.import_diagnostic_report();
-            }
-            if ui.button("Reset Layout").clicked() {
-                self.reset_layout_state(ctx);
+
+            match super::layout::editor_toolbar_mode(ui.available_width()) {
+                super::layout::EditorToolbarMode::Expanded => {
+                    if ui.button("Exportar script compilado").clicked() {
+                        self.export_compiled_project();
+                    }
+                    if ui.button("Exportar juego").clicked() {
+                        self.open_export_wizard();
+                    }
+                    if ui.button("Exportar Repro Dry Run").clicked() {
+                        self.export_dry_run_repro();
+                    }
+                    if ui.button("Exportar Repro Case").clicked() {
+                        self.export_repro_case();
+                    }
+                    if ui.button("Importar Repro Case").clicked() {
+                        self.import_repro_case();
+                    }
+                    if ui.button("Ejecutar Repro Cargado").clicked() {
+                        self.run_loaded_repro_case();
+                    }
+                    if ui.button("Exportar Reporte Diagnostico").clicked() {
+                        self.export_diagnostic_report();
+                    }
+                    if ui.button("Importar Reporte Diagnostico").clicked() {
+                        self.import_diagnostic_report();
+                    }
+                    if ui.button("Reset Layout").clicked() {
+                        self.reset_layout_state(ctx);
+                    }
+                }
+                super::layout::EditorToolbarMode::Grouped => {
+                    ui.menu_button("Exportar", |ui| {
+                        if ui.button("Script compilado").clicked() {
+                            self.export_compiled_project();
+                            ui.close_menu();
+                        }
+                        if ui.button("Juego").clicked() {
+                            self.open_export_wizard();
+                            ui.close_menu();
+                        }
+                    });
+                    ui.menu_button("Repro", |ui| {
+                        if ui.button("Exportar Dry Run").clicked() {
+                            self.export_dry_run_repro();
+                            ui.close_menu();
+                        }
+                        if ui.button("Exportar Case").clicked() {
+                            self.export_repro_case();
+                            ui.close_menu();
+                        }
+                        if ui.button("Importar Case").clicked() {
+                            self.import_repro_case();
+                            ui.close_menu();
+                        }
+                        if ui.button("Ejecutar cargado").clicked() {
+                            self.run_loaded_repro_case();
+                            ui.close_menu();
+                        }
+                    });
+                    ui.menu_button("Diagnostico", |ui| {
+                        if ui.button("Exportar reporte").clicked() {
+                            self.export_diagnostic_report();
+                            ui.close_menu();
+                        }
+                        if ui.button("Importar reporte").clicked() {
+                            self.import_diagnostic_report();
+                            ui.close_menu();
+                        }
+                    });
+                    if ui.button("Reset Layout").clicked() {
+                        self.reset_layout_state(ctx);
+                    }
+                }
             }
         });
     }
@@ -164,6 +221,707 @@ impl EditorWorkbench {
         }
         self.fix_diff_dialog = None;
         self.show_fix_confirm = false;
+    }
+
+    fn render_theme_editor_window(&mut self, ctx: &egui::Context) {
+        if !self.show_theme_editor {
+            return;
+        }
+        if self.theme_editor_draft.is_none() {
+            self.theme_editor_draft = Some(ThemeEditorDraft {
+                original: self.active_ui_theme.clone(),
+                draft: self.active_ui_theme.clone(),
+                preview_applied: false,
+            });
+        }
+
+        let mut open = self.show_theme_editor;
+        let mut apply_theme = false;
+        let mut preview_theme = false;
+        let mut revert_theme = false;
+        let mut save_theme = false;
+        egui::Window::new("Theme Editor")
+            .open(&mut open)
+            .default_width(520.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                let Some(editor) = self.theme_editor_draft.as_mut() else {
+                    ui.label("Theme editor draft is not available.");
+                    return;
+                };
+                let theme = &mut editor.draft;
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Theme id");
+                    ui.text_edit_singleline(&mut theme.id);
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Locale");
+                    let locale = theme.locale.get_or_insert_with(String::new);
+                    ui.text_edit_singleline(locale);
+                    if ui.button("Clear").clicked() {
+                        theme.locale = None;
+                    }
+                });
+
+                ui.separator();
+                ui.collapsing("Colors", |ui| {
+                    let keys = theme.colors.keys().cloned().collect::<Vec<_>>();
+                    for key in keys {
+                        if let Some(value) = theme.colors.get_mut(&key) {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(key);
+                                ui.text_edit_singleline(value);
+                            });
+                        }
+                    }
+                    if ui.button("Add custom color token").clicked() {
+                        theme
+                            .colors
+                            .entry("custom.accent".to_string())
+                            .or_insert_with(|| "#66CCFF".to_string());
+                    }
+                });
+
+                ui.collapsing("Typography", |ui| {
+                    let keys = theme.typography.keys().cloned().collect::<Vec<_>>();
+                    for key in keys {
+                        if let Some(token) = theme.typography.get_mut(&key) {
+                            ui.group(|ui| {
+                                ui.label(key);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("Font");
+                                    ui.text_edit_singleline(&mut token.font_family);
+                                });
+                                ui.add(egui::Slider::new(&mut token.size, 8.0..=64.0).text("Size"));
+                                ui.add(
+                                    egui::Slider::new(&mut token.weight, 100..=900).text("Weight"),
+                                );
+                                ui.add(
+                                    egui::Slider::new(&mut token.line_height, 0.8..=2.4)
+                                        .text("Line height"),
+                                );
+                            });
+                        }
+                    }
+                });
+
+                ui.collapsing("Action Text", |ui| {
+                    let keys = theme.action_text.keys().cloned().collect::<Vec<_>>();
+                    for key in keys {
+                        if let Some(value) = theme.action_text.get_mut(&key) {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(key);
+                                ui.text_edit_singleline(value);
+                            });
+                        }
+                    }
+                });
+
+                ui.separator();
+                let validation = visual_novel_engine::validate_ui_theme(theme);
+                if validation.valid {
+                    ui.colored_label(egui::Color32::from_rgb(120, 220, 150), "Theme valid");
+                } else {
+                    ui.colored_label(egui::Color32::from_rgb(255, 120, 120), "Theme invalid");
+                }
+                for warning in &validation.warnings {
+                    ui.label(format!("warning: {warning}"));
+                }
+                for error in &validation.errors {
+                    ui.colored_label(egui::Color32::from_rgb(255, 150, 120), error);
+                }
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Preview").clicked() {
+                        preview_theme = true;
+                    }
+                    if ui.button("Apply").clicked() {
+                        apply_theme = true;
+                    }
+                    if ui.button("Revert").clicked() {
+                        revert_theme = true;
+                    }
+                    if ui.button("Save as theme").clicked() {
+                        save_theme = true;
+                    }
+                });
+                ui.collapsing("Theme JSON", |ui| {
+                    let mut json = serde_json::to_string_pretty(theme)
+                        .unwrap_or_else(|err| format!("serialization failed: {err}"));
+                    ui.add(
+                        egui::TextEdit::multiline(&mut json)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_rows(12)
+                            .interactive(false),
+                    );
+                });
+            });
+        self.show_theme_editor = open;
+        if !open {
+            self.theme_editor_draft = None;
+        } else if preview_theme {
+            if let Some(editor) = self.theme_editor_draft.as_mut() {
+                self.active_ui_theme = editor.draft.clone();
+                editor.preview_applied = true;
+                self.toast = Some(ToastState::success("Theme preview applied"));
+            }
+        } else if apply_theme {
+            if let Some(editor) = self.theme_editor_draft.take() {
+                self.active_ui_theme = editor.draft;
+                self.show_theme_editor = false;
+                self.toast = Some(ToastState::success("Theme applied"));
+            }
+        } else if revert_theme {
+            if let Some(editor) = self.theme_editor_draft.as_mut() {
+                self.active_ui_theme = editor.original.clone();
+                editor.draft = editor.original.clone();
+                editor.preview_applied = false;
+                self.toast = Some(ToastState::success("Theme reverted"));
+            }
+        } else if save_theme {
+            self.save_theme_editor_draft();
+        }
+    }
+
+    fn render_export_wizard_window(&mut self, ctx: &egui::Context) {
+        if !self.show_export_wizard {
+            return;
+        }
+        let mut open = self.show_export_wizard;
+        let mut choose_output = false;
+        let mut choose_runtime = false;
+        let mut plan = false;
+        let mut execute = false;
+        egui::Window::new("Export Game")
+            .open(&mut open)
+            .default_width(620.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Target");
+                    egui::ComboBox::from_id_source("export_wizard_target")
+                        .selected_text(self.export_wizard.target.as_str())
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.export_wizard.target,
+                                visual_novel_engine::ExportTargetPlatform::Windows,
+                                "windows",
+                            );
+                            ui.selectable_value(
+                                &mut self.export_wizard.target,
+                                visual_novel_engine::ExportTargetPlatform::Linux,
+                                "linux",
+                            );
+                            ui.selectable_value(
+                                &mut self.export_wizard.target,
+                                visual_novel_engine::ExportTargetPlatform::Macos,
+                                "macos",
+                            );
+                        });
+                    ui.checkbox(
+                        &mut self.export_wizard.require_executable,
+                        "Require executable",
+                    );
+                    ui.checkbox(&mut self.export_wizard.dry_run, "Dry-run");
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Output");
+                    ui.text_edit_singleline(&mut self.export_wizard.output_root);
+                    if ui.button("Pick").clicked() {
+                        choose_output = true;
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Runtime");
+                    ui.text_edit_singleline(&mut self.export_wizard.runtime_artifact);
+                    if ui.button("Pick").clicked() {
+                        choose_runtime = true;
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Entry");
+                    ui.text_edit_singleline(&mut self.export_wizard.entry_script);
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Integrity");
+                    egui::ComboBox::from_id_source("export_wizard_integrity")
+                        .selected_text(self.export_wizard.integrity.as_str())
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.export_wizard.integrity,
+                                visual_novel_engine::BundleIntegrity::None,
+                                "none",
+                            );
+                            ui.selectable_value(
+                                &mut self.export_wizard.integrity,
+                                visual_novel_engine::BundleIntegrity::HmacSha256,
+                                "hmac_sha256",
+                            );
+                        });
+                    if self.export_wizard.integrity
+                        == visual_novel_engine::BundleIntegrity::HmacSha256
+                    {
+                        ui.text_edit_singleline(&mut self.export_wizard.hmac_key);
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Plan").clicked() {
+                        plan = true;
+                    }
+                    if ui.button("Execute").clicked() {
+                        execute = true;
+                    }
+                });
+
+                if let Some(error) = &self.export_wizard.last_error {
+                    ui.colored_label(egui::Color32::from_rgb(255, 140, 120), error);
+                }
+                if let Some(plan) = &self.export_wizard.last_plan {
+                    ui.separator();
+                    ui.label(format!("layout files: {}", plan.layout.len()));
+                    for warning in &plan.warnings {
+                        ui.label(format!("warning: {warning}"));
+                    }
+                    for error in &plan.errors {
+                        ui.colored_label(egui::Color32::from_rgb(255, 140, 120), error);
+                    }
+                    ui.collapsing("Plan JSON", |ui| {
+                        let mut json = serde_json::to_string_pretty(plan)
+                            .unwrap_or_else(|err| format!("serialization failed: {err}"));
+                        ui.add(
+                            egui::TextEdit::multiline(&mut json)
+                                .font(egui::TextStyle::Monospace)
+                                .desired_rows(12)
+                                .interactive(false),
+                        );
+                    });
+                }
+                if let Some(report) = &self.export_wizard.last_report {
+                    ui.separator();
+                    ui.label(format!("Exported assets: {}", report.assets_copied));
+                    ui.label(format!("Launcher: {}", report.launcher));
+                    ui.label(format!(
+                        "Executable: {}",
+                        report.executable.as_deref().unwrap_or("none")
+                    ));
+                }
+            });
+        self.show_export_wizard = open;
+        if choose_output {
+            self.choose_export_wizard_output();
+        }
+        if choose_runtime {
+            self.choose_export_wizard_runtime();
+        }
+        if plan {
+            self.plan_export_wizard();
+        }
+        if execute {
+            self.execute_export_wizard();
+        }
+    }
+
+    pub fn open_export_wizard(&mut self) {
+        if self.export_wizard.output_root.trim().is_empty() {
+            if let Some(root) = self.project_root.as_ref() {
+                self.export_wizard.output_root = root
+                    .join("export")
+                    .join(self.export_wizard.target.as_str())
+                    .to_string_lossy()
+                    .to_string();
+            }
+        }
+        if self.export_wizard.entry_script.trim().is_empty() {
+            if let Some(manifest) = self.manifest.as_ref() {
+                self.export_wizard.entry_script = manifest.settings.entry_point.clone();
+            }
+        }
+        self.show_export_wizard = true;
+    }
+
+    fn choose_export_wizard_output(&mut self) {
+        let start = self.project_root.as_deref();
+        let mut dialog = rfd::FileDialog::new();
+        if let Some(start) = start {
+            dialog = dialog.set_directory(start);
+        }
+        if let Some(path) = dialog.pick_folder() {
+            self.export_wizard.output_root = path.to_string_lossy().to_string();
+        }
+    }
+
+    fn choose_export_wizard_runtime(&mut self) {
+        let start = self.project_root.as_deref();
+        let mut dialog = rfd::FileDialog::new();
+        if let Some(start) = start {
+            dialog = dialog.set_directory(start);
+        }
+        if self.export_wizard.target == visual_novel_engine::ExportTargetPlatform::Windows {
+            dialog = dialog.add_filter("Windows executable", &["exe"]);
+        }
+        if let Some(path) = dialog.pick_file() {
+            self.export_wizard.runtime_artifact = path.to_string_lossy().to_string();
+        }
+    }
+
+    fn export_wizard_spec(&self) -> Result<visual_novel_engine::ExportBundleSpec, String> {
+        let project_root = self
+            .project_root
+            .clone()
+            .or_else(|| {
+                self.pending_save_path
+                    .as_ref()
+                    .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
+            })
+            .ok_or_else(|| "load/save a project first so project_root is known".to_string())?;
+        let output_root = self.export_wizard.output_root.trim();
+        if output_root.is_empty() {
+            return Err("choose an output folder".to_string());
+        }
+        let entry_script = if self.export_wizard.entry_script.trim().is_empty() {
+            None
+        } else {
+            Some(std::path::PathBuf::from(
+                self.export_wizard.entry_script.trim(),
+            ))
+        };
+        let runtime_artifact = if self.export_wizard.runtime_artifact.trim().is_empty() {
+            None
+        } else {
+            Some(std::path::PathBuf::from(
+                self.export_wizard.runtime_artifact.trim(),
+            ))
+        };
+        let hmac_key = if self.export_wizard.hmac_key.trim().is_empty() {
+            None
+        } else {
+            Some(self.export_wizard.hmac_key.clone())
+        };
+        Ok(visual_novel_engine::ExportBundleSpec {
+            project_root,
+            output_root: std::path::PathBuf::from(output_root),
+            target_platform: self.export_wizard.target,
+            entry_script,
+            runtime_artifact,
+            integrity: self.export_wizard.integrity,
+            output_layout_version: 1,
+            hmac_key,
+        })
+    }
+
+    fn plan_export_wizard(&mut self) {
+        self.export_wizard.last_error = None;
+        self.export_wizard.last_report = None;
+        let spec = match self.export_wizard_spec() {
+            Ok(spec) => spec,
+            Err(err) => {
+                self.export_wizard.last_error = Some(err.clone());
+                self.toast = Some(ToastState::error(format!("Export plan failed: {err}")));
+                return;
+            }
+        };
+        match visual_novel_engine::ExportService::new().plan_export(&spec) {
+            Ok(plan) => {
+                let has_errors = !plan.errors.is_empty();
+                self.export_wizard.last_plan = Some(plan);
+                self.toast = Some(if has_errors {
+                    ToastState::warning("Export plan has blocking errors")
+                } else {
+                    ToastState::success("Export plan ready")
+                });
+            }
+            Err(err) => {
+                self.export_wizard.last_plan = None;
+                self.export_wizard.last_error = Some(err.to_string());
+                self.toast = Some(ToastState::error(format!("Export plan failed: {err}")));
+            }
+        }
+    }
+
+    fn execute_export_wizard(&mut self) {
+        self.export_wizard.last_error = None;
+        let spec = match self.export_wizard_spec() {
+            Ok(spec) => spec,
+            Err(err) => {
+                self.export_wizard.last_error = Some(err.clone());
+                self.toast = Some(ToastState::error(format!("Export failed: {err}")));
+                return;
+            }
+        };
+        match visual_novel_engine::ExportService::new().plan_export(&spec) {
+            Ok(plan) => {
+                if !plan.errors.is_empty() {
+                    self.export_wizard.last_plan = Some(plan);
+                    self.toast = Some(ToastState::error("Export blocked by plan errors"));
+                    return;
+                }
+                self.export_wizard.last_plan = Some(plan);
+            }
+            Err(err) => {
+                self.export_wizard.last_error = Some(err.to_string());
+                self.toast = Some(ToastState::error(format!("Export plan failed: {err}")));
+                return;
+            }
+        }
+        if self.export_wizard.dry_run {
+            self.toast = Some(ToastState::success(
+                "Export dry-run completed without writing",
+            ));
+            return;
+        }
+        let result = if self.export_wizard.require_executable {
+            visual_novel_engine::export_executable_bundle(spec)
+        } else {
+            visual_novel_engine::ExportService::new().execute_export(spec)
+        };
+        match result {
+            Ok(report) => {
+                self.export_wizard.last_report = Some(report.clone());
+                self.last_export_report = Some(report);
+                self.show_export_report_panel = true;
+                self.toast = Some(ToastState::success("Game bundle exported"));
+            }
+            Err(err) => {
+                self.export_wizard.last_error = Some(err.to_string());
+                self.toast = Some(ToastState::error(format!("Export failed: {err}")));
+            }
+        }
+    }
+
+    fn save_theme_editor_draft(&mut self) {
+        let Some(editor) = self.theme_editor_draft.as_ref() else {
+            self.toast = Some(ToastState::warning("No theme draft to save"));
+            return;
+        };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("VN Theme", &["vntheme.json", "json"])
+            .set_file_name(format!("{}.vntheme.json", editor.draft.id))
+            .save_file()
+        else {
+            self.toast = Some(ToastState::warning("Theme export cancelled"));
+            return;
+        };
+        let payload = match serde_json::to_string_pretty(&editor.draft) {
+            Ok(payload) => payload,
+            Err(err) => {
+                self.toast = Some(ToastState::error(format!(
+                    "Theme serialization failed: {err}"
+                )));
+                return;
+            }
+        };
+        match crate::editor::atomic_io::atomic_replace(&path, payload.as_bytes()) {
+            Ok(()) => self.toast = Some(ToastState::success("Theme saved")),
+            Err(err) => self.toast = Some(ToastState::error(format!("Theme save failed: {err}"))),
+        }
+    }
+
+    fn render_scene_frame_inspector_window(&mut self, ctx: &egui::Context) {
+        if !self.show_scene_frame_inspector {
+            return;
+        }
+        let mut open = self.show_scene_frame_inspector;
+        egui::Window::new("SceneFrame Inspector")
+            .open(&mut open)
+            .default_width(560.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                let Some(engine) = self.engine.as_ref() else {
+                    ui.label("Start Play Mode to inspect the current SceneFrame.");
+                    return;
+                };
+                let display = Self::display_profile_from_context(ctx);
+                let mut frame = engine.scene_frame();
+                frame.layout = Some(visual_novel_engine::resolve_layout(
+                    display.clone(),
+                    visual_novel_engine::StageProfile::default(),
+                    visual_novel_engine::LayoutPolicy::default(),
+                ));
+                let mut presenter = crate::editor::EguiSceneFramePresenter::default();
+                let response = visual_novel_engine::SceneFramePresenter::present(
+                    &mut presenter,
+                    &frame,
+                    &display,
+                    &self.active_ui_theme,
+                );
+                ui.label(format!("schema: {}", frame.frame_schema));
+                ui.label(format!("commands: {}", frame.commands.len()));
+                ui.label(format!("interactions: {}", frame.interactions.len()));
+                if let Some(route) = &frame.route {
+                    ui.label(format!(
+                        "route nodes: {} / current: {:?}",
+                        route.nodes.len(),
+                        route.current
+                    ));
+                }
+                if !response.diagnostics.is_empty() {
+                    ui.separator();
+                    for diagnostic in &response.diagnostics {
+                        ui.label(diagnostic);
+                    }
+                }
+                ui.collapsing("Presenter Preview", |ui| {
+                    presenter.show_debug_bounds = true;
+                    let preview_response =
+                        presenter.present_egui(ui, &frame, &display, &self.active_ui_theme);
+                    for diagnostic in preview_response.diagnostics {
+                        ui.label(diagnostic);
+                    }
+                });
+                ui.collapsing("Frame JSON", |ui| {
+                    let mut json = serde_json::to_string_pretty(&frame)
+                        .unwrap_or_else(|err| format!("serialization failed: {err}"));
+                    ui.add(
+                        egui::TextEdit::multiline(&mut json)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_rows(14)
+                            .interactive(false),
+                    );
+                });
+            });
+        self.show_scene_frame_inspector = open;
+    }
+
+    fn render_export_report_panel(&mut self, ctx: &egui::Context) {
+        if !self.show_export_report_panel {
+            return;
+        }
+        let mut open = self.show_export_report_panel;
+        egui::Window::new("Export Report")
+            .open(&mut open)
+            .default_width(560.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                let Some(report) = &self.last_export_report else {
+                    ui.label("No game bundle export has completed in this session.");
+                    return;
+                };
+                ui.label(format!("target: {}", report.target_platform));
+                ui.label(format!("assets copied: {}", report.assets_copied));
+                ui.label(format!("launcher: {}", report.launcher));
+                ui.label(format!(
+                    "executable: {}",
+                    report.executable.as_deref().unwrap_or("none")
+                ));
+                ui.label(format!("integrity: {}", report.integrity));
+                if !report.integrity_scope.is_empty() {
+                    ui.label(format!("integrity scope: {}", report.integrity_scope));
+                }
+                if let Some(signature) = &report.bundle_hmac_sha256 {
+                    ui.label(format!("hmac: {signature}"));
+                }
+                ui.collapsing("Report JSON", |ui| {
+                    let mut json = serde_json::to_string_pretty(report)
+                        .unwrap_or_else(|err| format!("serialization failed: {err}"));
+                    ui.add(
+                        egui::TextEdit::multiline(&mut json)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_rows(14)
+                            .interactive(false),
+                    );
+                });
+            });
+        self.show_export_report_panel = open;
+    }
+
+    fn render_profiler_cache_panel(&mut self, ctx: &egui::Context) {
+        if !self.show_profiler_cache_panel {
+            return;
+        }
+        let mut open = self.show_profiler_cache_panel;
+        egui::Window::new("Profiler / Cache")
+            .open(&mut open)
+            .default_width(420.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                let metrics = self.resource_service.metrics();
+                ui.label(format!("asset cache bytes: {}", metrics.bytes));
+                ui.label(format!("asset cache peak bytes: {}", metrics.peak_bytes));
+                ui.label(format!("byte entries: {}", metrics.byte_entries));
+                ui.label(format!("image entries: {}", metrics.image_entries));
+                ui.label(format!("audio entries: {}", metrics.audio_entries));
+                ui.label(format!("hits: {}", metrics.hits));
+                ui.label(format!("misses: {}", metrics.misses));
+                ui.label(format!("evictions: {}", metrics.evictions));
+                ui.label(format!("decode ms: {}", metrics.decode_ms));
+                ui.label(format!("upload ms: {}", metrics.upload_ms));
+                let (compile_hits, compile_misses) = self.compilation_cache_stats();
+                ui.separator();
+                ui.label(format!("compile cache hits: {compile_hits}"));
+                ui.label(format!("compile cache misses: {compile_misses}"));
+                if ui.button("Clear asset cache").clicked() {
+                    self.resource_service.clear();
+                    self.toast = Some(ToastState::success("Asset cache cleared"));
+                }
+            });
+        self.show_profiler_cache_panel = open;
+    }
+
+    fn render_layout_debug_overlay(&mut self, ctx: &egui::Context) {
+        if !self.show_layout_debug_overlay {
+            return;
+        }
+        let display = Self::display_profile_from_context(ctx);
+        let layout = visual_novel_engine::resolve_layout(
+            display.clone(),
+            visual_novel_engine::StageProfile::default(),
+            visual_novel_engine::LayoutPolicy::default(),
+        );
+        let layer = egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("vnengine_layout_debug_overlay"),
+        );
+        let painter = ctx.layer_painter(layer);
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(layout.stage_rect.x, layout.stage_rect.y),
+            egui::vec2(layout.stage_rect.width, layout.stage_rect.height),
+        );
+        painter.rect_stroke(
+            rect,
+            0.0,
+            egui::Stroke::new(1.5, egui::Color32::from_rgb(90, 190, 255)),
+        );
+
+        egui::Area::new(egui::Id::new("layout_debug_overlay_panel"))
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 12.0))
+            .show(ctx, |ui| {
+                egui::Frame::popup(&ctx.style()).show(ui, |ui| {
+                    ui.label(format!(
+                        "{}x{} logical",
+                        display.logical_size[0] as u32, display.logical_size[1] as u32
+                    ));
+                    ui.label(format!(
+                        "{}x{} physical",
+                        display.physical_size[0], display.physical_size[1]
+                    ));
+                    ui.label(format!("scale factor: {:.2}", display.scale_factor));
+                    ui.label(format!("user scale: {:.2}", display.user_scale));
+                    ui.label(format!("breakpoint: {}", layout.breakpoint));
+                    ui.label(format!(
+                        "stage: {:.0},{:.0} {:.0}x{:.0}",
+                        layout.stage_rect.x,
+                        layout.stage_rect.y,
+                        layout.stage_rect.width,
+                        layout.stage_rect.height
+                    ));
+                });
+            });
+    }
+
+    fn display_profile_from_context(ctx: &egui::Context) -> visual_novel_engine::DisplayProfile {
+        let screen = ctx.screen_rect();
+        let scale = ctx.pixels_per_point();
+        let mut display = visual_novel_engine::DisplayProfile::new(screen.width(), screen.height());
+        display.scale_factor = scale;
+        display.physical_size = [
+            (screen.width() * scale).round().max(1.0) as u32,
+            (screen.height() * scale).round().max(1.0) as u32,
+        ];
+        display.orientation = if screen.width() >= screen.height() {
+            visual_novel_engine::DisplayOrientation::Landscape
+        } else {
+            visual_novel_engine::DisplayOrientation::Portrait
+        };
+        display
     }
 
     fn render_player_menu_settings_window(&mut self, ctx: &egui::Context) {

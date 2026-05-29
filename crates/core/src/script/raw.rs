@@ -10,6 +10,7 @@ use crate::event::{
     SceneUpdateCompiled, SharedStr,
 };
 use crate::resource::ResourceLimiter;
+use crate::schema_policy::{validate_script_schema_value, SchemaPolicy};
 use crate::version::SCRIPT_SCHEMA_VERSION;
 
 use super::compiled::ScriptCompiled;
@@ -40,6 +41,11 @@ impl ScriptRaw {
         Self::from_json_with_limits(input, ResourceLimiter::default())
     }
 
+    /// Parses a JSON script using an explicit schema compatibility policy.
+    pub fn from_json_with_policy(input: &str, policy: SchemaPolicy) -> VnResult<Self> {
+        Self::from_json_with_policy_and_limits(input, policy, ResourceLimiter::default())
+    }
+
     /// Serializes the script to a JSON string with the current schema version.
     pub fn to_json(&self) -> VnResult<String> {
         let envelope = ScriptEnvelope {
@@ -56,13 +62,33 @@ impl ScriptRaw {
 
     /// Parses a JSON script into a raw script structure with resource limits.
     pub fn from_json_with_limits(input: &str, limits: ResourceLimiter) -> VnResult<Self> {
+        Self::from_json_with_policy_and_limits(input, SchemaPolicy::StrictCurrent, limits)
+    }
+
+    /// Parses a JSON script into a raw script structure with explicit schema policy and limits.
+    pub fn from_json_with_policy_and_limits(
+        input: &str,
+        policy: SchemaPolicy,
+        limits: ResourceLimiter,
+    ) -> VnResult<Self> {
         if input.len() > limits.max_script_bytes {
             return Err(VnError::ResourceLimit(
                 "script json input budget".to_string(),
             ));
         }
-        let payload: serde_json::Value =
+        let mut payload: serde_json::Value =
             serde_json::from_str(input).map_err(|err| json_deserialize_error(input, &err))?;
+        let root = payload.as_object_mut().ok_or_else(|| {
+            VnError::InvalidScript("script payload must be a JSON object".to_string())
+        })?;
+        let schema_report =
+            validate_script_schema_value(root.get("script_schema_version"), policy)?;
+        if !root.contains_key("script_schema_version") {
+            root.insert(
+                "script_schema_version".to_string(),
+                serde_json::Value::String(schema_report.normalized_version),
+            );
+        }
         let migrated_input =
             serde_json::to_string_pretty(&payload).map_err(|err| VnError::Serialization {
                 message: err.to_string(),
@@ -71,19 +97,12 @@ impl ScriptRaw {
             })?;
         let envelope: ScriptEnvelope = serde_json::from_value(payload)
             .map_err(|err| json_deserialize_error(&migrated_input, &err))?;
-        match envelope.script_schema_version.as_str() {
-            version if is_compatible_schema(version) => {
-                let script = Self {
-                    events: envelope.events,
-                    labels: envelope.labels,
-                };
-                script.ensure_string_budget(limits.max_script_bytes)?;
-                Ok(script)
-            }
-            version => Err(VnError::InvalidScript(format!(
-                "schema incompatible: found {version}, expected {SCRIPT_SCHEMA_VERSION}"
-            ))),
-        }
+        let script = Self {
+            events: envelope.events,
+            labels: envelope.labels,
+        };
+        script.ensure_string_budget(limits.max_script_bytes)?;
+        Ok(script)
     }
 
     pub fn ensure_string_budget(&self, max_bytes: usize) -> VnResult<()> {
@@ -132,6 +151,11 @@ impl ScriptRaw {
                 return Err(VnError::InvalidScript(format!(
                     "label '{label}' points outside events"
                 )));
+            }
+            if label == "start" && *index >= self.events.len() {
+                return Err(VnError::InvalidScript(
+                    "start label must point to an executable event".to_string(),
+                ));
             }
             let ip = u32::try_from(*index)
                 .map_err(|_| VnError::InvalidScript(format!("label '{label}' out of range")))?;
@@ -254,6 +278,9 @@ impl ScriptRaw {
                                 .position
                                 .as_deref()
                                 .map(|value| pool.intern(value)),
+                            x: character.x,
+                            y: character.y,
+                            scale: character.scale,
                         })
                         .collect(),
                     remove: patch.remove.iter().map(|name| pool.intern(name)).collect(),
@@ -298,10 +325,6 @@ impl ScriptRaw {
             flag_count: flag_map.len() as u32,
         })
     }
-}
-
-fn is_compatible_schema(version: &str) -> bool {
-    version == SCRIPT_SCHEMA_VERSION
 }
 
 #[cold]

@@ -27,6 +27,7 @@ pub struct ProtectedContentChunk {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProtectedContentError {
     AuthenticationFailed,
+    CryptoSetupFailed(&'static str),
     UnsupportedVersion(u32),
 }
 
@@ -34,6 +35,9 @@ impl std::fmt::Display for ProtectedContentError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AuthenticationFailed => write!(f, "protected content authentication failed"),
+            Self::CryptoSetupFailed(context) => {
+                write!(f, "protected content crypto setup failed while {context}")
+            }
             Self::UnsupportedVersion(version) => {
                 write!(f, "unsupported protected content version {version}")
             }
@@ -50,16 +54,31 @@ pub fn protect_content(
     nonce: u64,
     plaintext: &[u8],
 ) -> ProtectedContentChunk {
-    let ciphertext = xor_keystream(key, domain, &salt, nonce, plaintext);
-    let tag = auth_tag(key, domain, &salt, nonce, &ciphertext);
-    ProtectedContentChunk {
+    match try_protect_content(key, domain, salt, nonce, plaintext) {
+        Ok(chunk) => chunk,
+        Err(err) => {
+            panic!("protected content compatibility wrapper failed: {err}");
+        }
+    }
+}
+
+pub fn try_protect_content(
+    key: &[u8],
+    domain: &str,
+    salt: [u8; 16],
+    nonce: u64,
+    plaintext: &[u8],
+) -> Result<ProtectedContentChunk, ProtectedContentError> {
+    let ciphertext = xor_keystream(key, domain, &salt, nonce, plaintext)?;
+    let tag = auth_tag(key, domain, &salt, nonce, &ciphertext)?;
+    Ok(ProtectedContentChunk {
         version: PROTECTED_CONTENT_VERSION,
         domain: domain.to_string(),
         salt,
         nonce,
         ciphertext,
         tag,
-    }
+    })
 }
 
 pub fn open_protected_content(
@@ -75,45 +94,65 @@ pub fn open_protected_content(
         &chunk.salt,
         chunk.nonce,
         &chunk.ciphertext,
-    );
+    )?;
     if !bool::from(expected.ct_eq(&chunk.tag)) {
         return Err(ProtectedContentError::AuthenticationFailed);
     }
-    Ok(xor_keystream(
+    xor_keystream(
         key,
         &chunk.domain,
         &chunk.salt,
         chunk.nonce,
         &chunk.ciphertext,
-    ))
+    )
 }
 
-fn xor_keystream(key: &[u8], domain: &str, salt: &[u8; 16], nonce: u64, input: &[u8]) -> Vec<u8> {
+fn xor_keystream(
+    key: &[u8],
+    domain: &str,
+    salt: &[u8; 16],
+    nonce: u64,
+    input: &[u8],
+) -> Result<Vec<u8>, ProtectedContentError> {
     let mut out = Vec::with_capacity(input.len());
     for (block_index, block) in input.chunks(32).enumerate() {
-        let stream = stream_block(key, domain, salt, nonce, block_index as u64);
+        let stream = stream_block(key, domain, salt, nonce, block_index as u64)?;
         out.extend(block.iter().zip(stream).map(|(byte, mask)| byte ^ mask));
     }
-    out
+    Ok(out)
 }
 
-fn stream_block(key: &[u8], domain: &str, salt: &[u8; 16], nonce: u64, counter: u64) -> [u8; 32] {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+fn stream_block(
+    key: &[u8],
+    domain: &str,
+    salt: &[u8; 16],
+    nonce: u64,
+    counter: u64,
+) -> Result<[u8; 32], ProtectedContentError> {
+    let mut mac = HmacSha256::new_from_slice(key)
+        .map_err(|_| ProtectedContentError::CryptoSetupFailed("creating stream MAC"))?;
     mac.update(b"vnengine.content.stream.v1");
     mac.update(domain.as_bytes());
     mac.update(salt);
     mac.update(&nonce.to_le_bytes());
     mac.update(&counter.to_le_bytes());
-    mac.finalize().into_bytes().into()
+    Ok(mac.finalize().into_bytes().into())
 }
 
-fn auth_tag(key: &[u8], domain: &str, salt: &[u8; 16], nonce: u64, ciphertext: &[u8]) -> [u8; 32] {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+fn auth_tag(
+    key: &[u8],
+    domain: &str,
+    salt: &[u8; 16],
+    nonce: u64,
+    ciphertext: &[u8],
+) -> Result<[u8; 32], ProtectedContentError> {
+    let mut mac = HmacSha256::new_from_slice(key)
+        .map_err(|_| ProtectedContentError::CryptoSetupFailed("creating authentication MAC"))?;
     mac.update(b"vnengine.content.tag.v1");
     mac.update(domain.as_bytes());
     mac.update(salt);
     mac.update(&nonce.to_le_bytes());
     mac.update(&(ciphertext.len() as u64).to_le_bytes());
     mac.update(ciphertext);
-    mac.finalize().into_bytes().into()
+    Ok(mac.finalize().into_bytes().into())
 }

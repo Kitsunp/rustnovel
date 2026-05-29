@@ -8,14 +8,10 @@ use visual_novel_engine::{
 };
 
 #[test]
-fn migration_rejects_legacy_0_9_payload() {
+fn migration_accepts_legacy_0_9_payload_and_updates_schema() {
     let legacy = json!({
         "script_schema_version": "0.9",
         "events": [
-            {
-                "type": "extcall",
-                "command": "boot_minigame"
-            },
             {
                 "type": "dialogue",
                 "speaker": "Narrador",
@@ -25,13 +21,13 @@ fn migration_rejects_legacy_0_9_payload() {
         "labels": { "start": 0 }
     });
 
-    let err = migrate_script_json_to_current(&legacy.to_string())
-        .expect_err("legacy script migration must be rejected");
-    assert!(
-        err.to_string()
-            .contains("unsupported script schema version '0.9'"),
-        "unexpected error: {err}"
-    );
+    let (migrated, report) =
+        migrate_script_json_to_current(&legacy.to_string()).expect("legacy script migration");
+    assert!(report.changed());
+    assert_eq!(report.from_version, "0.9");
+    assert_eq!(report.to_version, SCRIPT_SCHEMA_VERSION);
+    let payload: serde_json::Value = serde_json::from_str(&migrated).expect("migrated json");
+    assert_eq!(payload["script_schema_version"], SCRIPT_SCHEMA_VERSION);
 }
 
 #[test]
@@ -79,8 +75,7 @@ fn rollback_on_failure() {
         "migration must rollback original payload"
     );
     assert!(
-        err.to_string()
-            .contains("unsupported script schema version '0.9'"),
+        err.to_string().contains("schema_policy_migrate_to_current"),
         "unexpected error: {err}"
     );
 }

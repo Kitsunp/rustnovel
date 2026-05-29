@@ -21,6 +21,49 @@ use super::undo::UndoStack;
 // NodeEditorPanel - UI Widget
 // =============================================================================
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CanvasDragMode {
+    None,
+    Pan,
+    MarqueeSelect,
+}
+
+pub fn canvas_drag_mode(
+    primary_drag: bool,
+    middle_drag: bool,
+    secondary_drag: bool,
+    modifiers: egui::Modifiers,
+    space_down: bool,
+) -> CanvasDragMode {
+    if middle_drag || secondary_drag || (primary_drag && (modifiers.ctrl || space_down)) {
+        CanvasDragMode::Pan
+    } else if primary_drag {
+        CanvasDragMode::MarqueeSelect
+    } else {
+        CanvasDragMode::None
+    }
+}
+
+pub fn logic_graph_heading_label(available_width: f32) -> &'static str {
+    if available_width < 220.0 {
+        "Graph"
+    } else {
+        "Logic Graph"
+    }
+}
+
+pub fn node_editor_heading_label(available_width: f32) -> &'static str {
+    if available_width < 220.0 {
+        "Nodes"
+    } else {
+        "Node Editor"
+    }
+}
+
+pub fn node_toolbar_is_compact(available_width: f32) -> bool {
+    available_width < 440.0
+}
+
 /// Node editor panel widget with pan/zoom and context menu.
 pub struct NodeEditorPanel<'a> {
     graph: &'a mut NodeGraph,
@@ -46,7 +89,7 @@ impl<'a> NodeEditorPanel<'a> {
 
     /// Main UI entry point.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("📊 Node Editor");
+        ui.heading(node_editor_heading_label(ui.available_width()));
         ui.separator();
 
         self.render_toolbar(ui);
@@ -70,8 +113,10 @@ impl<'a> NodeEditorPanel<'a> {
     }
 
     fn render_toolbar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.menu_button("➕ Add Node", |ui| {
+        let compact = node_toolbar_is_compact(ui.available_width());
+        ui.horizontal_wrapped(|ui| {
+            let add_label = if compact { "+ Add" } else { "Add Node" };
+            ui.menu_button(add_label, |ui| {
                 let pos = egui::pos2(100.0, 100.0) - self.graph.pan().to_pos2().to_vec2();
                 if ui.button("💬 Dialogue").clicked() {
                     let id = self.graph.add_node(StoryNode::default(), pos);
@@ -129,7 +174,7 @@ impl<'a> NodeEditorPanel<'a> {
                 }
             });
 
-            ui.menu_button("More Nodes", |ui| {
+            ui.menu_button(if compact { "More" } else { "More Nodes" }, |ui| {
                 let pos = egui::pos2(120.0, 120.0) - self.graph.pan().to_pos2().to_vec2();
                 for (label, node) in extended_node_palette_items() {
                     if ui.button(label).clicked() {
@@ -141,14 +186,16 @@ impl<'a> NodeEditorPanel<'a> {
             });
 
             ui.separator();
-            if ui.button("🔍 Reset View").clicked() {
+            let reset_label = if compact { "Reset" } else { "🔍 Reset View" };
+            if ui.button(reset_label).clicked() {
                 self.graph.reset_view();
             }
-            if ui.button("Auto Layout").clicked() {
+            let layout_label = if compact { "Layout" } else { "Auto Layout" };
+            if ui.button(layout_label).clicked() {
                 self.graph.auto_layout_hierarchical();
                 self.graph.zoom_to_fit();
             }
-            ui.label(format!("Zoom: {:.0}%", self.graph.zoom() * 100.0));
+            ui.label(format!("{:.0}%", self.graph.zoom() * 100.0));
 
             ui.separator();
 
@@ -167,11 +214,13 @@ impl<'a> NodeEditorPanel<'a> {
             }
 
             ui.separator();
-            ui.label(format!(
-                "Nodes: {} | Connections: {}",
-                self.graph.len(),
-                self.graph.connection_count()
-            ));
+            if !compact {
+                ui.label(format!(
+                    "Nodes: {} | Connections: {}",
+                    self.graph.len(),
+                    self.graph.connection_count()
+                ));
+            }
             if self.graph.is_modified() {
                 ui.label("⚠ Modified");
             }
@@ -223,13 +272,25 @@ impl<'a> NodeEditorPanel<'a> {
     }
 
     fn handle_input(&mut self, ui: &egui::Ui, response: &egui::Response) {
-        let is_panning = response.dragged_by(egui::PointerButton::Middle)
-            || (response.dragged() && ui.input(|i| i.modifiers.ctrl));
+        let primary_drag = response.dragged_by(egui::PointerButton::Primary);
+        let middle_drag = response.dragged_by(egui::PointerButton::Middle);
+        let secondary_drag = response.dragged_by(egui::PointerButton::Secondary);
+        let (modifiers, space_down) = ui.input(|i| (i.modifiers, i.key_down(egui::Key::Space)));
+        let drag_mode = canvas_drag_mode(
+            primary_drag,
+            middle_drag,
+            secondary_drag,
+            modifiers,
+            space_down,
+        );
 
-        if is_panning {
+        if drag_mode == CanvasDragMode::Pan {
             let delta = ui.input(|i| i.pointer.delta()) / self.graph.zoom();
             if delta.length_sq() > 0.0 {
                 self.graph.pan_by(delta);
+                self.graph.marquee_start = None;
+                self.graph.marquee_current = None;
+                self.graph.context_menu = None;
             }
         }
 
@@ -435,3 +496,4 @@ mod palette;
 pub use palette::extended_node_palette_items;
 mod render;
 mod render_helpers;
+pub use render_helpers::node_status_hint;

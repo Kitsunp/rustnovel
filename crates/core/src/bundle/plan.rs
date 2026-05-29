@@ -11,6 +11,7 @@ use super::helpers::{
     canonicalize_within_root, invalid_bundle, normalize_path_display, sanitize_relative_path,
     to_hex,
 };
+use super::materialize::{has_extension, runtime_artifact_matches_target};
 use super::{BundleIntegrity, ExportBundleSpec, ExportPlan, ExportTargetPlatform};
 
 pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
@@ -59,9 +60,9 @@ pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
 
     let mut warnings = Vec::new();
     let mut errors = Vec::new();
-    let runtime_artifact = match spec.runtime_artifact.as_deref() {
+    let runtime_artifact_path = match spec.runtime_artifact.as_deref() {
         Some(path) => match resolve_runtime_artifact_for_plan(path, &project_root) {
-            Ok(path) => Some(normalize_path_display(&path)),
+            Ok(path) => Some(path),
             Err(err) => {
                 errors.push(err);
                 None
@@ -72,14 +73,26 @@ pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
             None
         }
     };
-    let executable = runtime_artifact.as_ref().and_then(|path| {
-        (spec.target_platform == ExportTargetPlatform::Windows
-            && Path::new(path)
-                .extension()
-                .and_then(|value| value.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("exe")))
-        .then(|| "game.exe".to_string())
-    });
+    let mut executable = None;
+    if let Some(path) = runtime_artifact_path.as_ref() {
+        match runtime_artifact_matches_target(path, spec.target_platform) {
+            Ok(true) => {
+                if spec.target_platform != ExportTargetPlatform::Windows
+                    || has_extension(path, "exe")
+                {
+                    executable = Some(spec.target_platform.expected_executable_name().to_string());
+                }
+            }
+            Ok(false) => warnings.push(format!(
+                "runtime_artifact_does_not_match_target:{}",
+                spec.target_platform.as_str()
+            )),
+            Err(err) => errors.push(err.to_string()),
+        }
+    }
+    let runtime_artifact = runtime_artifact_path
+        .as_ref()
+        .map(|path| normalize_path_display(path));
     if spec.integrity == BundleIntegrity::HmacSha256
         && spec
             .hmac_key

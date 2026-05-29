@@ -157,6 +157,11 @@ pub struct PlayerMenuColor {
     pub a: u8,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PlayerMenuNormalizationReport {
+    pub warnings: Vec<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlayerMenuConfigError {
     SaveSlotsOutOfRange { value: u16, max: u16 },
@@ -245,6 +250,10 @@ impl Default for PlayerMenuConfig {
 }
 
 impl PlayerMenuConfig {
+    pub fn validate_strict(&self) -> Result<(), PlayerMenuConfigError> {
+        self.validate()
+    }
+
     pub fn validate(&self) -> Result<(), PlayerMenuConfigError> {
         if self.enabled && self.title.trim().is_empty() {
             return Err(PlayerMenuConfigError::EmptyMenuTitle);
@@ -260,12 +269,14 @@ impl PlayerMenuConfig {
             .iter()
             .any(|action| action.visible && action.label.trim().is_empty())
         {
-            let action = self
+            let Some(action) = self
                 .quick_actions
                 .iter()
                 .find(|action| action.visible && action.label.trim().is_empty())
-                .expect("checked above")
-                .action;
+                .map(|action| action.action)
+            else {
+                return Err(PlayerMenuConfigError::EmptyMenuTitle);
+            };
             return Err(PlayerMenuConfigError::EmptyActionLabel { action });
         }
 
@@ -325,18 +336,28 @@ impl PlayerMenuConfig {
     }
 
     pub fn normalized(&self) -> Self {
+        self.normalize_with_warnings().0
+    }
+
+    pub fn normalize_with_warnings(&self) -> (Self, PlayerMenuNormalizationReport) {
         let mut normalized = self.clone();
+        let mut warnings = Vec::new();
         if normalized.title.trim().is_empty() {
             normalized.title = default_menu_title();
+            warnings.push("menu title was empty and was replaced with default".to_string());
         }
         normalized.save_slots = normalized.save_slots.clamp(1, MAX_SAVE_SLOTS);
         if !normalized.style.panel_width.is_finite()
             || normalized.style.panel_width < MIN_PANEL_WIDTH
         {
             normalized.style.panel_width = default_panel_width();
+            warnings.push("panel_width was invalid and was replaced with default".to_string());
         }
         if !normalized.style.panel_width_fraction.is_finite() {
             normalized.style.panel_width_fraction = default_panel_width_fraction();
+            warnings.push(
+                "panel_width_fraction was non-finite and was replaced with default".to_string(),
+            );
         }
         normalized.style.panel_width_fraction = normalized
             .style
@@ -344,6 +365,9 @@ impl PlayerMenuConfig {
             .clamp(MIN_PANEL_WIDTH_FRACTION, MAX_PANEL_WIDTH_FRACTION);
         if !normalized.style.panel_height_fraction.is_finite() {
             normalized.style.panel_height_fraction = default_panel_height_fraction();
+            warnings.push(
+                "panel_height_fraction was non-finite and was replaced with default".to_string(),
+            );
         }
         normalized.style.panel_height_fraction = normalized
             .style
@@ -353,14 +377,19 @@ impl PlayerMenuConfig {
             || normalized.style.button_min_width < MIN_BUTTON_WIDTH
         {
             normalized.style.button_min_width = default_button_min_width();
+            warnings.push("button_min_width was invalid and was replaced with default".to_string());
         }
         if !normalized.style.button_height.is_finite()
             || normalized.style.button_height < MIN_BUTTON_HEIGHT
         {
             normalized.style.button_height = default_button_height();
+            warnings.push("button_height was invalid and was replaced with default".to_string());
         }
         if !normalized.style.button_corner_radius.is_finite() {
             normalized.style.button_corner_radius = default_button_corner_radius();
+            warnings.push(
+                "button_corner_radius was non-finite and was replaced with default".to_string(),
+            );
         }
         normalized.style.button_corner_radius = normalized
             .style
@@ -368,11 +397,14 @@ impl PlayerMenuConfig {
             .clamp(0.0, MAX_BUTTON_CORNER_RADIUS);
         if normalized.quick_actions.is_empty() {
             normalized.quick_actions = default_quick_actions();
+            warnings.push("quick_actions was empty and defaults were inserted".to_string());
         }
         if normalized.tabs.is_empty() {
             normalized.tabs = default_tabs();
+            warnings.push("tabs was empty and defaults were inserted".to_string());
         }
 
+        let original_tab_count = normalized.tabs.len();
         let mut deduped_tabs: Vec<PlayerMenuTabConfig> = Vec::new();
         for tab in normalized.tabs {
             if let Some(existing) = deduped_tabs
@@ -386,18 +418,30 @@ impl PlayerMenuConfig {
                 deduped_tabs.push(tab);
             }
         }
+        if deduped_tabs.len() != original_tab_count {
+            warnings.push("duplicate tabs were deduplicated".to_string());
+        }
         normalized.tabs = deduped_tabs;
         if !normalized.tabs.iter().any(|tab| tab.visible) {
             normalized.tabs = default_tabs();
+            warnings.push("no visible tabs remained and defaults were inserted".to_string());
         }
         for action in &mut normalized.quick_actions {
             if action.label.trim().is_empty() {
                 action.label = default_action_label(action.action).to_string();
+                warnings.push(format!(
+                    "empty label for action {:?} was replaced with default",
+                    action.action
+                ));
             }
         }
         for tab in &mut normalized.tabs {
             if tab.label.trim().is_empty() {
                 tab.label = default_tab_label(tab.kind).to_string();
+                warnings.push(format!(
+                    "empty label for tab {:?} was replaced with default",
+                    tab.kind
+                ));
             }
         }
         if normalized
@@ -406,8 +450,9 @@ impl PlayerMenuConfig {
             .is_some_and(|tab| normalized.tab_label(tab).is_none())
         {
             normalized.layout.initial_tab = Some(normalized.first_visible_tab());
+            warnings.push("invalid initial_tab was replaced with first visible tab".to_string());
         }
-        normalized
+        (normalized, PlayerMenuNormalizationReport { warnings })
     }
 
     pub fn first_visible_tab(&self) -> PlayerMenuTabKind {

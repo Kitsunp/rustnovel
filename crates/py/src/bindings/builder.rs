@@ -175,6 +175,9 @@ impl PyScriptBuilder {
                 name,
                 expression,
                 position,
+                x: None,
+                y: None,
+                scale: None,
             })
             .collect();
         self.events.push(EventRaw::Patch(ScenePatchRaw {

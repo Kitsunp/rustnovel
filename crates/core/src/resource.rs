@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ResourceLimiter {
@@ -55,7 +56,7 @@ pub struct LruCache<K>
 where
     K: Eq + Hash + Clone,
 {
-    map: HashMap<K, Vec<u8>>,
+    map: HashMap<K, Arc<[u8]>>,
     order: VecDeque<K>,
     current_bytes: usize,
     max_bytes: usize,
@@ -90,14 +91,18 @@ where
         self.map.is_empty()
     }
 
-    pub fn get(&mut self, key: &K) -> Option<&Vec<u8>> {
+    pub fn get(&mut self, key: &K) -> Option<Arc<[u8]>> {
         if self.map.contains_key(key) {
             self.touch(key);
         }
-        self.map.get(key)
+        self.map.get(key).cloned()
     }
 
     pub fn insert(&mut self, key: K, value: Vec<u8>) {
+        self.insert_shared(key, Arc::from(value));
+    }
+
+    pub fn insert_shared(&mut self, key: K, value: Arc<[u8]>) {
         if let Some(existing) = self.map.get(&key) {
             self.current_bytes = self.current_bytes.saturating_sub(existing.len());
         }

@@ -43,7 +43,7 @@ impl PyNodeGraph {
         Self::from_authoring_document(AuthoringDocument::new(NodeGraph::new()))
     }
 
-    fn add_node(&mut self, node: PyStoryNode, x: f32, y: f32) -> u32 {
+    fn add_node(&mut self, node: PyStoryNode, x: f32, y: f32) -> PyResult<u32> {
         let node_id = self.inner.next_node_id();
         let node = node.into_inner();
         self.apply_authoring_command(AuthoringCommand::CreateNode {
@@ -51,24 +51,28 @@ impl PyNodeGraph {
             node,
             position: AuthoringPosition::new(x, y),
         })
-        .expect("next Python node id should be accepted by AuthoringDocumentSession");
-        node_id
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(node_id)
     }
 
-    fn connect(&mut self, from_id: u32, to_id: u32) {
-        let _ = self.apply_authoring_command(AuthoringCommand::Connect {
+    fn connect(&mut self, from_id: u32, to_id: u32) -> PyResult<()> {
+        self.apply_authoring_command(AuthoringCommand::Connect {
             from: from_id,
             from_port: 0,
             to: to_id,
-        });
+        })
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(())
     }
 
-    fn connect_port(&mut self, from_id: u32, from_port: usize, to_id: u32) {
-        let _ = self.apply_authoring_command(AuthoringCommand::Connect {
+    fn connect_port(&mut self, from_id: u32, from_port: usize, to_id: u32) -> PyResult<()> {
+        self.apply_authoring_command(AuthoringCommand::Connect {
             from: from_id,
             from_port,
             to: to_id,
-        });
+        })
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(())
     }
 
     #[pyo3(signature = (choice_id, to_id, text="New route"))]
@@ -103,7 +107,7 @@ impl PyNodeGraph {
         to_id: u32,
         branch_x: Option<f32>,
         branch_y: Option<f32>,
-    ) -> bool {
+    ) -> PyResult<bool> {
         let branch_pos = match (branch_x, branch_y) {
             (Some(x), Some(y)) => AuthoringPosition::new(x, y),
             _ => self
@@ -118,11 +122,14 @@ impl PyNodeGraph {
             to: to_id,
             branch_position: branch_pos,
         })
-        .is_ok()
+        .map(|_| true)
+        .map_err(|err| PyValueError::new_err(err.to_string()))
     }
 
-    fn remove_node(&mut self, node_id: u32) {
-        let _ = self.apply_authoring_command(AuthoringCommand::RemoveNode { node_id });
+    fn remove_node(&mut self, node_id: u32) -> PyResult<()> {
+        self.apply_authoring_command(AuthoringCommand::RemoveNode { node_id })
+            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        Ok(())
     }
 
     fn node_count(&self) -> usize {
@@ -309,12 +316,12 @@ impl PyNodeGraph {
         self.py_list_stage_layers()
     }
 
-    fn set_layer_visible(&mut self, object_id: &str, visible: bool) {
-        self.py_set_layer_visible(object_id, visible);
+    fn set_layer_visible(&mut self, object_id: &str, visible: bool) -> PyResult<()> {
+        self.py_set_layer_visible(object_id, visible)
     }
 
-    fn set_layer_locked(&mut self, object_id: &str, locked: bool) {
-        self.py_set_layer_locked(object_id, locked);
+    fn set_layer_locked(&mut self, object_id: &str, locked: bool) -> PyResult<()> {
+        self.py_set_layer_locked(object_id, locked)
     }
 
     #[pyo3(signature = (object_id, x, y, scale=None))]

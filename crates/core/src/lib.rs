@@ -20,7 +20,10 @@ mod render;
 mod renpy_import;
 mod repro;
 mod resource;
+mod route_tree;
 pub mod runtime;
+mod scene_frame;
+pub mod schema_policy;
 mod script;
 mod security;
 mod state;
@@ -36,22 +39,23 @@ pub use authoring::{
     apply_authoring_document_command_headless, asset_exists_from_project_root,
     export_runtime_script_from_authoring, is_unsafe_asset_ref, load_authoring_document_or_script,
     load_runtime_script_from_entry, parse_authoring_document_or_script,
-    parse_runtime_script_from_entry, quick_fix as authoring_quick_fix, validate_authoring_graph,
-    validate_authoring_graph_no_io, validate_authoring_graph_with_probe,
-    validate_authoring_graph_with_project_root, validate_authoring_graph_with_resolver,
-    AuthoringDirtyFlags, AuthoringDocument, AuthoringDocumentCommand,
-    AuthoringDocumentCommandApplyResult, AuthoringDocumentCommandOutcome, AuthoringDocumentDelta,
-    AuthoringDocumentSession, AuthoringPosition, AuthoringReadModel, AuthoringReportStaleState,
-    CharacterPoseBinding, DiagnosticsIndex, GraphConnection as AuthoringGraphConnection,
-    LintCode as AuthoringLintCode, LintIssue as AuthoringLintIssue,
-    LintSeverity as AuthoringLintSeverity, NodeGraph as AuthoringGraph, NodeIndex,
-    QuickFixCandidate, QuickFixRisk, RouteIndex, SceneLayer, SceneProfile,
-    StoryNode as AuthoringStoryNode, ValidationPhase, AUTHORING_DOCUMENT_SCHEMA_VERSION,
+    parse_runtime_script_from_entry, quick_fix as authoring_quick_fix,
+    source_looks_like_authoring_document, validate_authoring_graph, validate_authoring_graph_no_io,
+    validate_authoring_graph_with_probe, validate_authoring_graph_with_project_root,
+    validate_authoring_graph_with_resolver, AuthoringDirtyFlags, AuthoringDocument,
+    AuthoringDocumentCommand, AuthoringDocumentCommandApplyResult, AuthoringDocumentCommandOutcome,
+    AuthoringDocumentDelta, AuthoringDocumentSession, AuthoringPosition, AuthoringReadModel,
+    AuthoringReportStaleState, CharacterPoseBinding, DiagnosticsIndex,
+    GraphConnection as AuthoringGraphConnection, LintCode as AuthoringLintCode,
+    LintIssue as AuthoringLintIssue, LintSeverity as AuthoringLintSeverity,
+    NodeGraph as AuthoringGraph, NodeIndex, QuickFixCandidate, QuickFixRisk, RouteIndex,
+    SceneLayer, SceneProfile, StoryNode as AuthoringStoryNode, ValidationPhase,
+    AUTHORING_DOCUMENT_SCHEMA_VERSION,
 };
 pub use bundle::{
     build_export_plan, export_bundle, export_executable_bundle, export_windows_executable_bundle,
     BundleAssetEntry, BundleIntegrity, ExportBundleReport, ExportBundleSpec, ExportPlan,
-    ExportTargetPlatform,
+    ExportService, ExportTargetPlatform,
 };
 pub use error::{VnError, VnResult};
 pub use localization::{
@@ -65,13 +69,13 @@ pub use migration::{
 };
 pub use player_menu::{
     PlayerMenuAction, PlayerMenuActionConfig, PlayerMenuColor, PlayerMenuConfig,
-    PlayerMenuConfigError, PlayerMenuLayoutConfig, PlayerMenuPanelAnchor,
-    PlayerMenuQuickActionPlacement, PlayerMenuStyleConfig, PlayerMenuTabConfig, PlayerMenuTabKind,
-    PlayerMenuTabsPosition,
+    PlayerMenuConfigError, PlayerMenuLayoutConfig, PlayerMenuNormalizationReport,
+    PlayerMenuPanelAnchor, PlayerMenuQuickActionPlacement, PlayerMenuStyleConfig,
+    PlayerMenuTabConfig, PlayerMenuTabKind, PlayerMenuTabsPosition,
 };
 pub use protected_content::{
-    open_protected_content, protect_content, ProtectedContentChunk, ProtectedContentError,
-    PROTECTED_CONTENT_VERSION,
+    open_protected_content, protect_content, try_protect_content, ProtectedContentChunk,
+    ProtectedContentError, PROTECTED_CONTENT_VERSION,
 };
 pub use render::{RenderBackend, RenderOutput, TextRenderer};
 pub use renpy_import::{
@@ -83,6 +87,22 @@ pub use repro::{
     ReproOracle, ReproRunReport, ReproStepTrace, ReproStopReason, REPRO_CASE_SCHEMA,
 };
 pub use resource::{LruCache, ResourceLimiter};
+pub use route_tree::{
+    build_route_tree, build_route_tree_with_progress, resolve_visual_at_ip, ChoiceProgressSnapshot,
+    ReadModelSnapshot, RouteCoverage, RouteEdge, RouteEdgeKind, RouteNode, RouteNodeId,
+    RouteNodeKind, RouteProgressSnapshot, RouteTree, VisualResolveStrategy,
+};
+pub use scene_frame::{
+    resolve_layout, validate_ui_theme, Anchor, ComponentRegistry, ComponentStyle,
+    ComponentStyleOverride, DisplayOrientation, DisplayProfile, HeadlessSceneFramePresenter,
+    ImageFit, InteractionSpec, LayoutBreakpoint, LayoutPolicy, LayoutRect, LayoutResolution,
+    LayoutSpec, RenderCommand, SafeAreaInsets, SafeAreaMode, SceneFrame, SceneFramePresenter,
+    StageFitPolicy, StageProfile, TypographyToken, UiDensity, UiResponse, UiTheme,
+    UiThemeValidationReport, WindowMode,
+};
+pub use schema_policy::{
+    validate_script_schema, validate_script_schema_value, SchemaPolicy, SchemaValidationReport,
+};
 pub use security::SecurityPolicy;
 pub use storage::{
     compute_script_id, SaveData, SaveError, SaveSlotEntry, SaveSlotMetadata, SaveSlotStore,

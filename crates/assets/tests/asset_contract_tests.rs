@@ -119,6 +119,33 @@ fn load_bytes_uses_cache_for_repeated_reads() {
 }
 
 #[test]
+fn load_bytes_shared_returns_same_cached_allocation_on_hits() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock must be after unix epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("vn_assets_shared_cache_{unique}"));
+    std::fs::create_dir_all(root.join("audio")).expect("audio dir");
+    std::fs::write(root.join("audio").join("theme.ogg"), [1u8, 2, 3, 4]).expect("asset");
+
+    let store = AssetStore::new(root.clone(), SecurityMode::Trusted, None, false)
+        .expect("asset store should initialize")
+        .with_cache_budget(1024);
+
+    let first = store
+        .load_bytes_shared("audio/theme.ogg")
+        .expect("first read should succeed");
+    let second = store
+        .load_bytes_shared("audio/theme.ogg")
+        .expect("second read should use cache");
+
+    assert!(std::sync::Arc::ptr_eq(&first, &second));
+    assert_eq!(first.as_ref(), &[1, 2, 3, 4]);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn load_bytes_manifest_lookup_normalizes_separators() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

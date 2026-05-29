@@ -81,7 +81,7 @@ impl EditorWorkbench {
             .save_file();
 
         if let Some(path) = path {
-            match std::fs::write(&path, payload) {
+            match crate::editor::atomic_io::atomic_replace(&path, payload.as_bytes()) {
                 Ok(_) => {
                     self.toast = Some(ToastState::success("Repro case exported"));
                 }

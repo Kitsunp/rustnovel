@@ -27,6 +27,8 @@ use crate::VnConfig;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct LayoutOverrides {
+    #[serde(default)]
+    pub dock_reference_width: Option<f32>,
     pub asset_width: Option<f32>,
     pub graph_width: Option<f32>,
     pub inspector_width: Option<f32>,
@@ -99,6 +101,52 @@ pub struct AutoFixBatchResult {
     pub skipped: usize,
 }
 
+#[derive(Clone, Debug)]
+pub struct ThemeEditorDraft {
+    pub original: visual_novel_engine::UiTheme,
+    pub draft: visual_novel_engine::UiTheme,
+    pub preview_applied: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExportWizardState {
+    pub target: visual_novel_engine::ExportTargetPlatform,
+    pub output_root: String,
+    pub runtime_artifact: String,
+    pub entry_script: String,
+    pub require_executable: bool,
+    pub integrity: visual_novel_engine::BundleIntegrity,
+    pub hmac_key: String,
+    pub last_plan: Option<visual_novel_engine::ExportPlan>,
+    pub last_error: Option<String>,
+    pub last_report: Option<visual_novel_engine::ExportBundleReport>,
+    pub dry_run: bool,
+}
+
+impl Default for ExportWizardState {
+    fn default() -> Self {
+        Self {
+            target: if cfg!(target_os = "windows") {
+                visual_novel_engine::ExportTargetPlatform::Windows
+            } else if cfg!(target_os = "macos") {
+                visual_novel_engine::ExportTargetPlatform::Macos
+            } else {
+                visual_novel_engine::ExportTargetPlatform::Linux
+            },
+            output_root: String::new(),
+            runtime_artifact: String::new(),
+            entry_script: String::new(),
+            require_executable: true,
+            integrity: visual_novel_engine::BundleIntegrity::None,
+            hmac_key: String::new(),
+            last_plan: None,
+            last_error: None,
+            last_report: None,
+            dry_run: true,
+        }
+    }
+}
+
 /// Main editor workbench state and UI.
 pub struct EditorWorkbench {
     pub config: VnConfig,
@@ -123,6 +171,16 @@ pub struct EditorWorkbench {
     pub validation_collapsed: bool,
     pub show_save_confirm: bool,
     pub show_player_menu_settings: bool,
+    pub show_theme_editor: bool,
+    pub show_layout_debug_overlay: bool,
+    pub show_scene_frame_inspector: bool,
+    pub show_export_report_panel: bool,
+    pub show_export_wizard: bool,
+    pub show_profiler_cache_panel: bool,
+    pub active_ui_theme: visual_novel_engine::UiTheme,
+    pub theme_editor_draft: Option<ThemeEditorDraft>,
+    pub export_wizard: ExportWizardState,
+    pub last_export_report: Option<visual_novel_engine::ExportBundleReport>,
 
     // Selection
     pub selected_node: Option<u32>,
@@ -265,6 +323,16 @@ impl EditorWorkbench {
             validation_collapsed: false,
             show_save_confirm: false,
             show_player_menu_settings: false,
+            show_theme_editor: false,
+            show_layout_debug_overlay: false,
+            show_scene_frame_inspector: false,
+            show_export_report_panel: false,
+            show_export_wizard: false,
+            show_profiler_cache_panel: false,
+            active_ui_theme: visual_novel_engine::UiTheme::default(),
+            theme_editor_draft: None,
+            export_wizard: ExportWizardState::default(),
+            last_export_report: None,
             selected_node: None,
             selected_entity: None,
             scene: visual_novel_engine::SceneState::default(),
@@ -336,15 +404,23 @@ impl EditorWorkbench {
         workbench
     }
 
-    pub fn update(&mut self, _dt: usize) {
+    pub fn update(&mut self, dt: usize) {
         if self.is_playing {
-            // Simple tick approx 60fps or whatever dt implies
-            self.current_time += 1.0;
-            if self.current_time > self.timeline.duration() as f32 {
+            let delta_ticks = u32::try_from(dt).unwrap_or(u32::MAX).max(1);
+            self.timeline.advance(delta_ticks);
+            self.current_time = self.timeline.current_time() as f32;
+            if self.timeline.current_time() > self.timeline.duration() {
                 self.current_time = 0.0;
+                self.timeline.seek(0);
                 self.is_playing = false;
             }
         }
+    }
+
+    pub fn update_seconds(&mut self, dt_seconds: f32) {
+        let ticks_per_second = self.timeline.ticks_per_second.max(1) as f32;
+        let ticks = (dt_seconds.max(0.0) * ticks_per_second).round().max(1.0) as usize;
+        self.update(ticks);
     }
 
     fn layout_prefs_path() -> std::path::PathBuf {
@@ -400,10 +476,28 @@ impl EditorWorkbench {
         self.last_layout_prefs = now.clone();
 
         if let Some(parent) = self.layout_prefs_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if let Err(err) = std::fs::create_dir_all(parent) {
+                self.toast = Some(ToastState::warning(format!(
+                    "Layout preferences folder could not be created: {err}"
+                )));
+                return;
+            }
         }
-        if let Ok(payload) = serde_json::to_string_pretty(&now) {
-            let _ = std::fs::write(&self.layout_prefs_path, payload);
+        let payload = match serde_json::to_string_pretty(&now) {
+            Ok(payload) => payload,
+            Err(err) => {
+                self.toast = Some(ToastState::warning(format!(
+                    "Layout preferences could not be serialized: {err}"
+                )));
+                return;
+            }
+        };
+        if let Err(err) =
+            crate::editor::atomic_io::atomic_replace(&self.layout_prefs_path, payload.as_bytes())
+        {
+            self.toast = Some(ToastState::warning(format!(
+                "Layout preferences could not be saved: {err}"
+            )));
         }
     }
 

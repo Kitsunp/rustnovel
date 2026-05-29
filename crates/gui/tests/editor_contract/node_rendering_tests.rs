@@ -62,10 +62,33 @@ fn test_bezier_control_points_clamp_offset_for_long_edges() {
 }
 
 #[test]
-fn test_context_menu_no_panic_when_no_menu() {
+fn context_menu_absent_renders_real_frame_without_mutating_graph() {
     let mut graph = NodeGraph::new();
+    let node_id = graph.add_node(StoryNode::Start, egui::pos2(80.0, 80.0));
     graph.context_menu = None;
+    let ctx = egui::Context::default();
+    let output = ctx.run(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(320.0, 240.0),
+            )),
+            ..Default::default()
+        },
+        |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                render_context_menu(&mut graph, ui);
+            });
+        },
+    );
+
     assert!(graph.context_menu.is_none());
+    assert_eq!(graph.get_node(node_id), Some(&StoryNode::Start));
+    assert!(
+        output.shapes.len() <= 1,
+        "absent context menu should not paint menu chrome, shapes={}",
+        output.shapes.len()
+    );
 }
 
 #[test]
@@ -81,6 +104,37 @@ fn context_menu_connect_to_choice_targets_new_option_port() {
 
     assert_eq!(default_context_connect_port(&choice), 2);
     assert_eq!(default_context_connect_port(&dialogue), 0);
+}
+
+#[test]
+fn context_menu_position_is_clamped_inside_visible_canvas() {
+    let bounds = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(320.0, 240.0));
+    let requested = egui::pos2(310.0, 230.0);
+    let size = egui::vec2(160.0, 120.0);
+    let pos = clamped_context_menu_position(requested, bounds, size);
+
+    assert!(pos.x >= bounds.left());
+    assert!(pos.y >= bounds.top());
+    assert!(pos.x + size.x <= bounds.right() + 0.1);
+    assert!(pos.y + size.y <= bounds.bottom() + 0.1);
+}
+
+#[test]
+fn context_menu_layout_caps_width_and_height_to_viewport() {
+    let bounds = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(240.0, 190.0));
+    let layout = context_menu_layout(bounds, canvas_context_menu_size());
+
+    assert!(layout.width <= bounds.width() - 16.0 + 0.1);
+    assert!(layout.max_height <= bounds.height() - 16.0 + 0.1);
+    assert!(layout.item_width() < layout.width);
+    assert!(layout.list_max_height < layout.max_height);
+}
+
+#[test]
+fn context_menu_palette_groups_are_stable() {
+    assert_eq!(canvas_palette_section("Dialogue"), "Basic");
+    assert_eq!(canvas_palette_section("Branch If"), "Logic");
+    assert_eq!(canvas_palette_section("Audio"), "Media and advanced");
 }
 
 #[test]
@@ -110,6 +164,49 @@ fn canvas_context_palette_matches_extended_authoring_nodes() {
         assert!(
             labels.contains(&required),
             "canvas context menu is missing node type {required}"
+        );
+    }
+}
+
+#[test]
+fn every_canvas_palette_option_creates_a_distinct_traceable_node() {
+    let items = canvas_node_palette_items();
+    let mut labels = std::collections::BTreeSet::new();
+    let mut graph = NodeGraph::new();
+
+    for (idx, (label, node)) in items.into_iter().enumerate() {
+        assert!(labels.insert(label), "duplicate canvas palette label {label}");
+        assert_ne!(
+            canvas_palette_section(label),
+            "",
+            "palette option {label} must belong to a visible section"
+        );
+
+        let expected = std::mem::discriminant(&node);
+        let pos = egui::pos2(idx as f32 * 32.0, idx as f32 * 24.0);
+        let inserted = add_canvas_node_from_palette(&mut graph, node, pos);
+        let created = graph
+            .get_node(inserted)
+            .unwrap_or_else(|| panic!("palette option {label} did not create a node"));
+
+        assert_eq!(
+            std::mem::discriminant(created),
+            expected,
+            "palette option {label} created the wrong node type"
+        );
+        assert_eq!(
+            graph.get_node_pos(inserted),
+            Some(pos),
+            "palette option {label} did not preserve insertion position"
+        );
+        let hint = graph
+            .take_operation_hint()
+            .unwrap_or_else(|| panic!("palette option {label} did not leave an operation hint"));
+        assert_eq!(hint.kind, "node_created");
+        assert!(
+            hint.details.contains(label) || hint.details.contains("Created"),
+            "palette option {label} left an unhelpful operation hint: {:?}",
+            hint.details
         );
     }
 }

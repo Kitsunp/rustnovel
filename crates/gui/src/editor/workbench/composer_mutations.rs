@@ -214,6 +214,12 @@ impl EditorWorkbench {
                 return Some(character_position_record(node_id));
             }
             CommandBusMoveResult::NoChange => return None,
+            CommandBusMoveResult::Failed(err) => {
+                self.toast = Some(ToastState::error(format!(
+                    "Visual Composer move failed for node {node_id}: {err}"
+                )));
+                return None;
+            }
             CommandBusMoveResult::Unsupported => {}
         }
 
@@ -245,13 +251,19 @@ impl EditorWorkbench {
             return CommandBusMoveResult::NoChange;
         }
 
-        self.apply_node_graph_command(AuthoringCommand::MoveLayer {
-            object_id,
-            x: edit.x,
-            y: edit.y,
-            scale: edit.scale,
-        })
-        .expect("matched composer layer object should be movable through AuthoringDocumentSession");
+        if self
+            .apply_node_graph_command(AuthoringCommand::MoveLayer {
+                object_id: object_id.clone(),
+                x: edit.x,
+                y: edit.y,
+                scale: edit.scale,
+            })
+            .is_none()
+        {
+            return CommandBusMoveResult::Failed(format!(
+                "matched composer layer object {object_id} was rejected by AuthoringDocumentSession"
+            ));
+        }
         CommandBusMoveResult::Applied
     }
 
@@ -263,6 +275,7 @@ impl EditorWorkbench {
 enum CommandBusMoveResult {
     Applied,
     NoChange,
+    Failed(String),
     Unsupported,
 }
 

@@ -171,7 +171,7 @@ jobs:
         run: |
           source .venv/bin/activate
           python -m pip install --upgrade pip
-          python -m pip install maturin
+          python -m pip install maturin pytest
       - name: Build and install Python module
         run: |
           source .venv/bin/activate
@@ -179,4 +179,4 @@ jobs:
       - name: Run Python tests
         run: |
           source .venv/bin/activate
-          PYTHONPATH=python python -m unittest discover -s tests/python -p "test_*.py" -v
+          PYTHONPATH=python python -m pytest tests/python -q

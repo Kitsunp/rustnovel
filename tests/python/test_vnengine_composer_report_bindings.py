@@ -543,6 +543,9 @@ class ComposerReportBindingTests(unittest.TestCase):
         graph.connect(scene, ext)
         graph.connect(ext, end)
 
+        codes = {issue.code for issue in graph.validate_no_io()}
+        self.assertIn("VAL_CONTRACT_EXPORT_UNSUPPORTED", codes)
+
         payload = json.loads(graph.to_script_json())
         self.assertEqual(payload["events"][0]["characters"][0]["x"], 10)
         self.assertEqual(payload["events"][0]["characters"][0]["scale"], 1.25)

@@ -30,6 +30,11 @@ from .types import (
     _require_int,
 )
 
+SchemaPolicy = str
+STRICT_CURRENT: SchemaPolicy = "strict_current"
+LEGACY_READ_ONLY: SchemaPolicy = "legacy_read_only"
+MIGRATING: SchemaPolicy = "migrating"
+
 
 @dataclass(frozen=True)
 class Script:
@@ -51,15 +56,12 @@ class Script:
         return json.dumps(self.to_dict(), separators=(",", ":"), sort_keys=True)
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "Script":
-        found_version = data.get("script_schema_version")
-        if found_version is None:
-            found_version = SCRIPT_SCHEMA_VERSION
-        if not _is_compatible_schema_version(str(found_version), SCRIPT_SCHEMA_VERSION):
-            raise ValueError(
-                "schema incompatible: found "
-                f"{found_version}, expected {SCRIPT_SCHEMA_VERSION}"
-            )
+    def from_dict(
+        cls, data: Mapping[str, Any], schema_policy: SchemaPolicy = STRICT_CURRENT
+    ) -> "Script":
+        found_version = _validate_schema_version(
+            data.get("script_schema_version"), schema_policy
+        )
         events = [event_from_dict(item) for item in data.get("events", [])]
         labels = {
             str(key): _require_int(value, f"Script label '{key}'")
@@ -70,8 +72,18 @@ class Script:
         )
 
     @classmethod
-    def from_json(cls, raw: str) -> "Script":
-        return cls.from_dict(json.loads(raw))
+    def from_json(
+        cls, raw: str, schema_policy: SchemaPolicy = STRICT_CURRENT
+    ) -> "Script":
+        return cls.from_dict(json.loads(raw), schema_policy=schema_policy)
+
+    @classmethod
+    def from_legacy_dict(cls, data: Mapping[str, Any]) -> "Script":
+        return cls.from_dict(data, schema_policy=LEGACY_READ_ONLY)
+
+    @classmethod
+    def from_legacy_json(cls, raw: str) -> "Script":
+        return cls.from_json(raw, schema_policy=LEGACY_READ_ONLY)
 
 
 def event_from_dict(data: Mapping[str, Any]) -> Event:
@@ -138,14 +150,29 @@ def normalize_character_patches(
     return normalized
 
 
-def _is_compatible_schema_version(found: str, expected: str) -> bool:
-    if found == expected:
-        return True
-    if "." not in found or "." not in expected:
+def _validate_schema_version(raw: Any, policy: SchemaPolicy) -> str:
+    if raw is None:
+        if policy in {LEGACY_READ_ONLY, MIGRATING}:
+            return SCRIPT_SCHEMA_VERSION
+        raise ValueError(f"missing script_schema_version under {policy}")
+    if not isinstance(raw, str):
+        raise ValueError("script_schema_version must be a string")
+    if raw == SCRIPT_SCHEMA_VERSION:
+        return raw
+    if policy in {LEGACY_READ_ONLY, MIGRATING} and _is_legacy_schema_version(raw):
+        return raw
+    raise ValueError(
+        "schema incompatible: found "
+        f"{raw}, expected {SCRIPT_SCHEMA_VERSION} under {policy}"
+    )
+
+
+def _is_legacy_schema_version(found: str) -> bool:
+    if "." not in found or "." not in SCRIPT_SCHEMA_VERSION:
         return False
     try:
         found_major = int(found.split(".", 1)[0])
-        expected_major = int(expected.split(".", 1)[0])
+        expected_major = int(SCRIPT_SCHEMA_VERSION.split(".", 1)[0])
     except ValueError:
         return False
     return found_major <= expected_major

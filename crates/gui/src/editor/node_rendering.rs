@@ -17,6 +17,56 @@ mod edges;
 pub use edges::bezier_control_points;
 pub use edges::draw_bezier_connection;
 
+pub fn node_context_menu_size() -> egui::Vec2 {
+    egui::vec2(230.0, 360.0)
+}
+
+pub fn canvas_context_menu_size() -> egui::Vec2 {
+    egui::vec2(280.0, 440.0)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ContextMenuLayout {
+    pub width: f32,
+    pub max_height: f32,
+    pub list_max_height: f32,
+}
+
+impl ContextMenuLayout {
+    pub fn size(self) -> egui::Vec2 {
+        egui::vec2(self.width, self.max_height)
+    }
+
+    pub fn item_width(self) -> f32 {
+        (self.width - 12.0).max(48.0)
+    }
+}
+
+pub fn context_menu_layout(bounds: egui::Rect, preferred_size: egui::Vec2) -> ContextMenuLayout {
+    let usable_width = (bounds.width() - 16.0).max(96.0);
+    let usable_height = (bounds.height() - 16.0).max(120.0);
+    let width = preferred_size.x.clamp(180.0, 300.0).min(usable_width);
+    let max_height = preferred_size.y.clamp(160.0, 480.0).min(usable_height);
+    ContextMenuLayout {
+        width,
+        max_height,
+        list_max_height: (max_height - 78.0).max(84.0),
+    }
+}
+
+pub fn clamped_context_menu_position(
+    requested: egui::Pos2,
+    bounds: egui::Rect,
+    expected_size: egui::Vec2,
+) -> egui::Pos2 {
+    let max_x = (bounds.right() - expected_size.x).max(bounds.left());
+    let max_y = (bounds.bottom() - expected_size.y).max(bounds.top());
+    egui::pos2(
+        requested.x.clamp(bounds.left(), max_x),
+        requested.y.clamp(bounds.top(), max_y),
+    )
+}
+
 /// Renders a toast notification if one is active.
 ///
 /// Call this at the end of the UI rendering to ensure toast appears on top.
@@ -96,41 +146,41 @@ pub fn render_context_menu(graph: &mut NodeGraph, ui: &egui::Ui) {
         _ => None,
     };
 
+    let bounds = ui.ctx().available_rect();
+    let layout = context_menu_layout(bounds, node_context_menu_size());
+    let menu_position = clamped_context_menu_position(menu.position, bounds, layout.size());
     egui::Area::new(egui::Id::new("node_context_menu"))
-        .fixed_pos(menu.position)
+        .fixed_pos(menu_position)
         .order(egui::Order::Foreground)
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.set_min_width(160.0);
-
-                ui.menu_button("Insert Node", |ui| {
-                    if ui.button("Before").clicked() {
-                        graph.insert_before(node_id, StoryNode::default());
-                        graph.context_menu = None;
-                        ui.close_menu();
-                    }
-                    if ui.button("After").clicked() {
-                        graph.insert_after(node_id, StoryNode::default());
-                        graph.context_menu = None;
-                        ui.close_menu();
-                    }
-                });
+                ui.set_width(layout.width);
+                ui.set_max_width(layout.width);
+                ui.label(egui::RichText::new("Node actions").strong());
+                ui.separator();
+                ui.label(egui::RichText::new("Insert").small());
+                if context_menu_button(ui, layout, "Before").clicked() {
+                    graph.insert_before(node_id, StoryNode::default());
+                    graph.context_menu = None;
+                }
+                if context_menu_button(ui, layout, "After").clicked() {
+                    graph.insert_after(node_id, StoryNode::default());
+                    graph.context_menu = None;
+                }
 
                 ui.separator();
-
-                if ui.button("Convert to Choice").clicked() {
+                ui.label(egui::RichText::new("Route").small());
+                if context_menu_button(ui, layout, "Convert to Choice").clicked() {
                     graph.convert_to_choice(node_id);
                     graph.context_menu = None;
                 }
 
-                if ui.button("Create Branch").clicked() {
+                if context_menu_button(ui, layout, "Create Branch").clicked() {
                     graph.create_branch(node_id);
                     graph.context_menu = None;
                 }
 
-                ui.separator();
-
-                if ui.button("Connect To...").clicked() {
+                if context_menu_button(ui, layout, "Connect To...").clicked() {
                     let from_port = node_snapshot
                         .as_ref()
                         .map(default_context_connect_port)
@@ -138,46 +188,45 @@ pub fn render_context_menu(graph: &mut NodeGraph, ui: &egui::Ui) {
                     graph.start_connection_pick(node_id, from_port);
                     graph.context_menu = None;
                 }
-                if ui.button("Disconnect Outputs").clicked() {
+                if context_menu_button(ui, layout, "Disconnect Outputs").clicked() {
                     graph.disconnect_all_from(node_id);
                     graph.context_menu = None;
                 }
 
                 ui.separator();
-
-                if ui.button("Edit").clicked() {
+                ui.label(egui::RichText::new("Edit").small());
+                if context_menu_button(ui, layout, "Edit Node").clicked() {
                     graph.editing = Some(node_id);
                     graph.context_menu = None;
                 }
 
                 if matches!(node_snapshot, Some(StoryNode::Scene { .. })) {
                     ui.separator();
-                    ui.menu_button("Scene Composition", |ui| {
-                        let profile_id = scene_profile
-                            .clone()
-                            .unwrap_or_else(|| format!("scene_{node_id}"));
-                        if ui.button("Group as Profile").clicked() {
-                            graph.save_scene_profile(profile_id, node_id);
+                    ui.label(egui::RichText::new("Scene composition").small());
+                    let profile_id = scene_profile
+                        .clone()
+                        .unwrap_or_else(|| format!("scene_{node_id}"));
+                    if context_menu_button(ui, layout, "Group as Profile").clicked() {
+                        graph.save_scene_profile(profile_id, node_id);
+                        graph.context_menu = None;
+                    }
+                    if let Some(profile_id) = &scene_profile {
+                        if context_menu_button(ui, layout, "Refresh from Profile").clicked() {
+                            graph.apply_scene_profile(profile_id, node_id);
                             graph.context_menu = None;
-                            ui.close_menu();
                         }
-                        if let Some(profile_id) = &scene_profile {
-                            if ui.button("Refresh from Profile").clicked() {
-                                graph.apply_scene_profile(profile_id, node_id);
-                                graph.context_menu = None;
-                                ui.close_menu();
-                            }
-                            if ui.button("Ungroup / Detach Profile").clicked() {
-                                graph.detach_scene_profile(node_id);
-                                graph.context_menu = None;
-                                ui.close_menu();
-                            }
+                        if context_menu_button(ui, layout, "Ungroup / Detach Profile").clicked() {
+                            graph.detach_scene_profile(node_id);
+                            graph.context_menu = None;
                         }
-                    });
+                    }
                 }
 
                 if ui
-                    .button(egui::RichText::new("Delete").color(egui::Color32::RED))
+                    .add_sized(
+                        [layout.item_width(), 22.0],
+                        egui::Button::new(egui::RichText::new("Delete").color(egui::Color32::RED)),
+                    )
                     .clicked()
                 {
                     graph.remove_node(node_id);
@@ -194,22 +243,56 @@ fn render_canvas_context_menu(
     graph_position: Option<egui::Pos2>,
 ) {
     let insert_pos = graph_position.unwrap_or(egui::pos2(0.0, 0.0));
+    let bounds = ui.ctx().available_rect();
+    let layout = context_menu_layout(bounds, canvas_context_menu_size());
+    let menu_position = clamped_context_menu_position(position, bounds, layout.size());
     egui::Area::new(egui::Id::new("node_canvas_context_menu"))
-        .fixed_pos(position)
+        .fixed_pos(menu_position)
         .order(egui::Order::Foreground)
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.set_min_width(180.0);
-                ui.label(egui::RichText::new("Create Node").strong());
+                ui.set_width(layout.width);
+                ui.set_max_width(layout.width);
+                ui.label(egui::RichText::new("Create node").strong());
                 ui.separator();
-                for (label, node) in canvas_node_palette_items() {
-                    if ui.button(label).clicked() {
-                        add_canvas_node_from_palette(graph, node, insert_pos);
-                        graph.context_menu = None;
-                    }
-                }
+                egui::ScrollArea::vertical()
+                    .max_height(layout.list_max_height)
+                    .auto_shrink([true, true])
+                    .show(ui, |ui| {
+                        let mut last_section = "";
+                        for (label, node) in canvas_node_palette_items() {
+                            let section = canvas_palette_section(label);
+                            if section != last_section {
+                                if !last_section.is_empty() {
+                                    ui.separator();
+                                }
+                                ui.label(egui::RichText::new(section).small());
+                                last_section = section;
+                            }
+                            if context_menu_button(ui, layout, label).clicked() {
+                                add_canvas_node_from_palette(graph, node, insert_pos);
+                                graph.context_menu = None;
+                            }
+                        }
+                    });
             });
         });
+}
+
+fn context_menu_button(
+    ui: &mut egui::Ui,
+    layout: ContextMenuLayout,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    ui.add_sized([layout.item_width(), 22.0], egui::Button::new(text))
+}
+
+pub fn canvas_palette_section(label: &str) -> &'static str {
+    match label {
+        "Dialogue" | "Choice" | "Scene" | "Jump" | "Start" | "End" => "Basic",
+        "Scene Patch" | "Branch If" | "Set Variable" | "Set Flag" => "Logic",
+        _ => "Media and advanced",
+    }
 }
 
 pub fn add_canvas_node_from_palette(

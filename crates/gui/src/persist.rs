@@ -53,7 +53,7 @@ impl UserPreferences {
         }
         let payload = serde_json::to_string_pretty(self)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-        fs::write(path, payload)
+        crate::editor::atomic_io::atomic_replace(path, payload.as_bytes())
     }
 }
 
@@ -70,7 +70,7 @@ pub fn save_state_to(path: &Path, data: &SaveData) -> Result<(), PersistError> {
         fs::create_dir_all(parent)?;
     }
     let payload = data.to_authenticated_binary(AUTH_SAVE_KEY)?;
-    fs::write(path, payload)?;
+    crate::editor::atomic_io::atomic_replace(path, &payload)?;
     Ok(())
 }
 

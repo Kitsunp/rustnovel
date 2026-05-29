@@ -204,6 +204,50 @@ fn authoring_apply_command_serializes_core_document_outcome() {
 }
 
 #[test]
+fn authoring_apply_command_dry_run_reports_without_writing() {
+    let (_tmp, script_path) = write_authoring_document();
+    let command_path = script_path.with_file_name("command_dry_run.json");
+    let output_path = script_path.with_file_name("dry_run_mutated.vnauthoring");
+    fs::write(
+        &command_path,
+        r#"{"command":"set_background_fit_override","node_id":0,"fit":"contain"}"#,
+    )
+    .expect("command json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("authoring")
+        .arg("apply-command")
+        .arg(script_path.as_os_str())
+        .arg("--command")
+        .arg(command_path.as_os_str())
+        .arg("--output")
+        .arg(output_path.as_os_str())
+        .arg("--dry-run")
+        .arg("--json")
+        .output()
+        .expect("run authoring apply-command dry-run");
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("dry-run report json");
+    assert_eq!(report["dry_run"], serde_json::json!(true));
+    assert_eq!(report["wrote"], serde_json::json!(false));
+    assert_eq!(
+        report["outcome"]["delta"]["BackgroundFitChanged"]["after"],
+        serde_json::json!("contain")
+    );
+    assert!(
+        !output_path.exists(),
+        "dry-run must not create mutated document"
+    );
+}
+
+#[test]
 fn authoring_validate_command_reports_graph_errors_before_failing() {
     let (_tmp, script_path) = write_script(ScriptRaw::new(
         vec![EventRaw::Scene(SceneUpdateRaw {
@@ -379,6 +423,141 @@ fn cli_trace_json_contract() {
         "YAML output to .json must not succeed silently"
     );
     assert!(String::from_utf8_lossy(&mismatch.stderr).contains("incompatible"));
+}
+
+#[test]
+fn cli_global_json_route_theme_and_layout_contracts() {
+    let (_tmp, script_path) = write_script(ScriptRaw::new(
+        vec![EventRaw::Scene(SceneUpdateRaw {
+            background: Some("bg.png".to_string()),
+            ..Default::default()
+        })],
+        BTreeMap::from([("start".to_string(), 0)]),
+    ));
+
+    let route = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("--json")
+        .arg("route-tree")
+        .arg(script_path.as_os_str())
+        .output()
+        .expect("route tree");
+    assert!(route.status.success());
+    let route_json: serde_json::Value =
+        serde_json::from_slice(&route.stdout).expect("route envelope");
+    assert_eq!(route_json["ok"], true);
+    assert_eq!(route_json["data"]["root"], 0);
+
+    let theme_path = script_path.with_file_name("theme.json");
+    fs::write(
+        &theme_path,
+        r##"{"id":"test","colors":{"dialogue.text":"#FFFFFF"},"typography":{},"spacing":{},"radii":{},"alpha":{},"action_text":{},"components":{"components":{}}}"##,
+    )
+    .expect("theme");
+    let theme = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("--json")
+        .arg("theme")
+        .arg("validate")
+        .arg(theme_path.as_os_str())
+        .output()
+        .expect("theme validate");
+    assert!(theme.status.success());
+    let theme_json: serde_json::Value =
+        serde_json::from_slice(&theme.stdout).expect("theme envelope");
+    assert_eq!(theme_json["data"]["valid"], true);
+
+    let display_path = script_path.with_file_name("display.json");
+    fs::write(
+        &display_path,
+        r#"{"logical_size":[800.0,600.0],"physical_size":[1600,1200],"dpi":null,"ppi":null,"tpi":null,"scale_factor":2.0,"user_scale":1.0,"safe_area":{"left":0.0,"right":0.0,"top":0.0,"bottom":0.0},"window_mode":"windowed","orientation":"landscape"}"#,
+    )
+    .expect("display");
+    let layout = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("--json")
+        .arg("layout")
+        .arg("resolve")
+        .arg("--display")
+        .arg(display_path.as_os_str())
+        .output()
+        .expect("layout resolve");
+    assert!(layout.status.success());
+    let layout_json: serde_json::Value =
+        serde_json::from_slice(&layout.stdout).expect("layout envelope");
+    assert_eq!(layout_json["data"]["breakpoint"], "normal");
+}
+
+#[test]
+fn cli_global_json_error_envelope_has_stable_exit_code() {
+    let tmp = TempDir::new().expect("temp dir");
+    let missing = tmp.path().join("missing.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("--json")
+        .arg("validate")
+        .arg(missing.as_os_str())
+        .output()
+        .expect("validate missing script");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        output.stderr.is_empty(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("error envelope");
+    assert_eq!(envelope["ok"], false);
+    assert_eq!(envelope["code"], "engine_error");
+    assert!(envelope["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("load script"));
+}
+
+#[test]
+fn migrate_script_command_requires_explicit_output_and_reports_json() {
+    let tmp = TempDir::new().expect("temp dir");
+    let input_path = tmp.path().join("legacy.json");
+    let output_path = tmp.path().join("current.json");
+    fs::write(
+        &input_path,
+        r#"{"script_schema_version":"0.9","events":[{"type":"dialogue","speaker":"Ava","text":"Legacy"}],"labels":{"start":0}}"#,
+    )
+    .expect("legacy script");
+
+    let missing_output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("--json")
+        .arg("migrate-script")
+        .arg(input_path.as_os_str())
+        .output()
+        .expect("migrate missing output");
+    assert!(!missing_output.status.success());
+
+    let migrated = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("--json")
+        .arg("migrate-script")
+        .arg(input_path.as_os_str())
+        .arg("--output")
+        .arg(output_path.as_os_str())
+        .output()
+        .expect("migrate script");
+    assert!(
+        migrated.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&migrated.stdout),
+        String::from_utf8_lossy(&migrated.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&migrated.stdout).expect("migrate envelope");
+    assert_eq!(envelope["ok"], true);
+    assert_eq!(envelope["data"]["changed"], true);
+    let output_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(output_path).expect("migrated json"))
+            .expect("migrated value");
+    assert_eq!(
+        output_json["script_schema_version"],
+        serde_json::json!(visual_novel_engine::SCRIPT_SCHEMA_VERSION)
+    );
 }
 
 #[test]

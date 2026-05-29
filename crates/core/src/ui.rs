@@ -115,6 +115,7 @@ fn transition_kind_label(kind: u8) -> &'static str {
     match kind {
         0 => "fade",
         1 => "dissolve",
+        2 => "cut",
         _ => "unknown",
     }
 }

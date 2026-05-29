@@ -6,7 +6,9 @@ use visual_novel_engine::{PlayerMenuConfig, ProjectManifest};
 use visual_novel_gui::{run_app, SecurityMode, VnConfig};
 
 fn main() {
-    let _ = tracing_subscriber::fmt::try_init();
+    if let Err(err) = tracing_subscriber::fmt::try_init() {
+        eprintln!("Player logging already initialized or unavailable: {err}");
+    }
     if let Err(err) = run_from_args(std::env::args().skip(1)) {
         eprintln!("Error running player: {err}");
         std::process::exit(1);
@@ -232,17 +234,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn standalone_launch_defaults_to_bundle_files_next_to_executable() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(dir.path().join("scripts")).expect("scripts dir");
-        std::fs::create_dir_all(dir.path().join("meta")).expect("meta dir");
+    fn standalone_launch_defaults_to_bundle_files_next_to_executable(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        std::fs::create_dir_all(dir.path().join("scripts"))?;
+        std::fs::create_dir_all(dir.path().join("meta"))?;
         std::fs::write(
             dir.path().join("scripts").join("compiled.vnscript.json"),
             "{}",
-        )
-        .expect("script");
-        std::fs::write(dir.path().join("meta").join("assets_manifest.json"), "{}")
-            .expect("manifest");
+        )?;
+        std::fs::write(dir.path().join("meta").join("assets_manifest.json"), "{}")?;
 
         let paths = resolve_launch_paths_for_exe_dir(None, None, None, false, Some(dir.path()));
 
@@ -260,17 +261,18 @@ mod tests {
             paths.require_manifest,
             "direct executable launch should enforce the bundled asset manifest"
         );
+        Ok(())
     }
 
     #[test]
-    fn explicit_script_keeps_cli_paths_even_when_executable_has_bundle_files() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(dir.path().join("scripts")).expect("scripts dir");
+    fn explicit_script_keeps_cli_paths_even_when_executable_has_bundle_files(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        std::fs::create_dir_all(dir.path().join("scripts"))?;
         std::fs::write(
             dir.path().join("scripts").join("compiled.vnscript.json"),
             "{}",
-        )
-        .expect("script");
+        )?;
         let script_path = PathBuf::from("custom").join("story.json");
 
         let paths = resolve_launch_paths_for_exe_dir(
@@ -286,5 +288,6 @@ mod tests {
         assert_eq!(paths.assets_root, PathBuf::from("custom"));
         assert!(!paths.require_manifest);
         assert_eq!(paths.manifest_path, None);
+        Ok(())
     }
 }

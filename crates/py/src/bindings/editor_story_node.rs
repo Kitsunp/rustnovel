@@ -178,6 +178,9 @@ impl PyStoryNode {
                 name,
                 expression,
                 position,
+                x: None,
+                y: None,
+                scale: None,
             })
             .collect();
 
@@ -220,6 +223,9 @@ impl PyStoryNode {
                 name,
                 expression,
                 position,
+                x: None,
+                y: None,
+                scale: None,
             })
             .collect();
 

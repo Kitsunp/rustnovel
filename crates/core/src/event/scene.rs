@@ -1,5 +1,5 @@
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::resource::StringBudget;
 
@@ -22,7 +22,7 @@ impl StringBudget for SceneUpdateRaw {
 }
 
 /// Scene update payload with interned strings.
-#[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
 pub struct SceneUpdateCompiled {
     pub background: Option<SharedStr>,
     pub music: Option<SharedStr>,
@@ -51,7 +51,7 @@ impl StringBudget for CharacterPlacementRaw {
 }
 
 /// Character placement with interned strings.
-#[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
 pub struct CharacterPlacementCompiled {
     pub name: SharedStr,
     pub expression: Option<SharedStr>,
@@ -68,6 +68,12 @@ pub struct CharacterPatchRaw {
     pub name: String,
     pub expression: Option<String>,
     pub position: Option<String>,
+    #[serde(default)]
+    pub x: Option<i32>,
+    #[serde(default)]
+    pub y: Option<i32>,
+    #[serde(default)]
+    pub scale: Option<f32>,
 }
 
 impl StringBudget for CharacterPatchRaw {
@@ -77,18 +83,23 @@ impl StringBudget for CharacterPatchRaw {
 }
 
 /// Character patch with interned strings.
-#[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
 pub struct CharacterPatchCompiled {
     pub name: SharedStr,
     pub expression: Option<SharedStr>,
     pub position: Option<SharedStr>,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub scale: Option<f32>,
 }
 
 /// Scene patch in raw form (handling partial updates).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ScenePatchRaw {
+    #[serde(default, deserialize_with = "deserialize_patch_string")]
     pub background: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_patch_string")]
     pub music: Option<String>,
     #[serde(default)]
     pub add: Vec<CharacterPlacementRaw>,
@@ -109,13 +120,21 @@ impl StringBudget for ScenePatchRaw {
 }
 
 /// Scene patch with interned strings.
-#[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
 pub struct ScenePatchCompiled {
     pub background: Option<SharedStr>,
     pub music: Option<SharedStr>,
     pub add: Vec<CharacterPlacementCompiled>,
     pub update: Vec<CharacterPatchCompiled>,
     pub remove: Vec<SharedStr>,
+}
+
+fn deserialize_patch_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    Ok(Some(value.unwrap_or_default()))
 }
 
 /// Precise character positioning for Visual Composer.
@@ -135,7 +154,7 @@ impl StringBudget for SetCharacterPositionRaw {
 }
 
 /// Compiled precise character positioning.
-#[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default, JsonSchema)]
 pub struct SetCharacterPositionCompiled {
     pub name: SharedStr,
     pub x: i32,

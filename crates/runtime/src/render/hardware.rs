@@ -69,12 +69,13 @@ impl<'a> WgpuBackend<'a> {
 }
 
 impl<'a> RenderBackend for WgpuBackend<'a> {
-    fn resize(&mut self, width: u32, height: u32) {
+    fn resize(&mut self, width: u32, height: u32) -> Result<(), String> {
         if width > 0 && height > 0 {
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
         }
+        Ok(())
     }
 
     fn render(&mut self, ui: &UiState) -> Result<(), String> {

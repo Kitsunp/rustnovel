@@ -147,7 +147,7 @@ impl EditorWorkbench {
             .set_file_name(default_name)
             .save_file()
         {
-            match std::fs::write(path, payload) {
+            match crate::editor::atomic_io::atomic_replace(&path, payload.as_bytes()) {
                 Ok(_) => {
                     self.toast = Some(ToastState::success("Diagnostic report exported"));
                 }

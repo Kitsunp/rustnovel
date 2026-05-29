@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use visual_novel_engine::{
     runtime::{
-        AudioActionRaw, CharacterPatchRaw, CharacterPlacementRaw, Engine, EventRaw, ScenePatchRaw,
-        SceneUpdateRaw, ScriptRaw,
+        AudioActionRaw, CharacterPatchRaw, CharacterPlacementRaw, ChoiceOptionRaw, ChoiceRaw,
+        Engine, EventRaw, PrefetchMode, ScenePatchRaw, SceneUpdateRaw, ScriptRaw,
     },
     AssetId, SecurityPolicy,
 };
@@ -110,6 +110,9 @@ fn peek_next_asset_paths_returns_prefetchable_paths_only() {
                 name: "Ava".to_string(),
                 expression: Some("sprites/ava_focus.png".to_string()),
                 position: None,
+                x: None,
+                y: None,
+                scale: None,
             }],
             remove: Vec::new(),
         }),
@@ -140,4 +143,110 @@ fn peek_next_asset_paths_returns_prefetchable_paths_only() {
     assert!(paths.contains(&"audio/ambient.ogg".to_string()));
     assert!(!paths.contains(&"Ava".to_string()));
     assert!(!paths.contains(&"Narrator".to_string()));
+}
+
+#[test]
+fn branch_aware_prefetch_collects_assets_from_choice_targets() {
+    let events = vec![
+        EventRaw::Choice(ChoiceRaw {
+            prompt: "Where?".to_string(),
+            options: vec![
+                ChoiceOptionRaw {
+                    text: "Left".to_string(),
+                    target: "left".to_string(),
+                },
+                ChoiceOptionRaw {
+                    text: "Right".to_string(),
+                    target: "right".to_string(),
+                },
+            ],
+        }),
+        EventRaw::Scene(SceneUpdateRaw {
+            background: Some("bg/left.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        }),
+        EventRaw::Jump {
+            target: "start".to_string(),
+        },
+        EventRaw::Scene(SceneUpdateRaw {
+            background: Some("bg/right.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        }),
+    ];
+    let labels = BTreeMap::from([
+        ("start".to_string(), 0),
+        ("left".to_string(), 1),
+        ("right".to_string(), 3),
+    ]);
+    let script = ScriptRaw::new(events, labels);
+    let engine = Engine::new(
+        script,
+        SecurityPolicy::default(),
+        visual_novel_engine::ResourceLimiter::default(),
+    )
+    .unwrap();
+
+    let linear = engine.peek_next_asset_paths(2);
+    assert!(linear.contains(&"bg/left.png".to_string()));
+    assert!(!linear.contains(&"bg/right.png".to_string()));
+
+    let branch = engine.peek_next_asset_paths_with_mode(PrefetchMode::BranchAware {
+        depth: 2,
+        max_assets: 16,
+    });
+    assert!(branch.contains(&"bg/left.png".to_string()));
+    assert!(branch.contains(&"bg/right.png".to_string()));
+
+    let likely = engine.peek_next_asset_paths_with_mode(PrefetchMode::LikelyPath { depth: 2 });
+    assert!(likely.contains(&"bg/left.png".to_string()));
+    assert!(!likely.contains(&"bg/right.png".to_string()));
+}
+
+#[test]
+fn branch_aware_prefetch_respects_asset_budget() {
+    let events = vec![
+        EventRaw::Choice(ChoiceRaw {
+            prompt: "Where?".to_string(),
+            options: vec![
+                ChoiceOptionRaw {
+                    text: "Left".to_string(),
+                    target: "left".to_string(),
+                },
+                ChoiceOptionRaw {
+                    text: "Right".to_string(),
+                    target: "right".to_string(),
+                },
+            ],
+        }),
+        EventRaw::Scene(SceneUpdateRaw {
+            background: Some("bg/left.png".to_string()),
+            music: Some("music/left.ogg".to_string()),
+            characters: Vec::new(),
+        }),
+        EventRaw::Scene(SceneUpdateRaw {
+            background: Some("bg/right.png".to_string()),
+            music: Some("music/right.ogg".to_string()),
+            characters: Vec::new(),
+        }),
+    ];
+    let labels = BTreeMap::from([
+        ("start".to_string(), 0),
+        ("left".to_string(), 1),
+        ("right".to_string(), 2),
+    ]);
+    let script = ScriptRaw::new(events, labels);
+    let engine = Engine::new(
+        script,
+        SecurityPolicy::default(),
+        visual_novel_engine::ResourceLimiter::default(),
+    )
+    .unwrap();
+
+    let branch = engine.peek_next_asset_paths_with_mode(PrefetchMode::BranchAware {
+        depth: 2,
+        max_assets: 1,
+    });
+    assert_eq!(branch.len(), 1);
 }

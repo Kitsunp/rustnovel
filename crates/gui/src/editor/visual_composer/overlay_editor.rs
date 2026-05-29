@@ -32,9 +32,16 @@ fn render_dialogue_editor(
         .show(ui, |ui| {
             let mut next_speaker = speaker.to_string();
             let mut next_text = text.to_string();
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label("Speaker");
-                if ui.text_edit_singleline(&mut next_speaker).changed() {
+                let width = ui.available_width().max(1.0);
+                if ui
+                    .add_sized(
+                        [width, ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(&mut next_speaker),
+                    )
+                    .changed()
+                {
                     action = Some(dialogue_action(
                         node_id,
                         next_speaker.clone(),
@@ -44,7 +51,13 @@ fn render_dialogue_editor(
             });
             ui.label("Text");
             if ui
-                .add(egui::TextEdit::multiline(&mut next_text).desired_rows(3))
+                .add_sized(
+                    [
+                        ui.available_width().max(1.0),
+                        ui.spacing().interact_size.y * 3.0,
+                    ],
+                    egui::TextEdit::multiline(&mut next_text).desired_rows(3),
+                )
                 .changed()
             {
                 action = Some(dialogue_action(node_id, next_speaker, next_text));
@@ -66,7 +79,13 @@ fn render_choice_editor(
             let mut next_prompt = prompt.to_string();
             ui.label("Prompt");
             if ui
-                .add(egui::TextEdit::multiline(&mut next_prompt).desired_rows(2))
+                .add_sized(
+                    [
+                        ui.available_width().max(1.0),
+                        ui.spacing().interact_size.y * 2.0,
+                    ],
+                    egui::TextEdit::multiline(&mut next_prompt).desired_rows(2),
+                )
                 .changed()
             {
                 action = Some(VisualComposerAction::MutateNode {
@@ -78,9 +97,16 @@ fn render_choice_editor(
             }
             ui.separator();
             for (idx, option) in options.iter().enumerate() {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     let mut next_option = option.clone();
-                    if ui.text_edit_singleline(&mut next_option).changed() {
+                    let option_width = (ui.available_width() - 92.0).max(1.0);
+                    if ui
+                        .add_sized(
+                            [option_width, ui.spacing().interact_size.y],
+                            egui::TextEdit::singleline(&mut next_option),
+                        )
+                        .changed()
+                    {
                         action = Some(VisualComposerAction::MutateNode {
                             node_id,
                             mutation: ComposerNodeMutation::ChoiceOptionText {

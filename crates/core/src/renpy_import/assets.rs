@@ -229,22 +229,36 @@ fn rewrite_path_and_copy(
     let destination = assets_out.join(&resolved_rel);
     if !copied.contains(&resolved_rel) {
         if let Some(parent) = destination.parent() {
-            let _ = fs::create_dir_all(parent);
+            if let Err(err) = fs::create_dir_all(parent) {
+                push_asset_issue(
+                    issues,
+                    "asset_mkdir_failed",
+                    format!(
+                        "Failed to create asset directory '{}': {err}",
+                        parent.display()
+                    ),
+                    trace_seq,
+                );
+                return;
+            }
         }
-        if fs::copy(&source, &destination).is_ok() {
-            copied.insert(resolved_rel.clone());
-        } else {
-            push_asset_issue(
-                issues,
-                "asset_copy_failed",
-                format!(
-                    "Failed to copy asset '{}' -> '{}'",
-                    source.display(),
-                    destination.display()
-                ),
-                trace_seq,
-            );
-            return;
+        match fs::copy(&source, &destination) {
+            Ok(_) => {
+                copied.insert(resolved_rel.clone());
+            }
+            Err(err) => {
+                push_asset_issue(
+                    issues,
+                    "asset_copy_failed",
+                    format!(
+                        "Failed to copy asset '{}' -> '{}': {err}",
+                        source.display(),
+                        destination.display()
+                    ),
+                    trace_seq,
+                );
+                return;
+            }
         }
     }
     *path_value = format!("assets/{}", resolved_rel);

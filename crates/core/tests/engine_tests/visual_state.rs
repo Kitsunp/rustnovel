@@ -145,6 +145,9 @@ fn ambiguous_character_update_and_position_do_not_cross_update_duplicates() {
                     name: "Ava".to_string(),
                     expression: Some("sad".to_string()),
                     position: Some("center".to_string()),
+                    x: None,
+                    y: None,
+                    scale: None,
                 }],
                 ..Default::default()
             }),
@@ -166,7 +169,14 @@ fn ambiguous_character_update_and_position_do_not_cross_update_duplicates() {
 
     let _ = engine.step().expect("scene");
     let _ = engine.step().expect("ambiguous patch update");
-    let _ = engine.step().expect("ambiguous position update");
+    let err = engine
+        .step()
+        .expect_err("ambiguous position update must be diagnosed");
+    assert!(
+        err.to_string()
+            .contains("ambiguous character position update"),
+        "unexpected error: {err}"
+    );
 
     let visual = engine.visual_state();
     assert_eq!(visual.characters.len(), 2);
@@ -214,6 +224,9 @@ fn single_character_update_and_position_still_apply() {
                     name: "Ava".to_string(),
                     expression: Some("sad".to_string()),
                     position: Some("center".to_string()),
+                    x: None,
+                    y: None,
+                    scale: None,
                 }],
                 ..Default::default()
             }),
@@ -247,4 +260,62 @@ fn single_character_update_and_position_still_apply() {
     assert_eq!(character.x, Some(640));
     assert_eq!(character.y, Some(360));
     assert_eq!(character.scale, Some(2.0));
+}
+
+#[test]
+fn patch_null_clears_background_and_music_and_patch_updates_precise_position() {
+    let json = serde_json::json!({
+        "script_schema_version": visual_novel_engine::SCRIPT_SCHEMA_VERSION,
+        "events": [
+            {
+                "type": "scene",
+                "background": "bg/room.png",
+                "music": "music/theme.ogg",
+                "characters": [
+                    {
+                        "name": "Ava",
+                        "expression": "smile",
+                        "position": "left",
+                        "x": 10,
+                        "y": 20,
+                        "scale": 1.0
+                    }
+                ]
+            },
+            {
+                "type": "patch",
+                "background": null,
+                "music": null,
+                "update": [
+                    {
+                        "name": "Ava",
+                        "expression": "focus",
+                        "x": 320,
+                        "y": 180,
+                        "scale": 1.5
+                    }
+                ]
+            }
+        ],
+        "labels": {"start": 0}
+    });
+    let script = ScriptRaw::from_json(&json.to_string()).expect("parse patch clear script");
+    let mut engine = Engine::new(
+        script,
+        SecurityPolicy::default(),
+        ResourceLimiter::default(),
+    )
+    .expect("engine");
+
+    let _ = engine.step().expect("scene");
+    let _ = engine.step().expect("patch");
+    let visual = engine.visual_state();
+    assert_eq!(visual.background, None);
+    assert_eq!(visual.music, None);
+    let character = visual.characters.first().expect("character");
+    assert_eq!(character.expression.as_deref(), Some("focus"));
+    assert_eq!(character.position.as_deref(), Some("left"));
+    assert_eq!(character.x, Some(320));
+    assert_eq!(character.y, Some(180));
+    assert_eq!(character.scale, Some(1.5));
 }

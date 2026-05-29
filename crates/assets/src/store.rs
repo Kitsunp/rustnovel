@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::cache::ByteCache;
 use crate::helpers::{
@@ -76,6 +76,11 @@ impl AssetStore {
     }
 
     pub fn load_bytes(&self, asset_path: &str) -> Result<Vec<u8>, AssetError> {
+        self.load_bytes_shared(asset_path)
+            .map(|bytes| bytes.as_ref().to_vec())
+    }
+
+    pub fn load_bytes_shared(&self, asset_path: &str) -> Result<Arc<[u8]>, AssetError> {
         let normalized = normalize_asset_request(asset_path);
         let rel = sanitize_rel_path(Path::new(&normalized))?;
         let cache_key = normalize_asset_key(&rel);
@@ -100,10 +105,11 @@ impl AssetStore {
             });
         }
         self.verify_manifest(&cache_key, size, &bytes)?;
+        let bytes: Arc<[u8]> = Arc::from(bytes);
         self.byte_cache
             .lock()
             .map_err(|_| std::io::Error::other("asset cache lock poisoned"))?
-            .insert(cache_key, bytes.clone());
+            .insert(cache_key, Arc::clone(&bytes));
         Ok(bytes)
     }
 

@@ -36,18 +36,30 @@ pub fn render_menu_bar(ui: &mut egui::Ui, workbench: &mut EditorWorkbench) {
                 workbench.prepare_save_confirmation();
                 ui.close_menu();
             }
-            if ui.button("Export Game (.vnproject)").clicked() {
+            if ui.button("Export Compiled Script (.vnproject)").clicked() {
                 workbench.export_compiled_project();
                 ui.close_menu();
             }
-            if ui.button("Package Bundle...").clicked() {
-                workbench.package_bundle_native();
+            if ui.button("Export Game Bundle...").clicked() {
+                workbench.open_export_wizard();
                 ui.close_menu();
             }
         });
         ui.menu_button("Tools", |ui| {
             if ui.button("Player Menu Settings").clicked() {
                 workbench.show_player_menu_settings = true;
+                ui.close_menu();
+            }
+            if ui.button("Theme Editor").clicked() {
+                workbench.show_theme_editor = true;
+                ui.close_menu();
+            }
+            if ui.button("Export Report Panel").clicked() {
+                workbench.show_export_report_panel = true;
+                ui.close_menu();
+            }
+            if ui.button("Profiler / Cache Panel").clicked() {
+                workbench.show_profiler_cache_panel = true;
                 ui.close_menu();
             }
             ui.separator();
@@ -116,6 +128,24 @@ pub fn render_menu_bar(ui: &mut egui::Ui, workbench: &mut EditorWorkbench) {
             workspace_changed |= ui
                 .checkbox(&mut workbench.show_validation, "Validation Report")
                 .changed();
+            workspace_changed |= ui
+                .checkbox(
+                    &mut workbench.show_layout_debug_overlay,
+                    "Layout Debug Overlay",
+                )
+                .changed();
+            workspace_changed |= ui
+                .checkbox(
+                    &mut workbench.show_scene_frame_inspector,
+                    "SceneFrame Inspector",
+                )
+                .changed();
+            workspace_changed |= ui
+                .checkbox(&mut workbench.show_export_report_panel, "Export Report")
+                .changed();
+            workspace_changed |= ui
+                .checkbox(&mut workbench.show_profiler_cache_panel, "Profiler / Cache")
+                .changed();
             if workbench.show_validation {
                 workspace_changed |= ui
                     .checkbox(&mut workbench.validation_collapsed, "Validation Minimizado")
@@ -141,12 +171,6 @@ pub fn render_menu_bar(ui: &mut egui::Ui, workbench: &mut EditorWorkbench) {
                     "Inspector",
                     &mut workbench.layout_overrides.inspector_width,
                     150.0..=520.0,
-                );
-                changed |= layout_slider(
-                    ui,
-                    "Errors",
-                    &mut workbench.layout_overrides.validation_height,
-                    80.0..=640.0,
                 );
                 changed |= layout_slider(
                     ui,
