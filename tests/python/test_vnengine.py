@@ -1,6 +1,7 @@
 import json
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from vnengine.app import EngineApp, run_script_headless
 from vnengine.builder import ScriptBuilder
@@ -11,15 +12,27 @@ from vnengine.types import (
     Dialogue,
     JumpIf,
     LEGACY_READ_ONLY,
+    MIGRATING,
     Script,
     SCRIPT_SCHEMA_VERSION,
     SetCharacterPosition,
     SetFlag,
     SetVar,
+    STRICT_CURRENT,
     SUPPORTED_EVENT_TYPES,
     Transition,
     event_from_dict,
 )
+
+SCHEMA_FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "schema_policy"
+
+
+def _accepts(callback):
+    try:
+        callback()
+    except Exception:
+        return False
+    return True
 
 
 class TypesTests(unittest.TestCase):
@@ -60,6 +73,50 @@ class TypesTests(unittest.TestCase):
             schema_policy=LEGACY_READ_ONLY,
         )
         self.assertEqual(parsed.labels["start"], 0)
+
+    def test_python_and_rust_reject_same_schema_fixtures_by_default(self):
+        import visual_novel_engine as native
+
+        cases = {
+            "valid_current.json": True,
+            "corrupt.json": False,
+            "legacy_runtime_no_schema.json": False,
+            "authoring_corrupt.vnauthoring": False,
+            "old_schema.json": False,
+            "missing_schema.json": False,
+        }
+        for filename, accepted in cases.items():
+            with self.subTest(filename=filename):
+                raw = (SCHEMA_FIXTURE_ROOT / filename).read_text(encoding="utf-8")
+                self.assertEqual(_accepts(lambda: Script.from_json(raw)), accepted)
+                self.assertEqual(_accepts(lambda: native.Engine(raw)), accepted)
+
+    def test_python_uses_native_schema_policy_for_explicit_modes(self):
+        import visual_novel_engine as native
+
+        cases = [
+            ("valid_current.json", STRICT_CURRENT, True),
+            ("old_schema.json", STRICT_CURRENT, False),
+            ("missing_schema.json", STRICT_CURRENT, False),
+            ("legacy_runtime_no_schema.json", LEGACY_READ_ONLY, True),
+            ("old_schema.json", LEGACY_READ_ONLY, True),
+            ("missing_schema.json", MIGRATING, True),
+        ]
+        for filename, policy, accepted in cases:
+            with self.subTest(filename=filename, policy=policy):
+                raw = (SCHEMA_FIXTURE_ROOT / filename).read_text(encoding="utf-8")
+                payload = json.loads(raw)
+                version = payload.get("script_schema_version")
+                self.assertEqual(
+                    _accepts(
+                        lambda: native.validate_script_schema_version(version, policy)
+                    ),
+                    accepted,
+                )
+                self.assertEqual(
+                    _accepts(lambda: Script.from_json(raw, schema_policy=policy)),
+                    accepted,
+                )
 
     def test_event_from_dict_rejects_unknown_type(self):
         with self.assertRaises(ValueError):

@@ -1,6 +1,6 @@
 use visual_novel_engine::{
     runtime::{Engine, ScriptCompiled, ScriptRaw, StateDigest, TraceUiView, UiTrace},
-    ResourceLimiter, SecurityPolicy, SCRIPT_SCHEMA_VERSION,
+    ResourceLimiter, SecurityPolicy, VnError, SCRIPT_SCHEMA_VERSION,
 };
 
 fn run_engine(mut engine: Engine, max_steps: usize) -> UiTrace {
@@ -8,17 +8,18 @@ fn run_engine(mut engine: Engine, max_steps: usize) -> UiTrace {
     for step in 0..max_steps {
         let event = match engine.current_event() {
             Ok(event) => event,
-            Err(_) => break,
+            Err(VnError::EndOfScript) => break,
+            Err(err) => panic!("current_event failed at step {step}: {err}"),
         };
         let view = TraceUiView::from_event(&event);
         let state = StateDigest::from_state(engine.state(), engine.script().flag_count as usize);
         trace.push(step as u32, view, state);
         match &event {
             visual_novel_engine::runtime::EventCompiled::Choice(_) => {
-                let _ = engine.choose(0);
+                engine.choose(0).expect("choose option 0");
             }
             _ => {
-                let _ = engine.step();
+                engine.step().expect("step");
             }
         }
     }

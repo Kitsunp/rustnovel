@@ -588,7 +588,7 @@ def test_pyi_matches_native_public_api():
 
 ### L1. `trace` ignora errores de ejecución
 
-**Evidencia:** `trace_script` hace `let _ = engine.choose(0)`, `let _ = engine.resume()`, `let _ = engine.step()`: `tools/cli/src/bin/vnengine.rs:383-392`.
+**Evidencia histórica:** `trace_script` descartaba los resultados de `choose(0)`, `resume()` y `step()` en `tools/cli/src/bin/vnengine.rs`, ocultando fallos de avance.
 
 **Problema:** si el motor falla, la traza puede seguir/terminar sin reportarlo y el comando puede devolver éxito.
 
@@ -1097,7 +1097,7 @@ Sin esta separación, cada mejora visual seguirá quedando mezclada con egui, me
 
 **L7. `compile` debe validar igual que `validate`.** Ahora compilar no debe saltarse seguridad. Usar el mismo pipeline `load -> schema policy -> validate_raw -> compile -> validate_compiled -> write_atomic`.
 
-**L8. `trace` no debe ocultar errores.** Los `let _ = engine.choose/resume/step` deben convertirse en fallos o eventos de traza con `stopped_reason`. Añadir `--choice-policy first/random/seed/file`, `--max-steps`, `--json`, `--fail-on-warning`.
+**L8. `trace` no debe ocultar errores.** Los descartes de resultados de `engine.choose/resume/step` deben convertirse en fallos o eventos de traza con `stopped_reason`. Añadir `--choice-policy first/random/seed/file`, `--max-steps`, `--json`, `--fail-on-warning`.
 
 **L9. Loader authoring no debe esconder JSON corrupto.** Si un documento parece authoring pero falla parseo, no debe caer silenciosamente a script legacy. Reportar error original con contexto.
 

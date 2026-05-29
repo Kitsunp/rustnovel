@@ -3,18 +3,19 @@ mod bindings;
 use pyo3::prelude::*;
 
 pub use bindings::{
-    register_editor_classes, vn_error_to_py, PyAudio, PyAuthoringValidationReport,
-    PyComposerPreviewSession, PyComposerSnapshot, PyDiagnosticTarget, PyEngine, PyEvidenceTrace,
-    PyExportPlan, PyExportReport, PyFieldPath, PyFragmentPort, PyGraphEdge, PyGraphFragment,
-    PyGraphNode, PyGraphStats, PyKeyframe, PyLayeredSceneObject, PyLayoutResolution, PyLintIssue,
-    PyLintSeverity, PyNodeGraph, PyOperationLogEntry, PyOperationStatus, PyQuickFixCandidate,
-    PyResourceConfig, PyRouteTree, PySceneFrame, PyScriptBuilder, PySemanticValue, PyStoryGraph,
-    PyStoryNode, PyTimeline, PyTraceAtom, PyTraceEdge, PyTrack, PyUiThemeValidationReport,
-    PyVerificationRun, PyVnConfig, StepResult,
+    register_editor_classes, register_error_classes, vn_error_to_py, PyAudio,
+    PyAuthoringValidationReport, PyComposerPreviewSession, PyComposerSnapshot, PyDiagnosticTarget,
+    PyEngine, PyEvidenceTrace, PyExportPlan, PyExportReport, PyFieldPath, PyFragmentPort,
+    PyGraphEdge, PyGraphFragment, PyGraphNode, PyGraphStats, PyKeyframe, PyLayeredSceneObject,
+    PyLayoutResolution, PyLintIssue, PyLintSeverity, PyNodeGraph, PyOperationLogEntry,
+    PyOperationStatus, PyQuickFixCandidate, PyResourceConfig, PyRouteTree, PySceneFrame,
+    PyScriptBuilder, PySemanticValue, PyStoryGraph, PyStoryNode, PyTimeline, PyTraceAtom,
+    PyTraceEdge, PyTrack, PyUiThemeValidationReport, PyVerificationRun, PyVnConfig, StepResult,
 };
 
 #[pymodule]
 fn visual_novel_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_error_classes(m)?;
     m.add_class::<PyEngine>()?;
     m.add_class::<StepResult>()?;
     m.add_class::<PyAudio>()?;
@@ -40,6 +41,7 @@ fn visual_novel_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_editor_classes(m)?;
     m.add_function(wrap_pyfunction!(run_visual_novel, m)?)?;
     m.add_function(wrap_pyfunction!(validate_runtime_config, m)?)?;
+    m.add_function(wrap_pyfunction!(validate_script_schema_version, m)?)?;
     m.add_function(wrap_pyfunction!(export_bundle, m)?)?;
     m.add_function(wrap_pyfunction!(export_bundle_json, m)?)?;
     m.add_function(wrap_pyfunction!(plan_export, m)?)?;
@@ -52,9 +54,10 @@ fn visual_novel_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 #[pyfunction]
+#[pyo3(signature = (script_json, config=None))]
 fn validate_runtime_config(script_json: String, config: Option<PyVnConfig>) -> PyResult<()> {
     let script = ::visual_novel_engine::runtime::ScriptRaw::from_json(&script_json)
-        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+        .map_err(vn_error_to_py)?;
     ::visual_novel_engine::SecurityPolicy::default()
         .validate_raw(&script, ::visual_novel_engine::ResourceLimiter::default())
         .map_err(vn_error_to_py)?;
@@ -71,6 +74,20 @@ fn validate_runtime_config(script_json: String, config: Option<PyVnConfig>) -> P
 }
 
 #[pyfunction]
+#[pyo3(signature = (script_schema_version=None, policy="strict_current"))]
+fn validate_script_schema_version(
+    script_schema_version: Option<String>,
+    policy: &str,
+) -> PyResult<String> {
+    let policy = parse_schema_policy(policy)?;
+    let report =
+        ::visual_novel_engine::validate_script_schema(script_schema_version.as_deref(), policy)
+            .map_err(vn_error_to_py)?;
+    Ok(report.normalized_version)
+}
+
+#[pyfunction]
+#[pyo3(signature = (script_json, config=None))]
 fn run_visual_novel(script_json: String, config: Option<PyVnConfig>) -> PyResult<()> {
     validate_runtime_config(script_json, config)?;
     Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -233,6 +250,17 @@ fn parse_integrity(integrity: &str) -> PyResult<::visual_novel_engine::BundleInt
         "hmac_sha256" | "hmac-sha256" => Ok(::visual_novel_engine::BundleIntegrity::HmacSha256),
         other => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "unknown bundle integrity '{other}'"
+        ))),
+    }
+}
+
+fn parse_schema_policy(policy: &str) -> PyResult<::visual_novel_engine::SchemaPolicy> {
+    match policy.trim().to_ascii_lowercase().as_str() {
+        "strict_current" => Ok(::visual_novel_engine::SchemaPolicy::StrictCurrent),
+        "legacy_read_only" => Ok(::visual_novel_engine::SchemaPolicy::LegacyReadOnly),
+        "migrating" => Ok(::visual_novel_engine::SchemaPolicy::Migrating),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown schema policy '{other}'"
         ))),
     }
 }

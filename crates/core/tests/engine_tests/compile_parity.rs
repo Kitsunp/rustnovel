@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 #[test]
 fn renderer_formats_choice_and_dialogue() {
@@ -9,7 +9,7 @@ fn renderer_formats_choice_and_dialogue() {
         ResourceLimiter::default(),
     )
     .unwrap();
-    let _ = engine.step().unwrap();
+    engine.step().unwrap();
     let dialogue = engine.step_event().unwrap();
     let renderer = TextRenderer;
     let output = renderer.render(&dialogue, engine.visual_state());
@@ -79,7 +79,7 @@ fn collect_compiled_sequence(script: &ScriptRaw, choices: &[usize]) -> Vec<Strin
                 engine.choose(choice).unwrap();
             }
             _ => {
-                let _ = engine.step().unwrap();
+                engine.step().unwrap();
             }
         }
     }

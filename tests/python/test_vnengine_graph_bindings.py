@@ -32,7 +32,7 @@ class GuiBindingTests(unittest.TestCase):
     def test_run_visual_novel_rejects_invalid_json(self):
         import visual_novel_engine as vn
 
-        with self.assertRaises(ValueError):
+        with self.assertRaises(vn.VnValidationError):
             vn.run_visual_novel("{invalid", None)
 
     def test_gui_bindings_exist(self):

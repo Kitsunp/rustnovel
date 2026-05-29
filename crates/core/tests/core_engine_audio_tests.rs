@@ -130,7 +130,7 @@ fn choose_into_scene_queues_audio_once_from_core() {
     )
     .unwrap();
 
-    let _ = engine.step().unwrap();
+    engine.step().unwrap();
     let _choice = engine.choose(0).unwrap();
     let audio = engine.take_audio_commands();
 

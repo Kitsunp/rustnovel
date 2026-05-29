@@ -70,8 +70,8 @@ fn scene_patch_add_preserves_distinct_character_instances_by_expression() {
     )
     .expect("engine");
 
-    let _ = engine.step().expect("scene");
-    let _ = engine.step().expect("patch add");
+    engine.step().expect("scene");
+    engine.step().expect("patch add");
     let visual = engine.visual_state();
     assert_eq!(visual.characters.len(), 2);
     assert!(visual.characters.iter().any(|character| {
@@ -85,7 +85,7 @@ fn scene_patch_add_preserves_distinct_character_instances_by_expression() {
             && character.x == Some(300)
     }));
 
-    let _ = engine.step().expect("patch update same instance");
+    engine.step().expect("patch update same instance");
     let visual = engine.visual_state();
     assert_eq!(visual.characters.len(), 2);
     assert!(visual.characters.iter().any(|character| {
@@ -167,8 +167,8 @@ fn ambiguous_character_update_and_position_do_not_cross_update_duplicates() {
     )
     .expect("engine");
 
-    let _ = engine.step().expect("scene");
-    let _ = engine.step().expect("ambiguous patch update");
+    engine.step().expect("scene");
+    engine.step().expect("ambiguous patch update");
     let err = engine
         .step()
         .expect_err("ambiguous position update must be diagnosed");
@@ -246,9 +246,9 @@ fn single_character_update_and_position_still_apply() {
     )
     .expect("engine");
 
-    let _ = engine.step().expect("scene");
-    let _ = engine.step().expect("patch update");
-    let _ = engine.step().expect("position update");
+    engine.step().expect("scene");
+    engine.step().expect("patch update");
+    engine.step().expect("position update");
 
     let character = engine
         .visual_state()
@@ -307,8 +307,8 @@ fn patch_null_clears_background_and_music_and_patch_updates_precise_position() {
     )
     .expect("engine");
 
-    let _ = engine.step().expect("scene");
-    let _ = engine.step().expect("patch");
+    engine.step().expect("scene");
+    engine.step().expect("patch");
     let visual = engine.visual_state();
     assert_eq!(visual.background, None);
     assert_eq!(visual.music, None);

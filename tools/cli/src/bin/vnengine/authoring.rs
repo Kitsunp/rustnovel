@@ -428,8 +428,12 @@ fn load_authoring_document(path: &Path) -> Result<AuthoringDocument> {
     let source =
         std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     if source_looks_like_authoring_document(&source) {
-        return AuthoringDocument::from_json(&source)
-            .with_context(|| format!("parse authoring document {}", path.display()));
+        return AuthoringDocument::from_json(&source).with_context(|| {
+            format!(
+                "parse authoring document {} (legacy fallback disabled because authoring markers were found)",
+                path.display()
+            )
+        });
     }
     match AuthoringDocument::from_json(&source) {
         Ok(document) => Ok(document),

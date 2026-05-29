@@ -24,8 +24,8 @@ fn engine_records_dialogue_history() {
         ResourceLimiter::default(),
     )
     .unwrap();
-    let _ = engine.step().unwrap();
-    let _ = engine.step().unwrap();
+    engine.step().unwrap();
+    engine.step().unwrap();
     let history = &engine.state().history;
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].text.as_ref(), "Hola");
@@ -41,10 +41,10 @@ fn engine_marks_dialogue_as_read_by_ip() {
     )
     .unwrap();
 
-    let _ = engine.step().unwrap(); // scene (ip 0)
+    engine.step().unwrap(); // scene (ip 0)
     assert!(!engine.is_current_dialogue_read());
 
-    let _ = engine.step().unwrap(); // dialogue (ip 1) -> marked as read
+    engine.step().unwrap(); // dialogue (ip 1) -> marked as read
     assert!(engine.is_dialogue_read(1));
 }
 
@@ -57,8 +57,8 @@ fn engine_state_round_trip() {
         ResourceLimiter::default(),
     )
     .unwrap();
-    let _ = engine.step().unwrap();
-    let _ = engine.step().unwrap();
+    engine.step().unwrap();
+    engine.step().unwrap();
     let serialized = serde_json::to_string(engine.state()).unwrap();
     let parsed =
         serde_json::from_str::<visual_novel_engine::runtime::EngineState>(&serialized).unwrap();
@@ -75,8 +75,8 @@ fn engine_choice_jumps() {
         ResourceLimiter::default(),
     )
     .unwrap();
-    let _ = engine.step().unwrap();
-    let _ = engine.step().unwrap();
+    engine.step().unwrap();
+    engine.step().unwrap();
     let choice = engine.choose(0).unwrap();
     assert!(matches!(choice, EventCompiled::Choice(_)));
     let next = engine.step_event().unwrap();
@@ -97,9 +97,9 @@ fn engine_records_choice_history() {
     )
     .unwrap();
 
-    let _ = engine.step().unwrap(); // scene
-    let _ = engine.step().unwrap(); // dialogue
-    let _ = engine.choose(1).unwrap(); // choice -> start
+    engine.step().unwrap(); // scene
+    engine.step().unwrap(); // dialogue
+    engine.choose(1).unwrap(); // choice -> start
 
     let history = engine.choice_history();
     assert_eq!(history.len(), 1);
@@ -162,10 +162,10 @@ fn engine_signals_end_of_script() {
         ResourceLimiter::default(),
     )
     .unwrap();
-    let _ = engine.step().unwrap();
-    let _ = engine.step().unwrap();
+    engine.step().unwrap();
+    engine.step().unwrap();
     engine.choose(0).unwrap();
-    let _ = engine.step().unwrap();
+    engine.step().unwrap();
     let result = engine.step();
     assert!(matches!(
         result,

@@ -20,6 +20,6 @@ pub use engine::{PyEngine, StepResult};
 pub use graph::{PyGraphEdge, PyGraphNode, PyGraphStats, PyStoryGraph};
 pub use timeline::{PyKeyframe, PyTimeline, PyTrack};
 pub use types::{
-    vn_error_to_py, PyExportPlan, PyExportReport, PyLayoutResolution, PyResourceConfig,
-    PyRouteTree, PySceneFrame, PyUiThemeValidationReport, PyVnConfig,
+    register_error_classes, vn_error_to_py, PyExportPlan, PyExportReport, PyLayoutResolution,
+    PyResourceConfig, PyRouteTree, PySceneFrame, PyUiThemeValidationReport, PyVnConfig,
 };

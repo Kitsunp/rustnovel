@@ -236,7 +236,7 @@ function Invoke-PythonTestsJob {
     Invoke-CiStep "maturin develop" {
         & $pythonExe -m maturin develop --manifest-path crates/py/Cargo.toml --features extension-module
     }
-    Invoke-CiStep "python unittest" {
+    Invoke-CiStep "python pytest" {
         if (Test-IsWindowsHost) {
             $builtDll = Join-Path "target/debug" "visual_novel_engine.dll"
             $importablePyd = Join-Path "target/debug" "visual_novel_engine.pyd"
@@ -249,7 +249,7 @@ function Invoke-PythonTestsJob {
         } else {
             $env:PYTHONPATH = "python"
         }
-        & $pythonExe -m unittest discover -s tests/python -p "test_*.py" -v
+        & $pythonExe -m pytest tests/python/ -v --tb=short
     }
 }
 

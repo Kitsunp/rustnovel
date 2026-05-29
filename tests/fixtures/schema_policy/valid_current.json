@@ -1,0 +1,13 @@
+{
+  "script_schema_version": "1.0",
+  "events": [
+    {
+      "type": "dialogue",
+      "speaker": "Narrator",
+      "text": "Ready"
+    }
+  ],
+  "labels": {
+    "start": 0
+  }
+}

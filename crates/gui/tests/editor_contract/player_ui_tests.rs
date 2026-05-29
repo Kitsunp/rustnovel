@@ -53,7 +53,7 @@ fn skip_read_only_only_skips_seen_dialogue() {
 
     assert!(!state.should_skip_current(&event, &engine));
 
-    let _ = engine.step().expect("step dialogue");
+    engine.step().expect("step dialogue");
     engine.jump_to_label("start").expect("restart to start");
     let event = engine.current_event().expect("event at start again");
 

@@ -1,0 +1,12 @@
+{
+  "events": [
+    {
+      "type": "dialogue",
+      "speaker": "Narrator",
+      "text": "Legacy"
+    }
+  ],
+  "labels": {
+    "start": 0
+  }
+}

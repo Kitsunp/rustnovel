@@ -1,4 +1,3 @@
-use pyo3::exceptions::PyValueError;
 use visual_novel_engine::authoring::composer::{
     apply_layer_overrides, compose_scene_snapshot as build_composer_snapshot,
     list_layered_objects as collect_layered_objects,
@@ -9,7 +8,7 @@ use super::super::api_v2::{
     stage_layer_names, PyComposerPreviewSession, PyComposerSnapshot, PyLayeredSceneObject,
     PyOperationLogEntry, PyVerificationRun,
 };
-use super::PyNodeGraph;
+use super::{py_command_error, PyNodeGraph};
 
 impl PyNodeGraph {
     pub(super) fn py_operation_log(&self) -> Vec<PyOperationLogEntry> {
@@ -99,7 +98,7 @@ impl PyNodeGraph {
             object_id: object_id.to_string(),
             visible,
         })
-        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        .map_err(|err| py_command_error("set_layer_visible failed", err))?;
         Ok(())
     }
 
@@ -120,7 +119,7 @@ impl PyNodeGraph {
             object_id: object_id.to_string(),
             locked,
         })
-        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        .map_err(|err| py_command_error("set_layer_locked failed", err))?;
         Ok(())
     }
 
@@ -130,14 +129,14 @@ impl PyNodeGraph {
         x: i32,
         y: i32,
         scale: Option<f32>,
-    ) -> bool {
+    ) -> pyo3::PyResult<bool> {
         if self
             .session
             .read_model()
             .composer_layer(object_id)
             .is_some_and(|layer| layer.locked || !layer.visible)
         {
-            return false;
+            return Ok(false);
         }
         self.apply_authoring_command(AuthoringCommand::MoveLayer {
             object_id: object_id.to_string(),
@@ -145,7 +144,8 @@ impl PyNodeGraph {
             y,
             scale,
         })
-        .is_ok()
+        .map(|_| true)
+        .map_err(|err| py_command_error("move_scene_object failed", err))
     }
 
     pub(super) fn py_preview_start_from_node(
@@ -155,21 +155,32 @@ impl PyNodeGraph {
         PyComposerPreviewSession::start(&self.inner, node_id)
     }
 
-    pub(super) fn py_edit_dialogue(&mut self, node_id: u32, speaker: &str, text: &str) -> bool {
+    pub(super) fn py_edit_dialogue(
+        &mut self,
+        node_id: u32,
+        speaker: &str,
+        text: &str,
+    ) -> pyo3::PyResult<bool> {
         self.apply_authoring_command(AuthoringCommand::EditDialogue {
             node_id,
             speaker: speaker.to_string(),
             text: text.to_string(),
         })
-        .is_ok()
+        .map(|_| true)
+        .map_err(|err| py_command_error("edit_dialogue failed", err))
     }
 
-    pub(super) fn py_edit_choice_prompt(&mut self, node_id: u32, prompt: &str) -> bool {
+    pub(super) fn py_edit_choice_prompt(
+        &mut self,
+        node_id: u32,
+        prompt: &str,
+    ) -> pyo3::PyResult<bool> {
         self.apply_authoring_command(AuthoringCommand::EditChoicePrompt {
             node_id,
             prompt: prompt.to_string(),
         })
-        .is_ok()
+        .map(|_| true)
+        .map_err(|err| py_command_error("edit_choice_prompt failed", err))
     }
 
     pub(super) fn py_edit_choice_option_text(
@@ -177,13 +188,14 @@ impl PyNodeGraph {
         node_id: u32,
         option_index: usize,
         text: &str,
-    ) -> bool {
+    ) -> pyo3::PyResult<bool> {
         self.apply_authoring_command(AuthoringCommand::EditChoiceOptionText {
             node_id,
             option_index,
             text: text.to_string(),
         })
-        .is_ok()
+        .map(|_| true)
+        .map_err(|err| py_command_error("edit_choice_option_text failed", err))
     }
 
     pub(super) fn py_reorder_choice_option(
@@ -191,13 +203,14 @@ impl PyNodeGraph {
         node_id: u32,
         from_index: usize,
         to_index: usize,
-    ) -> bool {
+    ) -> pyo3::PyResult<bool> {
         self.apply_authoring_command(AuthoringCommand::ReorderChoiceOption {
             node_id,
             from_index,
             to_index,
         })
-        .is_ok()
+        .map(|_| true)
+        .map_err(|err| py_command_error("reorder_choice_option failed", err))
     }
 
     pub(super) fn py_set_choice_option_target(
@@ -205,18 +218,19 @@ impl PyNodeGraph {
         node_id: u32,
         option_index: usize,
         target_node_id: Option<u32>,
-    ) -> bool {
+    ) -> pyo3::PyResult<bool> {
         let Some(StoryNode::Choice { options, .. }) = self.inner.get_node(node_id) else {
-            return false;
+            return Ok(false);
         };
         if option_index >= options.len() {
-            return false;
+            return Ok(false);
         }
         self.apply_authoring_command(AuthoringCommand::SetChoiceOptionTarget {
             node_id,
             option_index,
             target_node_id,
         })
-        .is_ok()
+        .map(|_| true)
+        .map_err(|err| py_command_error("set_choice_option_target failed", err))
     }
 }

@@ -1,4 +1,4 @@
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use std::collections::BTreeMap;
 use visual_novel_engine::authoring::composer::{BackgroundFit, LayerOverride};
@@ -36,6 +36,10 @@ mod internal;
 #[path = "editor_node_graph/misc.rs"]
 mod misc;
 
+fn py_command_error(action: &str, err: String) -> PyErr {
+    PyRuntimeError::new_err(format!("{action}: {err}"))
+}
+
 #[pymethods]
 impl PyNodeGraph {
     #[new]
@@ -51,7 +55,7 @@ impl PyNodeGraph {
             node,
             position: AuthoringPosition::new(x, y),
         })
-        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        .map_err(|err| py_command_error("add_node failed", err))?;
         Ok(node_id)
     }
 
@@ -61,7 +65,7 @@ impl PyNodeGraph {
             from_port: 0,
             to: to_id,
         })
-        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        .map_err(|err| py_command_error("connect failed", err))?;
         Ok(())
     }
 
@@ -71,7 +75,7 @@ impl PyNodeGraph {
             from_port,
             to: to_id,
         })
-        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+        .map_err(|err| py_command_error("connect_port failed", err))?;
         Ok(())
     }
 
@@ -123,12 +127,12 @@ impl PyNodeGraph {
             branch_position: branch_pos,
         })
         .map(|_| true)
-        .map_err(|err| PyValueError::new_err(err.to_string()))
+        .map_err(|err| py_command_error("connect_or_branch failed", err))
     }
 
     fn remove_node(&mut self, node_id: u32) -> PyResult<()> {
         self.apply_authoring_command(AuthoringCommand::RemoveNode { node_id })
-            .map_err(|err| PyValueError::new_err(err.to_string()))?;
+            .map_err(|err| py_command_error("remove_node failed", err))?;
         Ok(())
     }
 
@@ -251,10 +255,15 @@ impl PyNodeGraph {
         self.session.read_model().nodes_by_text(query)
     }
 
-    fn create_fragment(&mut self, fragment_id: String, title: String, node_ids: Vec<u32>) -> bool {
+    fn create_fragment(
+        &mut self,
+        fragment_id: String,
+        title: String,
+        node_ids: Vec<u32>,
+    ) -> PyResult<bool> {
         self.py_create_fragment(fragment_id, title, node_ids)
     }
-    fn remove_fragment(&mut self, fragment_id: &str) -> bool {
+    fn remove_fragment(&mut self, fragment_id: &str) -> PyResult<bool> {
         self.py_remove_fragment(fragment_id)
     }
     fn list_fragments(&self) -> Vec<PyGraphFragment> {
@@ -263,10 +272,10 @@ impl PyNodeGraph {
     fn get_fragment(&self, fragment_id: &str) -> Option<PyGraphFragment> {
         self.py_get_fragment(fragment_id)
     }
-    fn enter_fragment(&mut self, fragment_id: &str) -> bool {
+    fn enter_fragment(&mut self, fragment_id: &str) -> PyResult<bool> {
         self.py_enter_fragment(fragment_id)
     }
-    fn leave_fragment(&mut self) -> bool {
+    fn leave_fragment(&mut self) -> PyResult<bool> {
         self.py_leave_fragment()
     }
     fn active_fragment(&self) -> Option<String> {
@@ -280,7 +289,7 @@ impl PyNodeGraph {
         self.py_fragment_ports(fragment_id)
     }
 
-    fn refresh_fragment_ports(&mut self, fragment_id: &str) -> bool {
+    fn refresh_fragment_ports(&mut self, fragment_id: &str) -> PyResult<bool> {
         self.py_refresh_fragment_ports(fragment_id)
     }
 
@@ -325,19 +334,35 @@ impl PyNodeGraph {
     }
 
     #[pyo3(signature = (object_id, x, y, scale=None))]
-    fn move_scene_object(&mut self, object_id: &str, x: i32, y: i32, scale: Option<f32>) -> bool {
+    fn move_scene_object(
+        &mut self,
+        object_id: &str,
+        x: i32,
+        y: i32,
+        scale: Option<f32>,
+    ) -> PyResult<bool> {
         self.py_move_scene_object(object_id, x, y, scale)
     }
-    fn edit_dialogue(&mut self, node_id: u32, speaker: &str, text: &str) -> bool {
+    fn edit_dialogue(&mut self, node_id: u32, speaker: &str, text: &str) -> PyResult<bool> {
         self.py_edit_dialogue(node_id, speaker, text)
     }
-    fn edit_choice_prompt(&mut self, node_id: u32, prompt: &str) -> bool {
+    fn edit_choice_prompt(&mut self, node_id: u32, prompt: &str) -> PyResult<bool> {
         self.py_edit_choice_prompt(node_id, prompt)
     }
-    fn edit_choice_option_text(&mut self, node_id: u32, option_index: usize, text: &str) -> bool {
+    fn edit_choice_option_text(
+        &mut self,
+        node_id: u32,
+        option_index: usize,
+        text: &str,
+    ) -> PyResult<bool> {
         self.py_edit_choice_option_text(node_id, option_index, text)
     }
-    fn reorder_choice_option(&mut self, node_id: u32, from_index: usize, to_index: usize) -> bool {
+    fn reorder_choice_option(
+        &mut self,
+        node_id: u32,
+        from_index: usize,
+        to_index: usize,
+    ) -> PyResult<bool> {
         self.py_reorder_choice_option(node_id, from_index, to_index)
     }
     #[pyo3(signature = (node_id, option_index, target_node_id=None))]
@@ -346,7 +371,7 @@ impl PyNodeGraph {
         node_id: u32,
         option_index: usize,
         target_node_id: Option<u32>,
-    ) -> bool {
+    ) -> PyResult<bool> {
         self.py_set_choice_option_target(node_id, option_index, target_node_id)
     }
 

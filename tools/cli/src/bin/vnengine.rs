@@ -73,8 +73,11 @@ enum Command {
         format: Option<TraceFormat>,
         #[arg(short, long)]
         output: PathBuf,
-        /// Return a failing exit code when engine step/choose/resume fails.
+        /// Continue after an engine error and write a trace envelope marked as partial.
         #[arg(long, default_value_t = false)]
+        allow_partial_trace: bool,
+        /// Deprecated compatibility flag: trace is strict by default now.
+        #[arg(long, hide = true, default_value_t = false)]
         fail_on_engine_error: bool,
     },
     /// Print the native route tree for a script.
@@ -293,6 +296,8 @@ impl TraceFormat {
 struct TraceEnvelope {
     trace_format_version: u16,
     script_schema_version: String,
+    partial: bool,
+    stopped_reason: Option<String>,
     trace: UiTrace,
 }
 
@@ -450,15 +455,17 @@ fn run_command(cli: Cli, json_output: bool) -> Result<Option<serde_json::Value>>
             steps,
             format,
             output,
-            fail_on_engine_error,
+            allow_partial_trace,
+            fail_on_engine_error: _,
         } => {
-            trace_script(&script, steps, format, &output, fail_on_engine_error)?;
+            trace_script(&script, steps, format, &output, allow_partial_trace)?;
             Ok(Some(serde_json::json!({
                 "schema": "vnengine.cli.trace.v1",
                 "script": normalize_cli_path(&script),
                 "output": normalize_cli_path(&output),
                 "steps_requested": steps,
-                "fail_on_engine_error": fail_on_engine_error
+                "allow_partial_trace": allow_partial_trace,
+                "fail_on_engine_error": !allow_partial_trace
             })))
         }
         Command::RouteTree { script } => route_tree_command(&script),
@@ -898,7 +905,7 @@ fn trace_script(
     steps: usize,
     requested_format: Option<TraceFormat>,
     output: &Path,
-    fail_on_engine_error: bool,
+    allow_partial_trace: bool,
 ) -> Result<()> {
     let format = requested_format.unwrap_or_else(|| TraceFormat::inferred_from_output(output));
     if !format.matches_output_extension(output) {
@@ -914,15 +921,23 @@ fn trace_script(
         ResourceLimiter::default(),
     )?;
     let mut trace = UiTrace::new();
+    let mut partial = false;
+    let mut stopped_reason = None;
     for step in 0..steps {
+        let position = engine.state().position as usize;
+        if position == engine.script().events.len() {
+            break;
+        }
         let event = match engine.current_event() {
             Ok(event) => event,
-            Err(err) => {
-                if fail_on_engine_error {
-                    return Err(err).context("trace current_event");
-                }
-                eprintln!("trace stopped at step {step}: current_event failed: {err}");
+            Err(err) if allow_partial_trace => {
+                partial = true;
+                stopped_reason = Some(format!("current_event failed at step {step}: {err}"));
                 break;
+            }
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("trace current_event failed at step {step}"));
             }
         };
         let view = visual_novel_engine::runtime::TraceUiView::from_event(&event);
@@ -937,16 +952,19 @@ fn trace_script(
             _ => engine.step().map(|_| ()),
         };
         if let Err(err) = advance_result {
-            if fail_on_engine_error {
-                return Err(err).with_context(|| format!("trace advance step {step}"));
+            if allow_partial_trace {
+                partial = true;
+                stopped_reason = Some(format!("advance failed at step {step}: {err}"));
+                break;
             }
-            eprintln!("trace stopped at step {step}: engine advance failed: {err}");
-            break;
+            return Err(err).with_context(|| format!("trace advance failed at step {step}"));
         }
     }
     let envelope = TraceEnvelope {
         trace_format_version: 1,
         script_schema_version: SCRIPT_SCHEMA_VERSION.to_string(),
+        partial,
+        stopped_reason,
         trace,
     };
     let content = match format {

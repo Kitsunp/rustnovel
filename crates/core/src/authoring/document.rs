@@ -99,9 +99,41 @@ impl AuthoringDocument {
 
 pub fn source_looks_like_authoring_document(source: &str) -> bool {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
-        return false;
+        return source_contains_authoring_markers(source);
     };
     value.as_object().is_some_and(|object| {
-        object.contains_key("authoring_schema_version") || object.contains_key("graph")
+        object.contains_key("authoring_schema_version")
+            || object.contains_key("authoring_document_version")
+            || object.contains_key("authoring")
+            || object.contains_key("editor")
+            || object.contains_key("editor_metadata")
+            || object.contains_key("graph")
+            || object.contains_key("composer_layer_overrides")
+            || object.contains_key("composer_background_fit_overrides")
+            || object.contains_key("operation_log")
+            || object.contains_key("verification_runs")
+            || object.contains_key("nodes")
+            || object.contains_key("connections")
+            || object.get("graph").is_some_and(|graph| {
+                graph.get("nodes").is_some() || graph.get("connections").is_some()
+            })
     })
+}
+
+fn source_contains_authoring_markers(source: &str) -> bool {
+    [
+        "authoring_schema_version",
+        "authoring_document_version",
+        "editor_metadata",
+        "\"editor\"",
+        "\"graph\"",
+        "\"nodes\"",
+        "\"connections\"",
+        "composer_layer_overrides",
+        "composer_background_fit_overrides",
+        "operation_log",
+        "verification_runs",
+    ]
+    .iter()
+    .any(|marker| source.contains(marker))
 }

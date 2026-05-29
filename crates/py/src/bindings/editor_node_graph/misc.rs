@@ -7,7 +7,7 @@ use visual_novel_engine::authoring::{
 
 use super::super::diagnostics::PyQuickFixCandidate;
 use super::super::support::select_fix_candidate;
-use super::PyNodeGraph;
+use super::{py_command_error, PyNodeGraph};
 
 impl PyNodeGraph {
     pub(super) fn py_fix_candidates(
@@ -40,7 +40,7 @@ impl PyNodeGraph {
             issue: Box::new(issue.clone()),
             fix_id: fix_id.clone(),
         })
-        .map_err(PyValueError::new_err)?;
+        .map_err(|err| py_command_error("autofix_issue failed", err))?;
         Ok(Some(fix_id))
     }
 
@@ -125,7 +125,7 @@ impl PyNodeGraph {
                     issue: Box::new(issue),
                     fix_id: candidate.fix_id.to_string(),
                 })
-                .map_err(PyValueError::new_err)?;
+                .map_err(|err| py_command_error("autofix pass failed", err))?;
                 applied += 1;
                 applied_this_round = true;
                 break;

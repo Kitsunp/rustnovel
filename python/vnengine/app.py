@@ -8,6 +8,18 @@ from .engine import Engine
 from .types import Script
 
 
+def _is_script_exhausted(exc: BaseException) -> bool:
+    try:
+        import visual_novel_engine as native
+    except ImportError:
+        native = None
+
+    end_of_script_error = getattr(native, "VnEndOfScriptError", None)
+    if end_of_script_error is not None and isinstance(exc, end_of_script_error):
+        return True
+    return isinstance(exc, ValueError) and "script exhausted" in str(exc)
+
+
 class EngineApp:
     """Drive an engine until completion.
 
@@ -35,8 +47,8 @@ class EngineApp:
         while True:
             try:
                 event = self.engine.current_event()
-            except ValueError as exc:
-                if "script exhausted" not in str(exc):
+            except Exception as exc:
+                if not _is_script_exhausted(exc):
                     raise
                 break
             events.append(event)

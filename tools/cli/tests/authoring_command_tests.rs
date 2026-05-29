@@ -8,6 +8,7 @@ use visual_novel_engine::{
         composer::LayerOverride, AuthoringDocument, AuthoringPosition, NodeGraph, StoryNode,
     },
     runtime::{CharacterPlacementRaw, DialogueRaw, EventRaw, SceneUpdateRaw, ScriptRaw},
+    SCRIPT_SCHEMA_VERSION,
 };
 
 fn write_script(script: ScriptRaw) -> (TempDir, std::path::PathBuf) {
@@ -363,6 +364,43 @@ fn compile_and_trace_accept_authoring_document() {
 }
 
 #[test]
+fn corrupt_authoring_document_does_not_fall_back_to_legacy_loader() {
+    let tmp = TempDir::new().expect("temp dir");
+    let path = tmp.path().join("broken.vnauthoring");
+    fs::write(
+        &path,
+        include_str!("../../../tests/fixtures/schema_policy/authoring_corrupt.vnauthoring"),
+    )
+    .expect("corrupt authoring fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("authoring-validate")
+        .arg(path.as_os_str())
+        .output()
+        .expect("run authoring validate");
+
+    assert!(
+        !output.status.success(),
+        "corrupt authoring must fail\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("parse authoring document"),
+        "stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("invalid authoring document json"),
+        "original authoring parse error must be visible: {stderr}"
+    );
+    assert!(
+        !stderr.contains("legacy runtime script"),
+        "authoring corruption must not be blamed on legacy loader: {stderr}"
+    );
+}
+
+#[test]
 fn cli_trace_json_contract() {
     let (_tmp, path) = write_authoring_document();
     let json_path = path.with_file_name("trace.json");
@@ -423,6 +461,118 @@ fn cli_trace_json_contract() {
         "YAML output to .json must not succeed silently"
     );
     assert!(String::from_utf8_lossy(&mismatch.stderr).contains("incompatible"));
+}
+
+#[test]
+fn cli_trace_fails_on_engine_error_without_writing_valid_trace() {
+    let tmp = TempDir::new().expect("temp dir");
+    let script_path = tmp.path().join("runtime_error.json");
+    let trace_path = tmp.path().join("trace.json");
+    fs::write(
+        &script_path,
+        format!(
+            r#"{{
+              "script_schema_version": "{SCRIPT_SCHEMA_VERSION}",
+              "events": [
+                {{
+                  "type":"scene",
+                  "background":null,
+                  "music":null,
+                  "characters":[
+                    {{"name":"Ava","expression":null,"position":null}},
+                    {{"name":"Ava","expression":null,"position":null}}
+                  ]
+                }},
+                {{"type":"set_character_position","name":"Ava","x":10,"y":20,"scale":1.0}}
+              ],
+              "labels": {{"start": 0}}
+            }}"#
+        ),
+    )
+    .expect("runtime error fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("trace")
+        .arg(script_path.as_os_str())
+        .arg("--output")
+        .arg(trace_path.as_os_str())
+        .output()
+        .expect("run trace");
+
+    assert!(
+        !output.status.success(),
+        "trace must fail on engine errors\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("trace advance failed at step 1"),
+        "stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("ambiguous character position update for 'Ava'"),
+        "stderr={stderr}"
+    );
+    assert!(
+        !trace_path.exists(),
+        "strict trace must not write a valid-looking partial trace"
+    );
+}
+
+#[test]
+fn cli_trace_partial_mode_marks_partial_trace() {
+    let tmp = TempDir::new().expect("temp dir");
+    let script_path = tmp.path().join("runtime_error.json");
+    let trace_path = tmp.path().join("trace.json");
+    fs::write(
+        &script_path,
+        format!(
+            r#"{{
+              "script_schema_version": "{SCRIPT_SCHEMA_VERSION}",
+              "events": [
+                {{
+                  "type":"scene",
+                  "background":null,
+                  "music":null,
+                  "characters":[
+                    {{"name":"Ava","expression":null,"position":null}},
+                    {{"name":"Ava","expression":null,"position":null}}
+                  ]
+                }},
+                {{"type":"set_character_position","name":"Ava","x":10,"y":20,"scale":1.0}}
+              ],
+              "labels": {{"start": 0}}
+            }}"#
+        ),
+    )
+    .expect("runtime error fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("trace")
+        .arg(script_path.as_os_str())
+        .arg("--allow-partial-trace")
+        .arg("--output")
+        .arg(trace_path.as_os_str())
+        .output()
+        .expect("run partial trace");
+
+    assert!(
+        output.status.success(),
+        "explicit partial trace may succeed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&trace_path).expect("partial trace"))
+            .expect("partial trace json");
+    assert_eq!(parsed["partial"], true);
+    assert!(
+        parsed["stopped_reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("advance failed at step 1")),
+        "partial trace must explain stop: {parsed}"
+    );
 }
 
 #[test]

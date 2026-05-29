@@ -179,4 +179,4 @@ jobs:
       - name: Run Python tests
         run: |
           source .venv/bin/activate
-          PYTHONPATH=python python -m pytest tests/python -q
+          PYTHONPATH=python python -m pytest tests/python/ -v --tb=short

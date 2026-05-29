@@ -151,12 +151,35 @@ def normalize_character_patches(
 
 
 def _validate_schema_version(raw: Any, policy: SchemaPolicy) -> str:
+    if raw is not None and not isinstance(raw, str):
+        raise ValueError("script_schema_version must be a string")
+    native_validator = _native_schema_validator()
+    if native_validator is not None:
+        try:
+            return str(native_validator(raw, policy))
+        except Exception as exc:
+            raise ValueError(str(exc)) from exc
+    return _validate_schema_version_fallback(raw, policy)
+
+
+def _native_schema_validator() -> Optional[
+    Callable[[Optional[str], SchemaPolicy], str]
+]:
+    try:
+        import visual_novel_engine as native
+    except ImportError:
+        return None
+    validator = getattr(native, "validate_script_schema_version", None)
+    if callable(validator):
+        return validator
+    return None
+
+
+def _validate_schema_version_fallback(raw: Optional[str], policy: SchemaPolicy) -> str:
     if raw is None:
         if policy in {LEGACY_READ_ONLY, MIGRATING}:
             return SCRIPT_SCHEMA_VERSION
         raise ValueError(f"missing script_schema_version under {policy}")
-    if not isinstance(raw, str):
-        raise ValueError("script_schema_version must be a string")
     if raw == SCRIPT_SCHEMA_VERSION:
         return raw
     if policy in {LEGACY_READ_ONLY, MIGRATING} and _is_legacy_schema_version(raw):

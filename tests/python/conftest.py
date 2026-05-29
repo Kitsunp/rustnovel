@@ -16,6 +16,15 @@ def pytest_sessionstart(session):
     _ensure_local_native_module(session.config)
 
 
+def pytest_configure(config):
+    config._vnengine_pytest_conftest_loaded = True
+
+
+@pytest.fixture
+def vnengine_pytest_conftest_loaded(request):
+    return bool(getattr(request.config, "_vnengine_pytest_conftest_loaded", False))
+
+
 def pytest_collection_modifyitems(config, items):
     _ensure_local_native_module(config)
     skipped = [

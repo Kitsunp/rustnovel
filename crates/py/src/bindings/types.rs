@@ -1,13 +1,60 @@
+use pyo3::create_exception;
+use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use visual_novel_engine::{
     ExportBundleReport, ExportPlan, LayoutResolution, ResourceLimiter, RouteTree, SceneFrame,
-    UiThemeValidationReport, VnError,
+    UiThemeValidationReport, VnError as CoreVnError,
 };
 
-pub fn vn_error_to_py(err: VnError) -> PyErr {
+create_exception!(visual_novel_engine, VnError, PyException);
+create_exception!(visual_novel_engine, VnValidationError, VnError);
+create_exception!(visual_novel_engine, VnSecurityPolicyError, VnError);
+create_exception!(visual_novel_engine, VnResourceLimitError, VnError);
+create_exception!(visual_novel_engine, VnEndOfScriptError, VnError);
+
+pub fn register_error_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = m.py();
+    m.add("VnError", py.get_type::<VnError>())?;
+    m.add("VnValidationError", py.get_type::<VnValidationError>())?;
+    m.add(
+        "VnSecurityPolicyError",
+        py.get_type::<VnSecurityPolicyError>(),
+    )?;
+    m.add(
+        "VnResourceLimitError",
+        py.get_type::<VnResourceLimitError>(),
+    )?;
+    m.add("VnEndOfScriptError", py.get_type::<VnEndOfScriptError>())?;
+    Ok(())
+}
+
+pub fn vn_error_to_py(err: CoreVnError) -> PyErr {
+    let kind = match &err {
+        CoreVnError::InvalidScript(_)
+        | CoreVnError::InvalidChoice
+        | CoreVnError::Serialization { .. }
+        | CoreVnError::BinaryFormat(_) => VnErrorKind::Validation,
+        CoreVnError::SecurityPolicy(_) => VnErrorKind::SecurityPolicy,
+        CoreVnError::ResourceLimit(_) => VnErrorKind::ResourceLimit,
+        CoreVnError::EndOfScript => VnErrorKind::EndOfScript,
+    };
     let report = miette::Report::new(err);
-    pyo3::exceptions::PyValueError::new_err(report.to_string())
+    let message = report.to_string();
+    match kind {
+        VnErrorKind::Validation => VnValidationError::new_err(message),
+        VnErrorKind::SecurityPolicy => VnSecurityPolicyError::new_err(message),
+        VnErrorKind::ResourceLimit => VnResourceLimitError::new_err(message),
+        VnErrorKind::EndOfScript => VnEndOfScriptError::new_err(message),
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum VnErrorKind {
+    Validation,
+    SecurityPolicy,
+    ResourceLimit,
+    EndOfScript,
 }
 
 #[pyclass(name = "ResourceConfig")]

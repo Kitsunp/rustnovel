@@ -4,8 +4,11 @@ import sys
 import types
 import unittest
 import ast
+import inspect
 from contextlib import contextmanager
 from pathlib import Path
+
+import pytest
 
 from vnengine.native import call_native_method, load_native_engine
 from vnengine.types import SCRIPT_SCHEMA_VERSION, SUPPORTED_EVENT_TYPES
@@ -63,6 +66,14 @@ class NativeBindingsTests(unittest.TestCase):
                 {"type": "dialogue", "speaker": "Ava", "text": "Hola"},
             ],
             "labels": {"start": 0},
+        }
+        return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+    def _script_json(self, events, labels=None):
+        payload = {
+            "script_schema_version": SCRIPT_SCHEMA_VERSION,
+            "events": events,
+            "labels": labels or {"start": 0},
         }
         return json.dumps(payload, separators=(",", ":"), sort_keys=True)
 
@@ -186,6 +197,80 @@ class NativeBindingsTests(unittest.TestCase):
         audio.stop_all(fade_out=0.1)
         audio.play_sfx("click")
 
+    def test_asset_cache_control_stats_and_eviction(self):
+        engine = self.native.Engine(
+            self._script_json(
+                [
+                    {
+                        "type": "scene",
+                        "background": "bg/room.png",
+                        "music": "audio/theme.ogg",
+                    },
+                    {"type": "dialogue", "speaker": "Ava", "text": "Hola"},
+                ]
+            )
+        )
+        for name in (
+            "cache_asset",
+            "get_cached_asset",
+            "invalidate_cached_asset",
+            "clear_asset_cache",
+            "evict_unused_assets",
+            "asset_cache_stats",
+        ):
+            self.assertTrue(hasattr(engine, name), f"missing cache API {name}")
+
+        engine.set_prefetch_depth(1)
+        self.assertEqual(
+            set(engine.prefetch_assets_hint()), {"bg/room.png", "audio/theme.ogg"}
+        )
+
+        stats = engine.asset_cache_stats()
+        self.assertEqual(stats["total_cached_assets"], 0)
+        self.assertEqual(stats["allocated_bytes"], 0)
+        self.assertEqual(stats["cache_hits"], 0)
+        self.assertEqual(stats["cache_misses"], 0)
+        self.assertEqual(stats["hit_rate"], 0.0)
+
+        engine.cache_asset("bg/room.png", b"abc")
+        engine.cache_asset("stale/old.png", b"zz")
+        stats = engine.asset_cache_stats()
+        self.assertEqual(stats["total_cached_assets"], 2)
+        self.assertEqual(stats["allocated_bytes"], 5)
+
+        self.assertEqual(engine.get_cached_asset("bg/room.png"), b"abc")
+        self.assertIsNone(engine.get_cached_asset("missing.png"))
+        stats = engine.asset_cache_stats()
+        self.assertEqual(stats["cache_hits"], 1)
+        self.assertEqual(stats["cache_misses"], 1)
+        self.assertEqual(stats["hit_rate"], 0.5)
+
+        evicted = engine.evict_unused_assets()
+        self.assertEqual(evicted, 1)
+        self.assertEqual(engine.asset_cache_stats()["total_cached_assets"], 1)
+        self.assertEqual(engine.get_cached_asset("bg/room.png"), b"abc")
+        self.assertIsNone(engine.get_cached_asset("stale/old.png"))
+
+        self.assertTrue(engine.invalidate_cached_asset("bg/room.png"))
+        self.assertFalse(engine.invalidate_cached_asset("bg/room.png"))
+        self.assertEqual(engine.asset_cache_stats()["total_cached_assets"], 0)
+
+        engine.cache_asset("audio/theme.ogg", b"theme")
+        usage = engine.get_memory_usage()
+        self.assertEqual(usage["asset_cache_entries"], 1)
+        self.assertEqual(usage["asset_cache_allocated_bytes"], 5)
+        engine.clear_asset_cache()
+        self.assertEqual(engine.asset_cache_stats()["total_cached_assets"], 0)
+
+    def test_asset_cache_budget_eviction_stabilizes_memory(self):
+        engine = self.native.Engine(self._dialogue_script_json())
+        engine.set_resources(self.native.ResourceConfig(max_texture_memory=10))
+        engine.cache_asset("asset/a.bin", b"123456")
+        engine.cache_asset("asset/b.bin", b"abcdef")
+        stats = engine.asset_cache_stats()
+        self.assertLessEqual(stats["allocated_bytes"], 10)
+        self.assertEqual(stats["total_cached_assets"], 1)
+
     def test_native_event_contract_matches_python_contract(self):
         engine = self.native.Engine(self._dialogue_script_json())
         if not hasattr(engine, "supported_event_types"):
@@ -226,6 +311,18 @@ class NativeBindingsTests(unittest.TestCase):
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0]["option_index"], 0)
         self.assertEqual(history[0]["option_text"], "Volver")
+
+    def test_authoring_command_bus_errors_raise_python_exception(self):
+        if not hasattr(self.native, "NodeGraph"):
+            self.fail("Native module without NodeGraph API")
+        graph = self.native.NodeGraph()
+
+        with self.assertRaises(RuntimeError) as ctx:
+            graph.edit_dialogue(999, "Ava", "Missing node")
+
+        message = str(ctx.exception)
+        self.assertIn("edit_dialogue failed", message)
+        self.assertIn("999", message)
 
     def test_typed_route_scene_theme_and_layout_api_objects(self):
         for name in (
@@ -290,33 +387,153 @@ class NativeBindingsTests(unittest.TestCase):
             Path(__file__).resolve().parents[2] / "python" / "visual_novel_engine.pyi"
         )
         module_ast = ast.parse(stub_path.read_text(encoding="utf-8"))
-        stub_public = {
+        all_stub_classes = {
+            node.name: node
+            for node in module_ast.body
+            if isinstance(node, ast.ClassDef)
+        }
+        stub_classes = {
+            name: node
+            for name, node in all_stub_classes.items()
+            if not name.startswith("_")
+        }
+        stub_functions = {
             node.name
             for node in module_ast.body
-            if isinstance(node, (ast.ClassDef, ast.FunctionDef))
-            and not node.name.startswith("_")
+            if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")
         }
+        stub_public = set(stub_classes) | stub_functions
         native_public = {
             name
-            for name in dir(self.native)
+            for name, value in inspect.getmembers(self.native)
             if not name.startswith("_")
-            and name not in {"PyEngine", "visual_novel_engine"}
+            and name != "visual_novel_engine"
+            and (
+                inspect.isclass(value)
+                or inspect.isbuiltin(value)
+                or inspect.isfunction(value)
+            )
         }
-        missing_from_native = sorted(stub_public - native_public - {"PyEngine"})
+        missing_from_native = sorted(stub_public - native_public)
         missing_from_stub = sorted(native_public - stub_public)
         self.assertEqual(missing_from_native, [])
         self.assertEqual(missing_from_stub, [])
 
-        class_defs = {
-            node.name: node
-            for node in module_ast.body
-            if isinstance(node, ast.ClassDef) and hasattr(self.native, node.name)
-        }
-        for class_name, class_def in class_defs.items():
+        def base_name(base):
+            if isinstance(base, ast.Name):
+                return base.id
+            if isinstance(base, ast.Attribute):
+                return base.attr
+            return None
+
+        def stub_methods_for(class_name, seen=None):
+            seen = set() if seen is None else seen
+            if class_name in seen or class_name not in all_stub_classes:
+                return set()
+            seen.add(class_name)
+            class_def = all_stub_classes[class_name]
+            methods = {
+                item.name
+                for item in class_def.body
+                if isinstance(item, ast.FunctionDef) and not item.name.startswith("_")
+            }
+            for base in class_def.bases:
+                parent = base_name(base)
+                if parent:
+                    methods.update(stub_methods_for(parent, seen))
+            return methods
+
+        def native_methods_for(native_cls):
+            return {
+                name
+                for name in dir(native_cls)
+                if not name.startswith("_")
+                and callable(getattr(native_cls, name, None))
+            }
+
+        for class_name in sorted(stub_classes):
+            if not hasattr(self.native, class_name):
+                continue
             native_cls = getattr(self.native, class_name)
-            for item in class_def.body:
-                if isinstance(item, ast.FunctionDef) and not item.name.startswith("_"):
-                    self.assertTrue(
-                        hasattr(native_cls, item.name),
-                        f"{class_name}.{item.name} missing from native module",
-                    )
+            if not inspect.isclass(native_cls) or issubclass(native_cls, BaseException):
+                continue
+            stub_methods = stub_methods_for(class_name)
+            native_methods = native_methods_for(native_cls)
+            self.assertEqual(
+                sorted(stub_methods - native_methods),
+                [],
+                f"{class_name} methods declared in .pyi but missing from native",
+            )
+            self.assertEqual(
+                sorted(native_methods - stub_methods),
+                [],
+                f"{class_name} native public methods missing from .pyi",
+            )
+
+
+def _script_json(events, labels=None):
+    payload = {
+        "script_schema_version": SCRIPT_SCHEMA_VERSION,
+        "events": events,
+        "labels": labels or {"start": 0},
+    }
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+
+def test_pytest_conftest_is_loaded(vnengine_pytest_conftest_loaded):
+    assert vnengine_pytest_conftest_loaded
+
+
+def test_vnerror_variants_raise_typed_python_exceptions():
+    import visual_novel_engine as native
+
+    for name in (
+        "VnError",
+        "VnValidationError",
+        "VnSecurityPolicyError",
+        "VnResourceLimitError",
+        "VnEndOfScriptError",
+    ):
+        assert hasattr(native, name), f"missing typed exception {name}"
+
+    invalid_choice_script = _script_json(
+        [{"type": "choice", "prompt": "Ir?", "options": []}]
+    )
+    with pytest.raises(native.VnValidationError, match="choice must have options"):
+        native.Engine(invalid_choice_script)
+
+    empty_speaker_script = _script_json(
+        [{"type": "dialogue", "speaker": "", "text": "Hola"}]
+    )
+    with pytest.raises(native.VnSecurityPolicyError, match="speaker cannot be empty"):
+        native.Engine(empty_speaker_script)
+
+    oversized_asset_script = _script_json(
+        [{"type": "scene", "background": "bg/" + ("x" * 200)}]
+    )
+    with pytest.raises(native.VnResourceLimitError, match="background asset"):
+        native.Engine(oversized_asset_script)
+
+    engine = native.Engine(
+        _script_json([{"type": "dialogue", "speaker": "Ava", "text": "Fin"}])
+    )
+    engine.step()
+    with pytest.raises(native.VnEndOfScriptError, match="script exhausted"):
+        engine.current_event()
+
+
+def test_typed_exceptions_are_usable_as_common_base_class():
+    import visual_novel_engine as native
+
+    malformed = json.dumps(
+        {
+            "script_schema_version": SCRIPT_SCHEMA_VERSION,
+            "events": [{"type": "jump", "target": "missing"}],
+            "labels": {"start": 0},
+        }
+    )
+    with pytest.raises(native.VnError) as exc_info:
+        native.validate_runtime_config(malformed)
+
+    assert isinstance(exc_info.value, native.VnValidationError)
+    assert "jump target 'missing' not found" in str(exc_info.value)

@@ -56,15 +56,15 @@ source .venv/bin/activate
 if ! command -v maturin &> /dev/null; then
     echo "maturin no instalado, instalando..."
     python -m pip install --upgrade pip
-    python -m pip install maturin
+    python -m pip install maturin pytest
 fi
 
-maturin develop --manifest-path crates/py/Cargo.toml
+maturin develop --manifest-path crates/py/Cargo.toml --features extension-module
 
 echo ""
 echo "=== Ejecutando tests de Python ==="
 export PYTHONPATH="${PWD}/python${PYTHONPATH:+:$PYTHONPATH}"
-python -m unittest tests.python.test_examples tests.python.test_vnengine -v
+python -m pytest tests/python/ -v --tb=short
 
 echo ""
 echo "✅ Todos los tests pasaron exitosamente!"

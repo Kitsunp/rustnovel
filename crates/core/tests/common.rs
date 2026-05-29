@@ -1,6 +1,6 @@
 use visual_novel_engine::{
     runtime::{Engine, ScriptRaw, StateDigest, TraceUiView, UiTrace},
-    ResourceLimiter, SecurityPolicy,
+    ResourceLimiter, SecurityPolicy, VnError,
 };
 
 /// Helper to execute a script and capture its trace.
@@ -18,7 +18,8 @@ pub fn run_headless(script_json: &str, max_steps: usize) -> UiTrace {
     for step in 0..max_steps {
         let event = match engine.current_event() {
             Ok(e) => e,
-            Err(_) => break, // End of script
+            Err(VnError::EndOfScript) => break,
+            Err(err) => panic!("current_event failed at step {step}: {err}"),
         };
 
         let view = TraceUiView::from_event(&event);
@@ -30,10 +31,10 @@ pub fn run_headless(script_json: &str, max_steps: usize) -> UiTrace {
         // Auto-advance (for choices, pick option 0)
         match &event {
             visual_novel_engine::runtime::EventCompiled::Choice(_) => {
-                let _ = engine.choose(0);
+                engine.choose(0).expect("choose option 0");
             }
             _ => {
-                let _ = engine.step();
+                engine.step().expect("step");
             }
         }
     }
