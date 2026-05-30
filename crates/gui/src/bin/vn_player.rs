@@ -6,9 +6,11 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use visual_novel_engine::{
+    resolve_layout,
     runtime::{Engine, ScriptRaw},
-    DisplayProfile, ExportRuntimeSmokeCheck, ExportRuntimeSmokeResult, PlayerMenuConfig,
-    ProjectManifest, RenderCommand, ResourceLimiter, SceneFramePresenter, SecurityPolicy, UiTheme,
+    DisplayProfile, ExportRuntimeSmokeCheck, ExportRuntimeSmokeResult, LayoutPolicy,
+    PlayerMenuConfig, ProjectManifest, RenderCommand, ResourceLimiter, SceneFramePresenter,
+    SecurityPolicy, StageProfile, UiTheme,
 };
 use visual_novel_gui::{run_app, SecurityMode, VnConfig};
 use visual_novel_runtime::{
@@ -637,11 +639,14 @@ fn present_runtime_frame(
     checks: &mut Vec<ExportRuntimeSmokeCheck>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut presenter = RuntimeSceneFramePresenter::default();
-    let response = presenter.present(
-        app.scene_frame(),
-        &DisplayProfile::new(960.0, 540.0),
-        &UiTheme::default(),
-    );
+    let display = DisplayProfile::new(960.0, 540.0);
+    let mut frame = app.scene_frame().clone();
+    frame.layout = Some(resolve_layout(
+        display.clone(),
+        StageProfile::default(),
+        LayoutPolicy::default(),
+    ));
+    let response = presenter.present(&frame, &display, &UiTheme::default());
     if !response.diagnostics.is_empty() {
         return Err(smoke_error(
             "export.runtime_smoke.render_frame",

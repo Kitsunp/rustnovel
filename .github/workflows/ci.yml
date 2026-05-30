@@ -34,7 +34,9 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
-      - run: cargo audit -D warnings
+      # RUSTSEC-2024-0436 is a documented exception in docs/audits and should be
+      # revisited when the transitive dependency chain can be upgraded.
+      - run: cargo audit -D warnings --ignore RUSTSEC-2024-0436
 
   test:
     runs-on: ubuntu-24.04

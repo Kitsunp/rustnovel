@@ -19,7 +19,7 @@ echo "=== Ejecutando auditoría de dependencias ==="
 if ! command -v cargo-audit &> /dev/null; then
     cargo install cargo-audit --locked
 fi
-cargo audit
+cargo audit -D warnings --ignore RUSTSEC-2024-0436
 
 echo ""
 echo "=== Ejecutando tests de Rust ==="

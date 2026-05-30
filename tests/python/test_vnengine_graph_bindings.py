@@ -179,6 +179,8 @@ class GuiBindingTests(unittest.TestCase):
                         'default_language = "en"',
                         'supported_languages = ["en"]',
                         'entry_point = "main.json"',
+                        "",
+                        "[assets]",
                     ]
                 ),
                 encoding="utf-8",

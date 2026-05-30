@@ -73,6 +73,7 @@ function Invoke-LintJob {
     Invoke-CiStep "clippy version" { cargo clippy --version }
     Invoke-CiStep "ruff format --check ." { ruff format --check . }
     Invoke-CiStep "ruff check ." { ruff check . }
+    Invoke-CiStep "mypy" { mypy }
     Invoke-CiStep "cargo check --workspace --all-targets --locked" {
         cargo check --workspace --all-targets --locked
     }
@@ -96,8 +97,8 @@ function Invoke-LintJob {
         )) {
         Remove-Item -LiteralPath $auditDb -Recurse -Force
     }
-    Invoke-CiStep "cargo audit -D warnings" {
-        cargo audit --db $auditDb -D warnings
+    Invoke-CiStep "cargo audit -D warnings --ignore RUSTSEC-2024-0436" {
+        cargo audit --db $auditDb -D warnings --ignore RUSTSEC-2024-0436
     }
 }
 

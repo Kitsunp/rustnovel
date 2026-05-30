@@ -185,22 +185,18 @@ impl BuiltinSoftwareDrawer {
             if y + line_height > (area.y + area.height) as f32 {
                 break;
             }
+            let line_spec = TextLineSpec {
+                text: &line,
+                x: area.x as f32,
+                y,
+                font_size,
+                color,
+                clip: area,
+            };
             if let Some(font) = &self.font {
-                draw_text_line_with_font(
-                    frame,
-                    size,
-                    font,
-                    &line,
-                    area.x as f32,
-                    y,
-                    font_size,
-                    color,
-                    area,
-                );
+                draw_text_line_with_font(frame, size, font, line_spec);
             } else {
-                draw_fallback_text_line(
-                    frame, size, &line, area.x, y as u32, font_size, color, area,
-                );
+                draw_fallback_text_line(frame, size, line_spec);
             }
             y += line_height;
         }
@@ -338,6 +334,16 @@ struct RectSpec {
     width: u32,
     height: u32,
     color: [u8; 4],
+}
+
+#[derive(Clone, Copy)]
+struct TextLineSpec<'a> {
+    text: &'a str,
+    x: f32,
+    y: f32,
+    font_size: f32,
+    color: [u8; 4],
+    clip: RectSpec,
 }
 
 fn scaled_rect(rect: LayoutRect, size: (u32, u32), color: [u8; 4]) -> RectSpec {
@@ -494,18 +500,13 @@ fn draw_text_line_with_font(
     frame: &mut [u8],
     size: (u32, u32),
     font: &FontArc,
-    text: &str,
-    x: f32,
-    y: f32,
-    font_size: f32,
-    color: [u8; 4],
-    clip: RectSpec,
+    spec: TextLineSpec<'_>,
 ) {
-    let scaled = font.as_scaled(font_size);
-    let baseline = y + scaled.ascent();
-    let mut caret_x = x;
+    let scaled = font.as_scaled(spec.font_size);
+    let baseline = spec.y + scaled.ascent();
+    let mut caret_x = spec.x;
     let mut previous = None;
-    for ch in text.chars() {
+    for ch in spec.text.chars() {
         if ch == '\t' {
             caret_x += scaled.h_advance(font.glyph_id(' ')) * 4.0;
             continue;
@@ -514,23 +515,23 @@ fn draw_text_line_with_font(
         if let Some(previous) = previous {
             caret_x += scaled.kern(previous, glyph_id);
         }
-        let glyph = glyph_id.with_scale_and_position(font_size, point(caret_x, baseline));
+        let glyph = glyph_id.with_scale_and_position(spec.font_size, point(caret_x, baseline));
         if let Some(outlined) = font.outline_glyph(glyph) {
             let bounds = outlined.px_bounds();
             outlined.draw(|px, py, coverage| {
                 let x = px as i32 + bounds.min.x.floor() as i32;
                 let y = py as i32 + bounds.min.y.floor() as i32;
-                if x >= clip.x as i32
-                    && y >= clip.y as i32
-                    && x < clip.x.saturating_add(clip.width) as i32
-                    && y < clip.y.saturating_add(clip.height) as i32
+                if x >= spec.clip.x as i32
+                    && y >= spec.clip.y as i32
+                    && x < spec.clip.x.saturating_add(spec.clip.width) as i32
+                    && y < spec.clip.y.saturating_add(spec.clip.height) as i32
                     && x >= 0
                     && y >= 0
                     && x < size.0 as i32
                     && y < size.1 as i32
                 {
-                    let mut glyph_color = color;
-                    glyph_color[3] = ((color[3] as f32) * coverage).round() as u8;
+                    let mut glyph_color = spec.color;
+                    glyph_color[3] = ((spec.color[3] as f32) * coverage).round() as u8;
                     blend_pixel(frame, size.0, x as u32, y as u32, glyph_color);
                 }
             });
@@ -540,19 +541,11 @@ fn draw_text_line_with_font(
     }
 }
 
-fn draw_fallback_text_line(
-    frame: &mut [u8],
-    size: (u32, u32),
-    text: &str,
-    x: u32,
-    y: u32,
-    font_size: f32,
-    color: [u8; 4],
-    clip: RectSpec,
-) {
-    let scale = (font_size / 8.0).round().max(1.0) as u32;
-    let mut cursor = x;
-    for ch in text.chars() {
+fn draw_fallback_text_line(frame: &mut [u8], size: (u32, u32), spec: TextLineSpec<'_>) {
+    let scale = (spec.font_size / 8.0).round().max(1.0) as u32;
+    let mut cursor = spec.x.max(0.0) as u32;
+    let y = spec.y.max(0.0) as u32;
+    for ch in spec.text.chars() {
         let glyph = fallback_glyph(ch);
         for (row, bits) in glyph.iter().enumerate() {
             for col in 0..5 {
@@ -565,17 +558,27 @@ fn draw_fallback_text_line(
                     frame,
                     size,
                     RectSpec {
-                        x: px.max(clip.x),
-                        y: py.max(clip.y),
-                        width: scale.min(clip.x.saturating_add(clip.width).saturating_sub(px)),
-                        height: scale.min(clip.y.saturating_add(clip.height).saturating_sub(py)),
-                        color,
+                        x: px.max(spec.clip.x),
+                        y: py.max(spec.clip.y),
+                        width: scale.min(
+                            spec.clip
+                                .x
+                                .saturating_add(spec.clip.width)
+                                .saturating_sub(px),
+                        ),
+                        height: scale.min(
+                            spec.clip
+                                .y
+                                .saturating_add(spec.clip.height)
+                                .saturating_sub(py),
+                        ),
+                        color: spec.color,
                     },
                 );
             }
         }
         cursor = cursor.saturating_add(scale * 6);
-        if cursor >= clip.x.saturating_add(clip.width) {
+        if cursor >= spec.clip.x.saturating_add(spec.clip.width) {
             break;
         }
     }

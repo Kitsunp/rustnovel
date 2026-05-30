@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from .types import Script
 
 
-def _extract_loc_key(value: str) -> str | None:
+def _extract_loc_key(value: str) -> Optional[str]:
     text = value.strip()
     if not text.startswith("loc:"):
         return None
@@ -21,7 +21,7 @@ class LocalizationCatalog:
     default_locale: str = "en"
     locales: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
-    def resolve(self, locale: str, key: str) -> str | None:
+    def resolve(self, locale: str, key: str) -> Optional[str]:
         if locale in self.locales and key in self.locales[locale]:
             return self.locales[locale][key]
         default_table = self.locales.get(self.default_locale, {})

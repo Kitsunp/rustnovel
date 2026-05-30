@@ -2,7 +2,7 @@ use visual_novel_engine::authoring::composer::{
     apply_layer_overrides, compose_scene_snapshot as build_composer_snapshot,
     list_layered_objects as collect_layered_objects,
 };
-use visual_novel_engine::authoring::{AuthoringCommand, AuthoringDocumentCommand, StoryNode};
+use visual_novel_engine::authoring::{AuthoringCommand, AuthoringDocumentCommand};
 
 use super::super::api_v2::{
     stage_layer_names, PyComposerPreviewSession, PyComposerSnapshot, PyLayeredSceneObject,
@@ -232,7 +232,7 @@ impl PyNodeGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use visual_novel_engine::authoring::AuthoringPosition;
+    use visual_novel_engine::authoring::{AuthoringPosition, StoryNode};
 
     fn add_test_node(graph: &mut PyNodeGraph, node: StoryNode) -> u32 {
         let node_id = graph.inner.next_node_id();

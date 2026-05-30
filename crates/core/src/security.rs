@@ -327,10 +327,10 @@ fn validate_compiled_audio_action(action: &AudioActionCompiled) -> VnResult<()> 
         )));
     }
     if action.action == 0
-        && !action
+        && action
             .asset
             .as_deref()
-            .is_some_and(|asset| !asset.trim().is_empty())
+            .is_none_or(|asset| asset.trim().is_empty())
     {
         return Err(VnError::InvalidScript(
             "compiled audio play action requires a non-empty asset".to_string(),

@@ -293,10 +293,10 @@ impl ScriptRaw {
                     let channel = compile_audio_channel(&action.channel)?;
                     let action_kind = compile_audio_action(&action.action)?;
                     if action_kind == 0
-                        && !action
+                        && action
                             .asset
                             .as_deref()
-                            .is_some_and(|asset| !asset.trim().is_empty())
+                            .is_none_or(|asset| asset.trim().is_empty())
                     {
                         return Err(VnError::InvalidScript(
                             "audio play action requires a non-empty asset".to_string(),

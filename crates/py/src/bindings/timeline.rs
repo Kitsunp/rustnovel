@@ -281,8 +281,7 @@ mod tests {
     #[test]
     fn parse_easing_rejects_unknown_tokens() {
         let err = parse_easing("ease_sideways")
-            .err()
-            .expect("unknown easing tokens must be rejected instead of becoming linear");
+            .expect_err("unknown easing tokens must be rejected instead of becoming linear");
 
         assert!(err.to_string().contains("unknown easing"));
     }
@@ -296,8 +295,7 @@ mod tests {
     #[test]
     fn parse_property_rejects_unknown_tokens() {
         let err = parse_property("blur_radius")
-            .err()
-            .expect("unknown property tokens must be rejected instead of becoming position_x");
+            .expect_err("unknown property tokens must be rejected instead of becoming position_x");
 
         assert!(err.to_string().contains("unknown property"));
     }

@@ -88,7 +88,7 @@ target\py-audit-venv\Scripts\python -m pytest tests\python\ -q
 ```bash
 cargo fmt -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo audit
+cargo audit -D warnings --ignore RUSTSEC-2024-0436
 ```
 
 ### Tests de Renderizado (Híbrido)
