@@ -184,11 +184,11 @@ impl VerificationRun {
         after_ids: &BTreeSet<String>,
     ) -> Self {
         let resolved_diagnostic_ids = before_ids
-            .difference(&after_ids)
+            .difference(after_ids)
             .cloned()
             .collect::<Vec<_>>();
         let introduced_diagnostic_ids = after_ids
-            .difference(&before_ids)
+            .difference(before_ids)
             .cloned()
             .collect::<Vec<_>>();
 

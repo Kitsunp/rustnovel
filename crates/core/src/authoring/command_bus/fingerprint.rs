@@ -286,10 +286,7 @@ impl CommandBusFingerprintState {
     }
 
     fn sync_connections(&mut self, graph: &NodeGraph) {
-        let current = graph
-            .connections()
-            .map(|connection| connection_key(connection))
-            .collect::<Vec<_>>();
+        let current = graph.connections().map(connection_key).collect::<Vec<_>>();
         let previous = self.connection_hashes.keys().copied().collect::<Vec<_>>();
         for key in previous {
             if !current.contains(&key) {

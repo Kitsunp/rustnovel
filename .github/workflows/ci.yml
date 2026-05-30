@@ -144,10 +144,12 @@ jobs:
             }
           }
           EOF
+          runtime_artifact="$PWD/target/debug/vn_player"
+          test -x "$runtime_artifact"
           cargo run -p vnengine_cli --bin vnengine -- --json package "$project" \
             --output "$bundle" \
             --target linux \
-            --runtime-artifact target/debug/vn_player \
+            --runtime-artifact "$runtime_artifact" \
             --require-executable \
             --integrity hmac-sha256 \
             --hmac-key ci-smoke \
