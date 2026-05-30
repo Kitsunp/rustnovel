@@ -16,6 +16,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$RepoTemp = Join-Path (Get-Location) "target/tmp"
+New-Item -ItemType Directory -Force -Path $RepoTemp | Out-Null
+$env:TEMP = $RepoTemp
+$env:TMP = $RepoTemp
 
 function Invoke-CiStep {
     param(
@@ -218,16 +222,16 @@ function Invoke-FuzzSmokeJob {
 }
 
 function Invoke-PythonTestsJob {
-    $venv = Join-Path (Get-Location) ".venv"
+    $venv = Join-Path (Get-Location) "target/py-test-venv"
     Write-Host ""
-    Write-Host "==> python -m venv .venv" -ForegroundColor Cyan
+    Write-Host "==> python -m venv target/py-test-venv" -ForegroundColor Cyan
     & $Python -m venv $venv
     $useSystemPython = $false
     if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) {
         if ($env:CI -eq "true") {
-            throw "python -m venv .venv failed with exit code $LASTEXITCODE"
+            throw "python -m venv target/py-test-venv failed with exit code $LASTEXITCODE"
         }
-        Write-Warning "python -m venv .venv failed locally; falling back to the configured Python interpreter."
+        Write-Warning "python -m venv target/py-test-venv failed locally; falling back to the configured Python interpreter."
         $useSystemPython = $true
     }
     $pythonExe = if ($useSystemPython) {

@@ -9,6 +9,12 @@ members = [
     "tools/cli",
 ]
 
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.test]
+debug = "line-tables-only"
+
 [profile.release]
 # Optimize for runtime performance with smaller binaries; longer compile times and reduced backtraces.
 lto = "thin"

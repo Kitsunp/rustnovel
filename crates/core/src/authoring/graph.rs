@@ -355,9 +355,10 @@ impl NodeGraph {
                     .is_some_and(|node| !node.is_marker())
             })
             .collect::<Vec<_>>();
+        let mut ordered_set = ordered.iter().copied().collect::<HashSet<_>>();
 
         for (id, node, _) in &self.nodes {
-            if !node.is_marker() && !ordered.contains(id) {
+            if !node.is_marker() && ordered_set.insert(*id) {
                 ordered.push(*id);
             }
         }

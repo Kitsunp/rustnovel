@@ -167,6 +167,22 @@ impl VerificationRun {
     ) -> Self {
         let before_ids = diagnostic_id_set(before);
         let after_ids = diagnostic_id_set(after);
+        Self::from_diagnostic_id_sets(
+            operation_id,
+            validation_profile,
+            fingerprint,
+            &before_ids,
+            &after_ids,
+        )
+    }
+
+    pub fn from_diagnostic_id_sets(
+        operation_id: impl Into<String>,
+        validation_profile: impl Into<String>,
+        fingerprint: &AuthoringReportFingerprint,
+        before_ids: &BTreeSet<String>,
+        after_ids: &BTreeSet<String>,
+    ) -> Self {
         let resolved_diagnostic_ids = before_ids
             .difference(&after_ids)
             .cloned()
@@ -187,7 +203,7 @@ impl VerificationRun {
             layout_sha256: Some(fingerprint.layout_sha256.clone()),
             assets_sha256: Some(fingerprint.assets_sha256.clone()),
             full_document_sha256: Some(fingerprint.full_document_sha256.clone()),
-            diagnostic_ids: after_ids.into_iter().collect(),
+            diagnostic_ids: after_ids.iter().cloned().collect(),
             resolved_diagnostic_ids,
             introduced_diagnostic_ids,
         }

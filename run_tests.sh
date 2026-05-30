@@ -3,6 +3,12 @@
 
 set -e
 
+TEST_TMPDIR="${PWD}/target/tmp"
+mkdir -p "${TEST_TMPDIR}"
+export TMPDIR="${TEST_TMPDIR}"
+export TMP="${TEST_TMPDIR}"
+export TEMP="${TEST_TMPDIR}"
+
 echo "=== Verificando formato del código ==="
 cargo fmt -- --check || {
     echo "Error: El código no está formateado correctamente."
@@ -45,11 +51,12 @@ cargo test -p visual_novel_engine --features arbitrary --test fuzz_tests --verbo
 echo ""
 echo "=== Construyendo extensión de Python ==="
 # python habilita pyo3/extension-module para construir el módulo Python vía maturin.
-if [ ! -d ".venv" ]; then
-    python -m venv .venv
+PY_TEST_VENV="${PWD}/target/py-test-venv"
+if [ ! -d "${PY_TEST_VENV}" ]; then
+    python -m venv "${PY_TEST_VENV}"
 fi
 
-source .venv/bin/activate
+source "${PY_TEST_VENV}/bin/activate"
 
 python -m pip install --upgrade pip
 python -m pip install maturin pytest

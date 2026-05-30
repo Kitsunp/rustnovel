@@ -68,8 +68,19 @@ where
         ),
     }
     let flow = graph.flow_analysis(&start_nodes);
-    let script = graph.to_script_lossy_for_diagnostics();
-    let script_labels = script.labels.keys().cloned().collect::<BTreeSet<_>>();
+    let script_labels = if graph
+        .nodes()
+        .any(|(_, node, _)| matches!(node, StoryNode::Jump { .. } | StoryNode::JumpIf { .. }))
+    {
+        graph
+            .to_script_lossy_for_diagnostics()
+            .labels
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
     for (id, node, position) in graph.nodes() {
         validate_layout_position(*id, position.x, position.y, &mut issues);
         if !flow.reachable.contains(id) {

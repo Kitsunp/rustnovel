@@ -1,3 +1,5 @@
+use std::{collections::BTreeMap, io};
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -7,6 +9,7 @@ use crate::asset_refs::{
 use crate::script::ScriptRaw;
 
 use super::{
+    composer::{BackgroundFit, LayerOverride},
     AuthoringDocument, NodeGraph, SceneProfile, StoryNode, AUTHORING_DOCUMENT_SCHEMA_VERSION,
 };
 
@@ -49,8 +52,27 @@ pub fn build_authoring_report_fingerprint(
     graph: &NodeGraph,
     script: &ScriptRaw,
 ) -> AuthoringReportFingerprint {
-    let document = AuthoringDocument::new(graph.clone());
-    build_authoring_document_report_fingerprint(&document, script)
+    let mut asset_refs = collect_authoring_asset_refs(graph);
+    asset_refs.sort();
+    asset_refs.dedup();
+    let story_graph_sha256 = authoring_story_graph_sha256(graph);
+    let semantic = AuthoringSemanticFingerprint {
+        script_sha256: sha256_json(script),
+        graph_sha256: story_graph_sha256.clone(),
+        story_graph_sha256,
+        asset_refs_sha256: sha256_json(&asset_refs),
+        asset_refs_count: asset_refs.len(),
+    };
+    let story_semantic_sha256 = sha256_json(&semantic);
+    let layout_sha256 = authoring_layout_sha256(graph);
+    let full_document_sha256 = authoring_graph_sha256(graph);
+
+    build_fingerprint_from_parts(
+        semantic,
+        story_semantic_sha256,
+        layout_sha256,
+        full_document_sha256,
+    )
 }
 
 pub fn build_authoring_document_report_fingerprint(
@@ -73,6 +95,20 @@ pub fn build_authoring_document_report_fingerprint(
     let layout_sha256 = authoring_document_layout_sha256(document);
     let full_document_sha256 = authoring_document_sha256(document);
 
+    build_fingerprint_from_parts(
+        semantic,
+        story_semantic_sha256,
+        layout_sha256,
+        full_document_sha256,
+    )
+}
+
+pub(crate) fn build_fingerprint_from_parts(
+    semantic: AuthoringSemanticFingerprint,
+    story_semantic_sha256: String,
+    layout_sha256: String,
+    full_document_sha256: String,
+) -> AuthoringReportFingerprint {
     AuthoringReportFingerprint {
         fingerprint_schema_version: "vnengine.authoring.fingerprint.v2".to_string(),
         authoring_schema_version: AUTHORING_DOCUMENT_SCHEMA_VERSION.to_string(),
@@ -96,7 +132,26 @@ pub fn build_authoring_document_report_fingerprint(
 }
 
 pub fn authoring_graph_sha256(graph: &NodeGraph) -> String {
-    sha256_json(&AuthoringDocument::new(graph.clone()))
+    let empty_layer_overrides = BTreeMap::<String, LayerOverride>::new();
+    let empty_background_fit_overrides = BTreeMap::<String, BackgroundFit>::new();
+    sha256_json(&AuthoringGraphDocumentRef {
+        authoring_schema_version: AUTHORING_DOCUMENT_SCHEMA_VERSION,
+        graph,
+        composer_layer_overrides: &empty_layer_overrides,
+        composer_background_fit_overrides: &empty_background_fit_overrides,
+        operation_log: &[],
+        verification_runs: &[],
+    })
+}
+
+#[derive(Serialize)]
+struct AuthoringGraphDocumentRef<'a> {
+    authoring_schema_version: &'static str,
+    graph: &'a NodeGraph,
+    composer_layer_overrides: &'a BTreeMap<String, LayerOverride>,
+    composer_background_fit_overrides: &'a BTreeMap<String, BackgroundFit>,
+    operation_log: &'a [()],
+    verification_runs: &'a [()],
 }
 
 pub fn authoring_document_sha256(document: &AuthoringDocument) -> String {
@@ -246,15 +301,39 @@ fn collect_profile_asset_refs(profile: &SceneProfile, refs: &mut AssetRefSet) {
 }
 
 fn sha256_json<T: Serialize>(value: &T) -> String {
-    match serde_json::to_vec(value) {
-        Ok(bytes) => sha256_bytes(&bytes),
+    let mut writer = Sha256Writer(Sha256::new());
+    match serde_json::to_writer(&mut writer, value) {
+        Ok(()) => hex_digest(writer.0.finalize().as_slice()),
         Err(error) => sha256_bytes(error.to_string().as_bytes()),
     }
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    hex_digest(digest.as_slice())
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+struct Sha256Writer(Sha256);
+
+impl io::Write for Sha256Writer {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn build_profile() -> &'static str {

@@ -208,6 +208,14 @@ fn editor_mutation_operation_log_records_before_after_fingerprints() {
         entry.field_paths.first().map(|path| path.value.as_str()),
         Some(expected_path.as_str())
     );
+    assert_eq!(workbench.verification_runs.len(), workbench.operation_log.len());
+    assert_eq!(
+        workbench
+            .verification_runs
+            .last()
+            .map(|run| run.operation_id.as_str()),
+        Some(entry.operation_id.as_str())
+    );
 }
 
 #[test]

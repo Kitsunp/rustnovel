@@ -10,8 +10,7 @@ use std::collections::BTreeSet;
 pub use visual_novel_engine::authoring::{GraphConnection, SceneProfile};
 use visual_novel_engine::{
     authoring::{
-        AuthoringCommand, AuthoringDelta, AuthoringDocument, AuthoringDocumentCommand,
-        AuthoringDocumentDelta, AuthoringDocumentSession, AuthoringPosition,
+        AuthoringCommand, AuthoringCommandBus, AuthoringDelta, AuthoringPosition,
         NodeGraph as AuthoringGraph,
     },
     runtime::ScriptRaw,
@@ -42,7 +41,7 @@ pub struct GraphOperationHint {
 }
 
 /// A node graph representing the story structure.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct NodeGraph {
     /// Headless semantic graph. GUI state below is view/interaction only.
     #[serde(flatten)]
@@ -83,15 +82,31 @@ pub struct NodeGraph {
     /// Last semantic editor operation inferred at graph level.
     #[serde(skip)]
     pub operation_hint: Option<GraphOperationHint>,
-    /// Persistent core session used by graph-local editor commands.
-    #[serde(skip, default = "default_authoring_session")]
-    authoring_session: AuthoringDocumentSession,
+}
+
+impl Clone for NodeGraph {
+    fn clone(&self) -> Self {
+        Self {
+            authoring: self.authoring.clone(),
+            selected: self.selected,
+            selected_nodes: self.selected_nodes.clone(),
+            pan: self.pan,
+            zoom: self.zoom,
+            editing: self.editing,
+            dragging_node: self.dragging_node,
+            connecting_from: self.connecting_from,
+            connecting_sticky: self.connecting_sticky,
+            marquee_start: self.marquee_start,
+            marquee_current: self.marquee_current,
+            context_menu: self.context_menu.clone(),
+            operation_hint: self.operation_hint.clone(),
+        }
+    }
 }
 
 impl Default for NodeGraph {
     fn default() -> Self {
         let authoring = AuthoringGraph::new();
-        let authoring_session = authoring_session_for_graph(&authoring);
         Self {
             authoring,
             selected: None,
@@ -106,7 +121,6 @@ impl Default for NodeGraph {
             marquee_current: None,
             context_menu: None,
             operation_hint: None,
-            authoring_session,
         }
     }
 }
@@ -380,10 +394,8 @@ impl NodeGraph {
     }
 
     pub fn from_authoring_graph(authoring: AuthoringGraph) -> Self {
-        let authoring_session = authoring_session_for_graph(&authoring);
         Self {
             authoring,
-            authoring_session,
             ..Self::default()
         }
     }
@@ -393,23 +405,11 @@ impl NodeGraph {
     }
 
     pub fn replace_authoring_graph(&mut self, authoring: AuthoringGraph) {
-        self.authoring_session = authoring_session_for_graph(&authoring);
         self.authoring = authoring;
     }
 
     fn apply_authoring_command(&mut self, command: AuthoringCommand) -> Option<AuthoringDelta> {
-        if self.authoring_session.document().graph != self.authoring {
-            self.authoring_session = authoring_session_for_graph(&self.authoring);
-        }
-        let outcome = self
-            .authoring_session
-            .apply(AuthoringDocumentCommand::Graph(command))
-            .ok()?;
-        self.authoring = self.authoring_session.document().graph.clone();
-        let AuthoringDocumentDelta::Graph(delta) = outcome.delta else {
-            return None;
-        };
-        Some(*delta)
+        AuthoringCommandBus::apply_to_graph_unlogged(&mut self.authoring, command).ok()
     }
 
     pub fn toggle_multi_selection(&mut self, node_id: u32) {
@@ -530,14 +530,6 @@ impl NodeGraph {
             self.selected_nodes.iter().copied().collect()
         }
     }
-}
-
-fn default_authoring_session() -> AuthoringDocumentSession {
-    authoring_session_for_graph(&AuthoringGraph::new())
-}
-
-fn authoring_session_for_graph(authoring: &AuthoringGraph) -> AuthoringDocumentSession {
-    AuthoringDocumentSession::new(AuthoringDocument::new(authoring.clone()))
 }
 
 fn default_zoom() -> f32 {
