@@ -761,8 +761,7 @@ mod tests {
         assert!(!fallback);
         assert!(diagnostic.is_none());
 
-        let (backend, fallback, diagnostic) =
-            export_graphics_backend_from_value(Some("hardware"));
+        let (backend, fallback, diagnostic) = export_graphics_backend_from_value(Some("hardware"));
         assert_eq!(backend, "wgpu");
         assert!(!fallback);
         assert!(diagnostic.is_none());

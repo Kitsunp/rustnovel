@@ -6,7 +6,7 @@ import json
 from typing import Any, Dict, Mapping, Optional, Union
 
 from .native import call_native_method, load_native_engine
-from .types import SUPPORTED_EVENT_TYPES, Script
+from .types import Script
 
 
 class Engine:

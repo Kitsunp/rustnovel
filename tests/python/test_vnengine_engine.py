@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from vnengine.engine import Engine, _load_native_engine
-from vnengine.types import SCRIPT_SCHEMA_VERSION, SUPPORTED_EVENT_TYPES
+from vnengine.types import SCRIPT_SCHEMA_VERSION
 
 
 class EngineWrapperTests(unittest.TestCase):
