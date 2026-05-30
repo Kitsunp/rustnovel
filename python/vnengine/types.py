@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
@@ -40,6 +41,23 @@ def _require_float(value: Any, field_name: str) -> float:
     return float(value)
 
 
+def _require_field(data: Mapping[str, Any], field_name: str, owner: str) -> Any:
+    if not isinstance(data, MappingABC):
+        raise ValueError(f"{owner} payload must be object, got {type(data).__name__}")
+    if field_name not in data:
+        raise ValueError(f"{owner} missing required '{field_name}' field")
+    return data[field_name]
+
+
+def _require_list_field(data: Mapping[str, Any], field_name: str, owner: str) -> List[Any]:
+    value = _require_field(data, field_name, owner)
+    if not isinstance(value, list):
+        raise ValueError(
+            f"{owner} '{field_name}' must be list, got {type(value).__name__}"
+        )
+    return value
+
+
 @dataclass(frozen=True)
 class Dialogue:
     """Dialogue event.
@@ -72,7 +90,10 @@ class ChoiceOption:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ChoiceOption":
-        return cls(text=str(data["text"]), target=str(data["target"]))
+        return cls(
+            text=str(_require_field(data, "text", "ChoiceOption")),
+            target=str(_require_field(data, "target", "ChoiceOption")),
+        )
 
 
 @dataclass(frozen=True)
@@ -91,8 +112,13 @@ class Choice:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Choice":
-        options = [ChoiceOption.from_dict(item) for item in data.get("options", [])]
-        return cls(prompt=str(data["prompt"]), options=options)
+        options = [
+            ChoiceOption.from_dict(item)
+            for item in _require_list_field(data, "options", "Choice")
+        ]
+        return cls(
+            prompt=str(_require_field(data, "prompt", "Choice")), options=options
+        )
 
 
 @dataclass(frozen=True)

@@ -206,6 +206,7 @@ fn package_command_json_execute_matches_written_report_manifest_and_compat_flow(
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.contains("packaged project =>"));
     assert!(!stdout.contains("bundle_hmac_sha256="));
+    assert!(!stdout.contains("bundle_file_manifest_sha256="));
     let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).expect("envelope");
     assert_eq!(envelope["ok"], true);
     assert_eq!(envelope["code"], "ok");
@@ -236,6 +237,10 @@ fn package_command_json_execute_matches_written_report_manifest_and_compat_flow(
         package_report["target_platform"]
     );
     assert_eq!(
+        compat_report["generator_os"],
+        package_report["generator_os"]
+    );
+    assert_eq!(
         compat_report["runtime_artifact"],
         package_report["runtime_artifact"]
     );
@@ -248,13 +253,30 @@ fn package_command_json_execute_matches_written_report_manifest_and_compat_flow(
         package_report["bundle_hmac_sha256"]
     );
     assert_eq!(
+        compat_report["expected_executable"],
+        package_report["expected_executable"]
+    );
+    assert_eq!(
+        compat_report["graphics_backend"],
+        package_report["graphics_backend"]
+    );
+    assert_eq!(
+        compat_report["wgpu_fallback"],
+        package_report["wgpu_fallback"]
+    );
+    assert_eq!(
         compat_report["bundle_file_manifest_sha256"],
         sha256_hex(manifest_text.as_bytes())
+    );
+    assert_eq!(
+        package_report["bundle_file_manifest_sha256"],
+        compat_report["bundle_file_manifest_sha256"]
     );
     assert_eq!(compat_report["diagnostics"], package_report["diagnostics"]);
 
     let manifest_files = file_manifest["files"].as_array().expect("manifest files");
     assert_eq!(compat_report["hashes"], file_manifest["files"]);
+    assert_eq!(package_report["hashes"], file_manifest["files"]);
     assert!(manifest_files
         .iter()
         .any(|entry| entry["path"] == "game.exe"));
@@ -290,6 +312,7 @@ fn package_command_json_execute_matches_written_report_manifest_and_compat_flow(
         );
     }
     assert_eq!(compat_report["total_size"], total_size);
+    assert_eq!(package_report["total_size"], total_size);
 }
 
 #[test]

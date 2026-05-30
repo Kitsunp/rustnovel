@@ -12,7 +12,7 @@ pub struct ExportCapabilityReport {
     pub audio_actions: Vec<String>,
     pub transitions: Vec<String>,
     pub requires_runtime_artifact: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing, skip_deserializing)]
     pub warnings: Vec<String>,
 }
 

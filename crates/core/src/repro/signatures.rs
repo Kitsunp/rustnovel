@@ -104,14 +104,23 @@ pub(super) fn evaluate_monitors(
                 step,
                 expected,
             } => {
-                let got = steps
-                    .get(*step)
-                    .and_then(|trace| trace.visual_background.clone());
-                let matched = got == *expected;
+                let (matched, detail) = match steps.get(*step) {
+                    Some(trace) => {
+                        let got = trace.visual_background.clone();
+                        (
+                            got == *expected,
+                            format!("step={} expected_bg={:?} got={:?}", step, expected, got),
+                        )
+                    }
+                    None => (
+                        false,
+                        format!("step={} missing expected_bg={:?}", step, expected),
+                    ),
+                };
                 ReproMonitorResult {
                     monitor_id: monitor_id.clone(),
                     matched,
-                    detail: format!("step={} expected_bg={:?} got={:?}", step, expected, got),
+                    detail,
                 }
             }
             ReproMonitor::VisualMusicAtStep {
@@ -119,14 +128,23 @@ pub(super) fn evaluate_monitors(
                 step,
                 expected,
             } => {
-                let got = steps
-                    .get(*step)
-                    .and_then(|trace| trace.visual_music.clone());
-                let matched = got == *expected;
+                let (matched, detail) = match steps.get(*step) {
+                    Some(trace) => {
+                        let got = trace.visual_music.clone();
+                        (
+                            got == *expected,
+                            format!("step={} expected_music={:?} got={:?}", step, expected, got),
+                        )
+                    }
+                    None => (
+                        false,
+                        format!("step={} missing expected_music={:?}", step, expected),
+                    ),
+                };
                 ReproMonitorResult {
                     monitor_id: monitor_id.clone(),
                     matched,
-                    detail: format!("step={} expected_music={:?} got={:?}", step, expected, got),
+                    detail,
                 }
             }
             ReproMonitor::CharacterCountAtLeast {
@@ -134,15 +152,20 @@ pub(super) fn evaluate_monitors(
                 step,
                 min,
             } => {
-                let got = steps
-                    .get(*step)
-                    .map(|trace| trace.character_count)
-                    .unwrap_or(0);
-                let matched = got >= *min;
+                let (matched, detail) = match steps.get(*step) {
+                    Some(trace) => {
+                        let got = trace.character_count;
+                        (
+                            got >= *min,
+                            format!("step={} min_chars={} got={}", step, min, got),
+                        )
+                    }
+                    None => (false, format!("step={} missing min_chars={}", step, min)),
+                };
                 ReproMonitorResult {
                     monitor_id: monitor_id.clone(),
                     matched,
-                    detail: format!("step={} min_chars={} got={}", step, min, got),
+                    detail,
                 }
             }
             ReproMonitor::StopMessageContains { monitor_id, needle } => {

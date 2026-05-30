@@ -68,6 +68,35 @@ fn egui_scene_frame_presenter_implements_shared_contract() {
 }
 
 #[test]
+fn presenters_report_missing_layout_fallback_consistently() {
+    let frame = SceneFrame {
+        frame_schema: "vnengine.scene_frame.v1".to_string(),
+        ..Default::default()
+    };
+    let display = DisplayProfile::new(800.0, 600.0);
+    let theme = UiTheme::default();
+    let mut egui = EguiSceneFramePresenter::default();
+    let mut runtime = RuntimeSceneFramePresenter::default();
+    let mut headless = HeadlessSceneFramePresenter::default();
+    let responses = [
+        ("egui", egui.present(&frame, &display, &theme)),
+        ("runtime", runtime.present(&frame, &display, &theme)),
+        ("headless", headless.present(&frame, &display, &theme)),
+    ];
+
+    for (name, response) in responses {
+        assert!(
+            response
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("no resolved layout")),
+            "{name} presenter should report fallback layout diagnostics: {:?}",
+            response.diagnostics
+        );
+    }
+}
+
+#[test]
 fn theme_switching_and_presenter_parity_use_same_scene_frame_contract() {
     let script = ScriptRaw::new(
         vec![
@@ -123,6 +152,44 @@ fn theme_switching_and_presenter_parity_use_same_scene_frame_contract() {
     assert!(frame.commands.iter().any(
         |command| matches!(command, RenderCommand::Panel { style, .. } if style == "dialogue_box")
     ));
+}
+
+#[test]
+fn egui_presenter_reports_theme_errors_like_runtime_and_headless() {
+    let display = DisplayProfile::new(800.0, 600.0);
+    let frame = SceneFrame {
+        frame_schema: "vnengine.scene_frame.v1".to_string(),
+        layout: Some(resolve_layout(
+            display.clone(),
+            StageProfile::default(),
+            LayoutPolicy::default(),
+        )),
+        ..Default::default()
+    };
+    let mut theme = UiTheme::default();
+    theme
+        .colors
+        .insert("dialogue.text".to_string(), "not-a-color".to_string());
+
+    let mut egui = EguiSceneFramePresenter::default();
+    let mut runtime = RuntimeSceneFramePresenter::default();
+    let mut headless = HeadlessSceneFramePresenter::default();
+    let egui_response = egui.present(&frame, &display, &theme);
+    let runtime_response = runtime.present(&frame, &display, &theme);
+    let headless_response = headless.present(&frame, &display, &theme);
+
+    for (name, response) in [
+        ("egui", &egui_response),
+        ("runtime", &runtime_response),
+        ("headless", &headless_response),
+    ] {
+        assert!(
+            response.diagnostics.iter().any(|diagnostic| diagnostic
+                .contains("color token 'dialogue.text' must be #RRGGBB or #RRGGBBAA")),
+            "{name} presenter should expose invalid theme color diagnostics: {:?}",
+            response.diagnostics
+        );
+    }
 }
 
 #[test]

@@ -21,6 +21,10 @@ impl SceneFramePresenter for RuntimeSceneFramePresenter {
         let mut diagnostics = validation.warnings;
         diagnostics.extend(validation.errors);
         if frame.layout.is_none() {
+            diagnostics.push(format!(
+                "scene frame '{}' has no resolved layout; presenter used default policy",
+                frame.frame_schema
+            ));
             let _layout = resolve_layout(
                 display.clone(),
                 StageProfile::default(),

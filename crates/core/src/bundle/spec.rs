@@ -100,6 +100,8 @@ pub struct ExportBundleReport {
     pub output_layout_version: u16,
     pub project_root: String,
     pub output_root: String,
+    #[serde(default)]
+    pub generator_os: String,
     pub script_source: String,
     pub script_binary: String,
     pub assets_manifest: String,
@@ -109,11 +111,23 @@ pub struct ExportBundleReport {
     pub runtime_artifact_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable: Option<String>,
+    #[serde(default)]
+    pub expected_executable: String,
     pub launcher: String,
+    #[serde(default)]
+    pub graphics_backend: String,
+    #[serde(default)]
+    pub wgpu_fallback: bool,
+    #[serde(default)]
+    pub total_size: u64,
+    #[serde(default)]
+    pub hashes: Vec<BundleFileEntry>,
     pub integrity: String,
     pub bundle_hmac_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundle_file_manifest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_file_manifest_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compat_report: Option<String>,
     #[serde(default)]
@@ -130,10 +144,28 @@ pub struct ExportBundleReport {
 pub struct ExportRuntimeSmokeCheck {
     pub code: String,
     pub status: String,
+    #[serde(default)]
+    pub severity: String,
     pub phase: String,
     pub target: String,
     pub trace_id: String,
     pub message: String,
+    #[serde(default)]
+    pub probable_cause: String,
+    #[serde(default)]
+    pub suggested_action: String,
+    #[serde(default)]
+    pub consequence: String,
+    #[serde(default)]
+    pub blocking_release: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -185,9 +217,9 @@ pub struct ExportPlan {
     pub layout: Vec<String>,
     pub runtime_artifact: Option<String>,
     pub executable: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing, skip_deserializing)]
     pub warnings: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing, skip_deserializing)]
     pub errors: Vec<String>,
     #[serde(default)]
     pub diagnostics: Vec<ExportDiagnostic>,

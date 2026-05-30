@@ -59,12 +59,17 @@ pub fn run_repro_case_with_limits(
 
                     let step_result = match &event {
                         EventCompiled::Choice(choice) => {
-                            let selected = case
-                                .choice_route
-                                .get(choice_cursor)
-                                .copied()
-                                .unwrap_or(0)
-                                .min(choice.options.len().saturating_sub(1));
+                            let selected = match select_repro_choice(
+                                case,
+                                choice_cursor,
+                                choice.options.len(),
+                            ) {
+                                Ok(selected) => selected,
+                                Err(message) => {
+                                    failing_event_ip = Some(event_ip);
+                                    break (ReproStopReason::RuntimeError, message);
+                                }
+                            };
                             choice_cursor = choice_cursor.saturating_add(1);
                             engine.choose(selected).map(|_| ())
                         }
@@ -118,6 +123,36 @@ pub fn run_repro_case_with_limits(
         signature_match,
         oracle_triggered,
     }
+}
+
+fn select_repro_choice(
+    case: &ReproCase,
+    choice_cursor: usize,
+    option_len: usize,
+) -> Result<usize, String> {
+    if option_len == 0 {
+        return Err(format!(
+            "choice at route index {choice_cursor} has no options"
+        ));
+    }
+    if case.choice_route.is_empty() {
+        return Ok(0);
+    }
+    let selected = case
+        .choice_route
+        .get(choice_cursor)
+        .copied()
+        .ok_or_else(|| {
+            format!(
+                "choice_route missing index {choice_cursor} for choice with {option_len} option(s)"
+            )
+        })?;
+    if selected >= option_len {
+        return Err(format!(
+            "choice_route[{choice_cursor}]={selected} is outside {option_len} option(s)"
+        ));
+    }
+    Ok(selected)
 }
 
 fn build_step_trace(

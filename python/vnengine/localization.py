@@ -28,7 +28,8 @@ class LocalizationCatalog:
         return default_table.get(key)
 
     def resolve_or_key(self, locale: str, key: str) -> str:
-        return self.resolve(locale, key) or key
+        value = self.resolve(locale, key)
+        return value if value is not None else key
 
     def validate_keys(
         self, required_keys: Iterable[str]
@@ -37,7 +38,12 @@ class LocalizationCatalog:
         missing: List[str] = []
         orphan: List[str] = []
 
-        for locale, table in sorted(self.locales.items()):
+        locales_to_check = set(self.locales)
+        if required:
+            locales_to_check.add(self.default_locale)
+
+        for locale in sorted(locales_to_check):
+            table = self.locales.get(locale, {})
             for key in sorted(required):
                 if key not in table:
                     missing.append(f"{locale}:{key}")

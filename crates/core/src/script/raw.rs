@@ -290,9 +290,21 @@ impl ScriptRaw {
                     args: args.clone(),
                 },
                 EventRaw::AudioAction(action) => {
+                    let channel = compile_audio_channel(&action.channel)?;
+                    let action_kind = compile_audio_action(&action.action)?;
+                    if action_kind == 0
+                        && !action
+                            .asset
+                            .as_deref()
+                            .is_some_and(|asset| !asset.trim().is_empty())
+                    {
+                        return Err(VnError::InvalidScript(
+                            "audio play action requires a non-empty asset".to_string(),
+                        ));
+                    }
                     EventCompiled::AudioAction(crate::event::AudioActionCompiled {
-                        channel: compile_audio_channel(&action.channel)?,
-                        action: compile_audio_action(&action.action)?,
+                        channel,
+                        action: action_kind,
                         asset: action.asset.as_deref().map(|s| pool.intern(s)),
                         volume: action.volume,
                         fade_duration_ms: action.fade_duration_ms,

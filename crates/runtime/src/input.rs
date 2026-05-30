@@ -1,11 +1,16 @@
 use std::collections::HashMap;
+use visual_novel_engine::runtime::{RenderCommand, SceneFrame};
 use winit::event::{ElementState, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
+
+const DESIGN_WIDTH: f64 = 1280.0;
+const DESIGN_HEIGHT: f64 = 720.0;
 
 /// Input actions produced by the runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum InputAction {
     None,
+    InvalidSceneAction,
     Advance,
     Choose(usize),
     Quit,
@@ -67,5 +72,129 @@ impl Input for ConfigurableInput {
             }
         }
         InputAction::None
+    }
+}
+
+/// Maps a pointer press in window coordinates to the topmost scene-frame button action.
+pub fn pointer_action_for_scene_frame(
+    frame: &SceneFrame,
+    window_size: (u32, u32),
+    x: f64,
+    y: f64,
+) -> InputAction {
+    for command in frame.commands.iter().rev() {
+        let RenderCommand::Button { id, rect, .. } = command else {
+            continue;
+        };
+        if !point_in_scaled_rect(window_size, x, y, *rect) {
+            continue;
+        }
+        if let Some(interaction) = frame
+            .interactions
+            .iter()
+            .find(|interaction| interaction.id == *id)
+        {
+            return input_action_from_scene_action(&interaction.action);
+        }
+    }
+    InputAction::None
+}
+
+fn point_in_scaled_rect(
+    window_size: (u32, u32),
+    x: f64,
+    y: f64,
+    rect: visual_novel_engine::runtime::LayoutRect,
+) -> bool {
+    let sx = window_size.0 as f64 / DESIGN_WIDTH;
+    let sy = window_size.1 as f64 / DESIGN_HEIGHT;
+    let min_x = rect.x as f64 * sx;
+    let min_y = rect.y as f64 * sy;
+    let max_x = (rect.x + rect.width) as f64 * sx;
+    let max_y = (rect.y + rect.height) as f64 * sy;
+    x >= min_x && x <= max_x && y >= min_y && y <= max_y
+}
+
+fn input_action_from_scene_action(action: &str) -> InputAction {
+    match action {
+        "advance" | "continue" | "resume" => InputAction::Advance,
+        "quit" => InputAction::Quit,
+        "back" => InputAction::Back,
+        "menu" => InputAction::Menu,
+        _ => action
+            .strip_prefix("choose:")
+            .map(|index| {
+                index
+                    .parse::<usize>()
+                    .map(InputAction::Choose)
+                    .unwrap_or(InputAction::InvalidSceneAction)
+            })
+            .unwrap_or(InputAction::InvalidSceneAction),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use visual_novel_engine::runtime::{InteractionSpec, LayoutRect};
+
+    #[test]
+    fn pointer_action_maps_choice_buttons_from_design_to_window_coordinates() {
+        let frame = SceneFrame {
+            commands: vec![RenderCommand::Button {
+                id: "choice:1".to_string(),
+                label: "Second".to_string(),
+                style: "button.choice".to_string(),
+                rect: LayoutRect {
+                    x: 320.0,
+                    y: 180.0,
+                    width: 320.0,
+                    height: 80.0,
+                },
+            }],
+            interactions: vec![InteractionSpec {
+                id: "choice:1".to_string(),
+                label: "Second".to_string(),
+                action: "choose:1".to_string(),
+            }],
+            ..SceneFrame::default()
+        };
+
+        assert_eq!(
+            pointer_action_for_scene_frame(&frame, (640, 360), 200.0, 110.0),
+            InputAction::Choose(1)
+        );
+        assert_eq!(
+            pointer_action_for_scene_frame(&frame, (640, 360), 40.0, 40.0),
+            InputAction::None
+        );
+    }
+
+    #[test]
+    fn pointer_action_maps_malformed_scene_actions_to_invalid_not_none() {
+        let frame = SceneFrame {
+            commands: vec![RenderCommand::Button {
+                id: "choice:broken".to_string(),
+                label: "Broken".to_string(),
+                style: "button.choice".to_string(),
+                rect: LayoutRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 320.0,
+                    height: 80.0,
+                },
+            }],
+            interactions: vec![InteractionSpec {
+                id: "choice:broken".to_string(),
+                label: "Broken".to_string(),
+                action: "choose:not-a-number".to_string(),
+            }],
+            ..SceneFrame::default()
+        };
+
+        assert_eq!(
+            pointer_action_for_scene_frame(&frame, (640, 360), 10.0, 10.0),
+            InputAction::InvalidSceneAction
+        );
     }
 }

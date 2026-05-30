@@ -90,6 +90,7 @@ class Engine:
 class PyEngine(Engine): ...
 
 class StoryNode:
+    node_type: str
     @classmethod
     def start(cls) -> "StoryNode": ...
     @classmethod
@@ -426,6 +427,40 @@ class FragmentPort(_JsonRoundtrip):
     def from_json(cls, source: str) -> "FragmentPort": ...
 
 class LintIssue:
+    severity: "LintSeverity"
+    message: str
+    node_id: Optional[int]
+    event_ip: Optional[int]
+    edge_from: Optional[int]
+    edge_to: Optional[int]
+    asset_path: Optional[str]
+    phase: str
+    code: str
+    diagnostic_id: str
+    message_es: str
+    message_en: str
+    message_key: str
+    what_happened_es: str
+    what_happened_en: str
+    root_cause_es: str
+    root_cause_en: str
+    why_failed_es: str
+    why_failed_en: str
+    how_to_fix_es: str
+    how_to_fix_en: str
+    consequence_es: str
+    consequence_en: str
+    action_steps_es: List[str]
+    action_steps_en: List[str]
+    expected_es: str
+    expected_en: str
+    docs_ref: str
+    target: Optional[str]
+    field_path: Optional[str]
+    trace_id: Optional[str]
+    operation_id: Optional[str]
+    blocked_by: Optional[str]
+    semantic_values: List[str]
     def localized(self, locale: Optional[str] = ...) -> Dict[str, Any]: ...
 
 class LayeredSceneObject:

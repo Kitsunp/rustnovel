@@ -125,6 +125,28 @@ fn document_command_bus_layer_locked_trace() {
 }
 
 #[test]
+fn document_command_bus_rejects_unknown_layer_object_ids_without_stale_overrides() {
+    let (document, _, _) = scene_document();
+    let mut bus = AuthoringDocumentCommandBus::new(document);
+
+    let err = bus
+        .apply(AuthoringDocumentCommand::SetLayerVisible {
+            object_id: "missing-layer-object".to_string(),
+            visible: false,
+        })
+        .expect_err("unknown layer object must not create a stale override");
+
+    assert!(err.contains("unknown composer layer object"));
+    assert!(bus.document().composer_layer_overrides.is_empty());
+    assert!(bus.document().operation_log.is_empty());
+    assert!(bus.document().verification_runs.is_empty());
+    assert!(bus
+        .read_model()
+        .composer_layer("missing-layer-object")
+        .is_none());
+}
+
+#[test]
 fn document_command_bus_background_fit_trace() {
     let (document, scene_id, _) = scene_document();
     let mut bus = AuthoringDocumentCommandBus::new(document);

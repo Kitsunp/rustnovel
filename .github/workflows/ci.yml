@@ -178,19 +178,28 @@ jobs:
           assert envelope["data"] == report_at_export
           assert report["target_platform"] == "linux"
           assert report["executable"] == "game"
+          assert report["expected_executable"] == "game"
           assert report["compat_report"] == "meta/compat_report.json"
           assert report["bundle_hmac_sha256"] == signature
           runtime_entry = next(entry for entry in manifest["files"] if entry["path"] == report["runtime_artifact"])
           assert report["runtime_artifact_sha256"] == runtime_entry["sha256"]
           assert compat["target_platform"] == "linux"
+          assert compat["generator_os"] == report["generator_os"]
           assert compat["expected_executable"] == "game"
+          assert compat["expected_executable"] == report["expected_executable"]
           assert compat["runtime_artifact_sha256"] == report["runtime_artifact_sha256"]
           assert compat["graphics_backend"] == "software"
+          assert compat["graphics_backend"] == report["graphics_backend"]
           assert compat["wgpu_fallback"] is True
+          assert report["wgpu_fallback"] is True
           assert compat["total_size"] > 0
-          assert compat["bundle_file_manifest_sha256"] == hashlib.sha256(manifest_bytes).hexdigest()
+          assert report["total_size"] == compat["total_size"]
+          manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
+          assert report["bundle_file_manifest_sha256"] == manifest_hash
+          assert compat["bundle_file_manifest_sha256"] == manifest_hash
           assert compat["bundle_hmac_sha256"] == signature
           assert isinstance(compat["diagnostics"], list)
+          assert report["hashes"] == manifest["files"]
           assert compat["hashes"] == manifest["files"]
           assert smoke["schema"] == "vnengine.player_runtime_smoke.v1"
           assert smoke["status"] == "passed"
@@ -205,6 +214,16 @@ jobs:
               "export.runtime_smoke.advance_scene",
               "export.runtime_smoke.close",
           }.issubset(smoke_codes)
+          for check in smoke["checks"]:
+              assert check["severity"]
+              assert check["probable_cause"]
+              assert check["suggested_action"]
+              assert check["consequence"]
+              assert check["trace_id"].startswith("export-smoke-")
+              if check["status"] == "passed":
+                  assert check["blocking_release"] is False
+          asset_load = next(check for check in smoke["checks"] if check["code"] == "export.runtime_smoke.asset_load")
+          assert asset_load["asset"] == "assets/backgrounds/smoke.png"
           assert any(entry["path"] == "game" for entry in manifest["files"])
           total_size = 0
           for entry in manifest["files"]:
@@ -214,6 +233,7 @@ jobs:
               assert len(data) == entry["size"], entry["path"]
               assert hashlib.sha256(data).hexdigest() == entry["sha256"], entry["path"]
           assert total_size == compat["total_size"]
+          assert total_size == report["total_size"]
           PY
       - name: Upload Linux package smoke artifacts
         uses: actions/upload-artifact@v4

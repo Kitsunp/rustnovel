@@ -198,7 +198,21 @@ impl ImportState {
         }
 
         if let Some(audio) = parse_play_decl(text) {
-            self.events.push(EventRaw::AudioAction(audio));
+            if audio
+                .asset
+                .as_deref()
+                .is_some_and(|asset| !asset.trim().is_empty())
+            {
+                self.events.push(EventRaw::AudioAction(audio));
+            } else {
+                self.push_ext_call(
+                    "renpy_play_audio",
+                    vec![text.to_string()],
+                    Some(&line),
+                    "unsupported_audio_play_missing_asset",
+                    "Ren'Py play audio without a resolved asset converted to ext_call",
+                );
+            }
             *idx = idx.saturating_add(1);
             return;
         }

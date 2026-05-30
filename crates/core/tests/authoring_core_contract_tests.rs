@@ -417,6 +417,83 @@ fn route_coverage_report_marks_route_and_depth_limits() {
 }
 
 #[test]
+fn route_coverage_report_records_invalid_start_label() {
+    let script = ScriptRaw::new(
+        vec![EventRaw::Dialogue(DialogueRaw {
+            speaker: "Ava".to_string(),
+            text: "Hello".to_string(),
+        })],
+        BTreeMap::from([("start".to_string(), 7)]),
+    );
+
+    let report = compiler::enumerate_choice_routes_with_report(&script, 100, 32, 12);
+
+    assert!(report.routes.is_empty());
+    assert!(report
+        .errors
+        .iter()
+        .any(|error| error.contains("start label points outside executable events")));
+}
+
+#[test]
+fn route_coverage_report_records_missing_choice_target_labels() {
+    let script = ScriptRaw::new(
+        vec![EventRaw::Choice(ChoiceRaw {
+            prompt: "Route?".to_string(),
+            options: vec![ChoiceOptionRaw {
+                text: "Missing".to_string(),
+                target: "missing_label".to_string(),
+            }],
+        })],
+        BTreeMap::from([("start".to_string(), 0)]),
+    );
+
+    let report = compiler::enumerate_choice_routes_with_report(&script, 100, 32, 12);
+
+    assert_eq!(report.routes, vec![Vec::<usize>::new()]);
+    assert!(report.errors.iter().any(
+        |error| error.contains("choice at ip 0 option 0 targets missing label 'missing_label'")
+    ));
+}
+
+#[test]
+fn dry_run_scripted_route_rejects_out_of_range_choice_index() {
+    let script = ScriptRaw::new(
+        vec![EventRaw::Choice(ChoiceRaw {
+            prompt: "Route?".to_string(),
+            options: vec![
+                ChoiceOptionRaw {
+                    text: "A".to_string(),
+                    target: "__end".to_string(),
+                },
+                ChoiceOptionRaw {
+                    text: "B".to_string(),
+                    target: "__end".to_string(),
+                },
+            ],
+        })],
+        BTreeMap::from([("start".to_string(), 0), ("__end".to_string(), 1)]),
+    );
+    let engine = Engine::new(
+        script,
+        SecurityPolicy::default(),
+        ResourceLimiter::default(),
+    )
+    .expect("choice script should initialize");
+
+    let outcome = compiler::run_dry_run(engine, &compiler::ChoicePolicy::Scripted(vec![99]), 8);
+
+    assert_eq!(
+        outcome.report.stop_reason,
+        compiler::DryRunStopReason::RuntimeError
+    );
+    assert!(outcome
+        .issues
+        .iter()
+        .any(|issue| issue.code == LintCode::DryRunRuntimeError));
+}
+
+#[test]
 fn authoring_report_fingerprint_tracks_script_graph_and_asset_refs() {
     let mut graph = NodeGraph::new();
     let scene = graph.add_node(

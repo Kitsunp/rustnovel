@@ -30,6 +30,18 @@ fn catalog_resolves_with_locale_fallback() {
 }
 
 #[test]
+fn catalog_preserves_intentional_empty_translations() {
+    let mut catalog = LocalizationCatalog::new("en");
+    catalog.insert_locale_table(
+        "en",
+        BTreeMap::from([("ui.hidden_label".to_string(), String::new())]),
+    );
+
+    assert_eq!(catalog.resolve_or_key("en", "ui.hidden_label"), "");
+    assert_eq!(catalog.resolve_or_key("en", "missing"), "missing");
+}
+
+#[test]
 fn collect_script_keys_detects_loc_prefix() {
     let script = ScriptRaw::new(
         vec![
@@ -77,4 +89,16 @@ fn validate_keys_reports_missing_and_orphan() {
             && issue.key == "unused"
             && issue.kind == LocalizationIssueKind::OrphanKey
     }));
+}
+
+#[test]
+fn validate_keys_reports_default_locale_missing_when_catalog_empty() {
+    let catalog = LocalizationCatalog::new("en");
+
+    let issues = catalog.validate_keys(["dialogue.intro"]);
+
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].locale, "en");
+    assert_eq!(issues[0].key, "dialogue.intro");
+    assert_eq!(issues[0].kind, LocalizationIssueKind::MissingKey);
 }

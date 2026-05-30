@@ -1,5 +1,7 @@
 use visual_novel_engine::{
-    runtime::{AudioCommand, Engine, ScriptRaw},
+    runtime::{
+        AudioActionCompiled, AudioCommand, Engine, EventCompiled, ScriptCompiled, ScriptRaw,
+    },
     AssetId, ResourceLimiter, SecurityPolicy,
 };
 
@@ -102,6 +104,32 @@ fn audio_action_fade_out_emits_stop_bgm() {
         audio[0],
         AudioCommand::StopBgm { fade_out } if fade_out.as_millis() == 900
     ));
+}
+
+#[test]
+fn from_compiled_rejects_invalid_audio_mapping_before_step() {
+    let script = ScriptCompiled {
+        events: vec![EventCompiled::AudioAction(AudioActionCompiled {
+            channel: 0,
+            action: 9,
+            asset: Some("bgm.ogg".into()),
+            volume: Some(0.5),
+            fade_duration_ms: Some(250),
+            loop_playback: Some(true),
+        })],
+        labels: [("start".to_string(), 0)].into_iter().collect(),
+        start_ip: 0,
+        flag_count: 0,
+    };
+
+    let err = Engine::from_compiled(
+        script,
+        SecurityPolicy::default(),
+        ResourceLimiter::default(),
+    )
+    .expect_err("invalid compiled audio actions must not silently no-op at runtime");
+
+    assert!(err.to_string().contains("invalid compiled audio action"));
 }
 
 #[test]

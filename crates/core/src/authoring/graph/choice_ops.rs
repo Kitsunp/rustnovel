@@ -19,7 +19,10 @@ impl NodeGraph {
             return false;
         }
         if let StoryNode::Choice { options, .. } = &from_node {
-            if from_port >= options.len() {
+            if from_port > options.len() {
+                return false;
+            }
+            if from_port == options.len() {
                 return self
                     .connect_new_choice_option(from, to, "New route")
                     .is_some();

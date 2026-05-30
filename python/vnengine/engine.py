@@ -40,9 +40,17 @@ class Engine:
 
         result = call_native_method(self._engine, "step", "step execution")
         if hasattr(result, "event"):
-            self._last_audio = getattr(result, "audio", [])
+            if not hasattr(result, "audio"):
+                raise RuntimeError(
+                    "native step result missing 'audio' for step audio command tracking"
+                )
+            self._last_audio = result.audio
             return result.event
-        self._last_audio = []
+        self._last_audio = call_native_method(
+            self._engine,
+            "get_last_audio_commands",
+            "step audio command tracking",
+        )
         return result
 
     def choose(self, option_index: int) -> Dict[str, Any]:
@@ -51,8 +59,11 @@ class Engine:
         event = call_native_method(
             self._engine, "choose", "choice handling", option_index
         )
-        audio_method = getattr(self._engine, "get_last_audio_commands", None)
-        self._last_audio = audio_method() if audio_method is not None else []
+        self._last_audio = call_native_method(
+            self._engine,
+            "get_last_audio_commands",
+            "choice audio command tracking",
+        )
         return event
 
     def register_handler(self, callback: Any) -> None:
@@ -124,11 +135,9 @@ class Engine:
     def supported_event_types(self) -> Any:
         """Return event types supported by the native runtime binding."""
 
-        method = getattr(self._engine, "supported_event_types", None)
-        if method is not None:
-            return method()
-        # Conservative fallback for very old native modules.
-        return list(SUPPORTED_EVENT_TYPES)
+        return call_native_method(
+            self._engine, "supported_event_types", "event type contract"
+        )
 
     def set_prefetch_depth(self, depth: int) -> None:
         """Configure lookahead depth used by native prefetch hints."""
@@ -138,10 +147,9 @@ class Engine:
     def prefetch_assets_hint(self) -> Any:
         """Return upcoming asset paths suggested for prefetching."""
 
-        method = getattr(self._engine, "prefetch_assets_hint", None)
-        if method is not None:
-            return method()
-        return []
+        return call_native_method(
+            self._engine, "prefetch_assets_hint", "prefetch API"
+        )
 
     def last_audio_commands(self) -> Any:
         """Return the audio commands emitted by the last `step()` or `choose()` call."""

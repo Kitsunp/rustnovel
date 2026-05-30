@@ -129,6 +129,88 @@ class EngineWrapperTests(unittest.TestCase):
             engine.last_audio_commands(), [{"type": "play_bgm", "path": "theme.ogg"}]
         )
 
+    def test_engine_step_tracks_legacy_native_audio_commands(self):
+        module = types.ModuleType("visual_novel_engine")
+
+        class FakeEngine:
+            def __init__(self, script_json):
+                self.script_json = script_json
+
+            def step(self):
+                return {"type": "dialogue", "speaker": "Ava", "text": "Hola"}
+
+            def get_last_audio_commands(self):
+                return [{"type": "play_bgm", "path": "theme.ogg"}]
+
+        module.Engine = FakeEngine
+        sys.modules["visual_novel_engine"] = module
+
+        engine = Engine.from_script(
+            {
+                "script_schema_version": SCRIPT_SCHEMA_VERSION,
+                "events": [],
+                "labels": {"start": 0},
+            }
+        )
+        event = engine.step()
+        self.assertEqual(event["type"], "dialogue")
+        self.assertEqual(
+            engine.last_audio_commands(), [{"type": "play_bgm", "path": "theme.ogg"}]
+        )
+
+    def test_engine_step_requires_audio_command_binding_for_legacy_result(self):
+        module = types.ModuleType("visual_novel_engine")
+
+        class FakeEngine:
+            def __init__(self, script_json):
+                self.script_json = script_json
+
+            def step(self):
+                return {"type": "dialogue", "speaker": "Ava", "text": "Hola"}
+
+        module.Engine = FakeEngine
+        sys.modules["visual_novel_engine"] = module
+
+        engine = Engine.from_script(
+            {
+                "script_schema_version": SCRIPT_SCHEMA_VERSION,
+                "events": [],
+                "labels": {"start": 0},
+            }
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            engine.step()
+        self.assertIn("missing 'get_last_audio_commands'", str(ctx.exception))
+        self.assertIn("step audio command tracking", str(ctx.exception))
+
+    def test_engine_step_requires_audio_field_on_step_result(self):
+        module = types.ModuleType("visual_novel_engine")
+
+        class StepResult:
+            def __init__(self):
+                self.event = {"type": "dialogue", "speaker": "Ava", "text": "Hola"}
+
+        class FakeEngine:
+            def __init__(self, script_json):
+                self.script_json = script_json
+
+            def step(self):
+                return StepResult()
+
+        module.Engine = FakeEngine
+        sys.modules["visual_novel_engine"] = module
+
+        engine = Engine.from_script(
+            {
+                "script_schema_version": SCRIPT_SCHEMA_VERSION,
+                "events": [],
+                "labels": {"start": 0},
+            }
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            engine.step()
+        self.assertIn("step result missing 'audio'", str(ctx.exception))
+
     def test_engine_choose_tracks_native_audio_commands(self):
         module = types.ModuleType("visual_novel_engine")
 
@@ -157,6 +239,31 @@ class EngineWrapperTests(unittest.TestCase):
         self.assertEqual(
             engine.last_audio_commands(), [{"type": "play_bgm", "path": "branch.ogg"}]
         )
+
+    def test_engine_choose_requires_audio_command_binding(self):
+        module = types.ModuleType("visual_novel_engine")
+
+        class FakeEngine:
+            def __init__(self, script_json):
+                self.script_json = script_json
+
+            def choose(self, option_index):
+                return {"type": "choice", "selected": option_index}
+
+        module.Engine = FakeEngine
+        sys.modules["visual_novel_engine"] = module
+
+        engine = Engine.from_script(
+            {
+                "script_schema_version": SCRIPT_SCHEMA_VERSION,
+                "events": [],
+                "labels": {"start": 0},
+            }
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            engine.choose(0)
+        self.assertIn("missing 'get_last_audio_commands'", str(ctx.exception))
+        self.assertIn("choice audio command tracking", str(ctx.exception))
 
     def test_engine_ui_state_calls_native(self):
         module = types.ModuleType("visual_novel_engine")
@@ -256,7 +363,7 @@ class EngineWrapperTests(unittest.TestCase):
         engine.set_prefetch_depth(2)
         self.assertEqual(engine.prefetch_assets_hint(), ["bg/room.png"])
 
-    def test_engine_supported_event_types_fallback_uses_python_contract(self):
+    def test_engine_prefetch_hint_requires_binding(self):
         module = types.ModuleType("visual_novel_engine")
 
         class FakeEngine:
@@ -273,7 +380,32 @@ class EngineWrapperTests(unittest.TestCase):
                 "labels": {"start": 0},
             }
         )
-        self.assertEqual(engine.supported_event_types(), list(SUPPORTED_EVENT_TYPES))
+        with self.assertRaises(RuntimeError) as ctx:
+            engine.prefetch_assets_hint()
+        self.assertIn("missing 'prefetch_assets_hint'", str(ctx.exception))
+        self.assertIn("prefetch API", str(ctx.exception))
+
+    def test_engine_supported_event_types_requires_binding(self):
+        module = types.ModuleType("visual_novel_engine")
+
+        class FakeEngine:
+            def __init__(self, script_json):
+                self.script_json = script_json
+
+        module.Engine = FakeEngine
+        sys.modules["visual_novel_engine"] = module
+
+        engine = Engine.from_script(
+            {
+                "script_schema_version": SCRIPT_SCHEMA_VERSION,
+                "events": [],
+                "labels": {"start": 0},
+            }
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            engine.supported_event_types()
+        self.assertIn("missing 'supported_event_types'", str(ctx.exception))
+        self.assertIn("event type contract", str(ctx.exception))
 
     def test_engine_can_be_created_from_any_cwd(self):
         repo_python = Path(__file__).resolve().parents[2] / "python"
@@ -293,6 +425,11 @@ class Engine:
 
     def current_event(self):
         return {"type": "dialogue", "speaker": "Ava", "text": "Hola"}
+
+def validate_script_schema_version(version=None, policy="strict_current"):
+    if version == "1.0":
+        return version
+    raise ValueError(f"unsupported schema {version!r} under {policy}")
 """.strip()
             )
 

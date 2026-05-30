@@ -406,8 +406,16 @@ impl EditorWorkbench {
             },
         };
 
-        if let Some(prefs) = loaded_prefs {
-            workbench.apply_layout_prefs(&prefs);
+        match loaded_prefs {
+            Ok(Some(prefs)) => {
+                workbench.apply_layout_prefs(&prefs);
+            }
+            Ok(None) => {}
+            Err(err) => {
+                workbench.toast = Some(ToastState::warning(format!(
+                    "Layout preferences could not be loaded: {err}"
+                )));
+            }
         }
         workbench.last_layout_prefs = workbench.collect_layout_prefs();
 
@@ -441,9 +449,15 @@ impl EditorWorkbench {
         }
     }
 
-    fn load_layout_prefs(path: &std::path::Path) -> Option<LayoutPreferences> {
-        let raw = std::fs::read_to_string(path).ok()?;
-        serde_json::from_str(&raw).ok()
+    fn load_layout_prefs(path: &std::path::Path) -> Result<Option<LayoutPreferences>, String> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw = std::fs::read_to_string(path)
+            .map_err(|err| format!("read '{}': {err}", path.display()))?;
+        serde_json::from_str(&raw)
+            .map(Some)
+            .map_err(|err| format!("parse layout preferences '{}': {err}", path.display()))
     }
 
     fn apply_layout_prefs(&mut self, prefs: &LayoutPreferences) {
@@ -567,3 +581,21 @@ mod repro_ops;
 mod ui;
 mod ui_actions;
 mod workspace_layout_ops;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corrupt_layout_prefs_are_not_silently_ignored() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("layout.json");
+        std::fs::write(&path, "{not-json").expect("write corrupt prefs");
+
+        let err = EditorWorkbench::load_layout_prefs(&path)
+            .expect_err("corrupt layout preferences must report an error");
+
+        assert!(err.contains("parse layout preferences"));
+        assert!(err.contains("layout.json"));
+    }
+}

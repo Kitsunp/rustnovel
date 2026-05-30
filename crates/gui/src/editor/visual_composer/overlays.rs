@@ -50,7 +50,9 @@ pub fn render_runtime_controls(
                 *action = Some(VisualComposerAction::TestAdvance);
             }
         }
-        Err(_) => {}
+        Err(err) => {
+            ui.label(format!("Runtime controls unavailable: {err}"));
+        }
     }
 }
 
@@ -63,13 +65,18 @@ pub fn render_runtime_overlay(
     layer_overrides: &HashMap<String, LayerOverride>,
     action: &mut Option<VisualComposerAction>,
 ) {
-    let Some(source) = selected_overlay_source(
+    let source = match selected_overlay_source(
         engine.as_ref(),
         selected_authoring_node,
         preview_mode,
         layer_overrides,
-    ) else {
-        return;
+    ) {
+        Ok(Some(source)) => source,
+        Ok(None) => return,
+        Err(err) => {
+            render_overlay_error(ui, geometry, &err);
+            return;
+        }
     };
     match source {
         OverlaySource::Dialogue { speaker, text } => {
@@ -94,17 +101,47 @@ pub fn selected_overlay_source(
     selected_authoring_node: Option<&StoryNode>,
     preview_mode: ComposerPreviewMode,
     layer_overrides: &HashMap<String, LayerOverride>,
-) -> Option<OverlaySource> {
+) -> Result<Option<OverlaySource>, String> {
     let authoring = || authoring_overlay_source(selected_authoring_node, layer_overrides);
     let runtime = || {
-        let event = engine.and_then(|engine| engine.current_event().ok())?;
-        runtime_overlay_source(&event, layer_overrides)
+        let Some(engine) = engine else {
+            return Ok(None);
+        };
+        let event = engine
+            .current_event()
+            .map_err(|err| format!("runtime overlay current event unavailable: {err}"))?;
+        Ok(runtime_overlay_source(&event, layer_overrides))
     };
     if preview_mode.uses_runtime_state() {
-        runtime().or_else(authoring)
+        runtime().map(|source| source.or_else(authoring))
     } else {
-        authoring().or_else(runtime)
+        let source = authoring();
+        if source.is_some() {
+            Ok(source)
+        } else {
+            runtime()
+        }
     }
+}
+
+fn render_overlay_error(
+    ui: &mut egui::Ui,
+    geometry: crate::editor::scene_stage::StageGeometry,
+    message: &str,
+) {
+    let rect = geometry.stage_rect.shrink2(egui::vec2(18.0, 18.0));
+    ui.painter().rect_filled(
+        rect,
+        4.0,
+        egui::Color32::from_rgba_premultiplied(72, 26, 32, 220),
+    );
+    ui.painter().text(
+        rect.left_top() + egui::vec2(12.0, 12.0),
+        egui::Align2::LEFT_TOP,
+        format!("Runtime preview error: {message}"),
+        egui::FontId::proportional(14.0),
+        egui::Color32::from_rgb(255, 226, 226),
+    );
 }
 
 pub fn runtime_overlay_visible(

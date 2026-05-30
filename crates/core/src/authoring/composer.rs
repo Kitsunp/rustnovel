@@ -18,7 +18,7 @@ use runtime_objects::collect_visual_objects;
 
 pub use objects::{
     apply_layer_overrides, list_layered_objects, move_scene_object, set_layer_locked,
-    set_layer_visible,
+    set_layer_visible, set_scene_object_pose,
 };
 pub use presentation::build_presentation_snapshot;
 pub use preview::ComposerPreviewSession;

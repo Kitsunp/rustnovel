@@ -364,12 +364,19 @@ fn export_bundle_materialized(
 
     let integrity_scope = "bundle_file_manifest_v2_signed_manifest_covers_payload_files";
 
+    let (graphics_backend, wgpu_fallback, backend_diagnostic) = export_graphics_backend_from_env();
+    let mut diagnostics = plan.diagnostics.clone();
+    if let Some(diagnostic) = backend_diagnostic {
+        diagnostics.push(diagnostic);
+    }
+
     let mut report = ExportBundleReport {
         schema: "vnengine.export_bundle_report.v1".to_string(),
         target_platform: spec.target_platform.as_str().to_string(),
         output_layout_version: spec.output_layout_version,
         project_root: normalize_path_display(&project_root),
         output_root: normalize_path_display(reported_output_root),
+        generator_os: std::env::consts::OS.to_string(),
         script_source: normalize_path_display(
             Path::new("scripts").join(&runtime_script_rel).as_path(),
         ),
@@ -381,16 +388,22 @@ fn export_bundle_materialized(
         runtime_artifact: runtime_artifact_rel,
         runtime_artifact_sha256,
         executable: executable_rel,
+        expected_executable: spec.target_platform.expected_executable_name().to_string(),
         launcher: launcher_rel,
+        graphics_backend,
+        wgpu_fallback,
+        total_size: 0,
+        hashes: Vec::new(),
         integrity: spec.integrity.as_str().to_string(),
         bundle_hmac_sha256: None,
         bundle_file_manifest: Some(normalize_path_display(Path::new(
             "meta/bundle_file_manifest.json",
         ))),
+        bundle_file_manifest_sha256: None,
         compat_report: Some(normalize_path_display(Path::new("meta/compat_report.json"))),
         integrity_scope: integrity_scope.to_string(),
         capabilities: capability_report,
-        diagnostics: plan.diagnostics.clone(),
+        diagnostics,
         smoke_result: not_run_smoke_result(spec.target_platform),
     };
 
@@ -413,6 +426,9 @@ fn export_bundle_materialized(
     let file_manifest_json = serde_json::to_string_pretty(&file_manifest_payload)
         .map_err(|e| invalid_bundle(format!("serialize bundle file manifest: {e}")))?;
     let file_manifest_sha256 = sha256_hex(file_manifest_json.as_bytes());
+    report.bundle_file_manifest_sha256 = Some(file_manifest_sha256.clone());
+    report.total_size = file_manifest_entries.iter().map(|entry| entry.size).sum();
+    report.hashes = file_manifest_entries.clone();
     let file_manifest_out = meta_dir.join("bundle_file_manifest.json");
     fs::write(&file_manifest_out, file_manifest_json.as_bytes()).map_err(|e| {
         invalid_bundle(format!(
@@ -477,7 +493,7 @@ fn export_bundle_materialized(
 fn build_compat_report(
     target_platform: ExportTargetPlatform,
     report: &ExportBundleReport,
-    file_manifest_entries: &[BundleFileEntry],
+    _file_manifest_entries: &[BundleFileEntry],
     file_manifest_sha256: &str,
 ) -> ExportCompatReport {
     ExportCompatReport {
@@ -488,15 +504,67 @@ fn build_compat_report(
         runtime_artifact_sha256: report.runtime_artifact_sha256.clone(),
         expected_executable: target_platform.expected_executable_name().to_string(),
         executable: report.executable.clone(),
-        graphics_backend: "software".to_string(),
-        wgpu_fallback: true,
+        graphics_backend: report.graphics_backend.clone(),
+        wgpu_fallback: report.wgpu_fallback,
         assets_copied: report.assets_copied,
-        total_size: file_manifest_entries.iter().map(|entry| entry.size).sum(),
+        total_size: report.total_size,
         diagnostics: report.diagnostics.clone(),
-        hashes: file_manifest_entries.to_vec(),
-        bundle_file_manifest_sha256: file_manifest_sha256.to_string(),
+        hashes: report.hashes.clone(),
+        bundle_file_manifest_sha256: report
+            .bundle_file_manifest_sha256
+            .clone()
+            .unwrap_or_else(|| file_manifest_sha256.to_string()),
         bundle_hmac_sha256: report.bundle_hmac_sha256.clone(),
         smoke_result: report.smoke_result.clone(),
+    }
+}
+
+fn export_graphics_backend_from_env() -> (String, bool, Option<ExportDiagnostic>) {
+    let value = std::env::var("VNENGINE_RENDER_BACKEND").ok();
+    export_graphics_backend_from_value(value.as_deref())
+}
+
+fn export_graphics_backend_from_value(
+    value: Option<&str>,
+) -> (String, bool, Option<ExportDiagnostic>) {
+    match value
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("wgpu") | Some("hardware") => ("wgpu".to_string(), false, None),
+        Some("auto") | Some("") => ("auto".to_string(), true, None),
+        Some("software") | Some("pixels") | None => ("software".to_string(), true, None),
+        Some(other) => {
+            let diagnostic = unsupported_render_backend_diagnostic(other);
+            ("software".to_string(), true, Some(diagnostic))
+        }
+    }
+}
+
+fn unsupported_render_backend_diagnostic(value: &str) -> ExportDiagnostic {
+    let code = "export.render_backend.unsupported";
+    ExportDiagnostic {
+        code: code.to_string(),
+        severity: "warning".to_string(),
+        phase: "package".to_string(),
+        target: "export".to_string(),
+        trace_id: format!(
+            "export-render-backend-{}",
+            &sha256_hex(format!("{code}:{value}").as_bytes())[..16]
+        ),
+        message: format!(
+            "unsupported VNENGINE_RENDER_BACKEND value '{value}' during export; using software metadata"
+        ),
+        probable_cause: "The render backend environment variable contains an unsupported value."
+            .to_string(),
+        suggested_action: "Use auto, software, pixels, wgpu, or hardware.".to_string(),
+        consequence: "Export compatibility metadata may not match the intended renderer."
+            .to_string(),
+        blocking_release: false,
+        file: None,
+        asset: None,
+        node: None,
+        field: Some("VNENGINE_RENDER_BACKEND".to_string()),
     }
 }
 
@@ -517,10 +585,19 @@ fn not_run_smoke_result(target_platform: ExportTargetPlatform) -> ExportRuntimeS
         checks: vec![ExportRuntimeSmokeCheck {
             code: code.to_string(),
             status: "not_run".to_string(),
+            severity: "warning".to_string(),
             phase: "smoke".to_string(),
             target,
             trace_id,
             message: "Package has not been loaded by the runtime smoke yet.".to_string(),
+            probable_cause: "The export completed before a target runtime smoke job executed the bundle.".to_string(),
+            suggested_action: "Run the package smoke job on the target platform before release.".to_string(),
+            consequence: "The package remains unverified as playable until smoke_result is updated to passed.".to_string(),
+            blocking_release: true,
+            file: Some("meta/runtime_smoke_report.json".to_string()),
+            asset: None,
+            node: None,
+            field: Some("smoke_result".to_string()),
         }],
     }
 }
@@ -671,4 +748,43 @@ pub fn export_windows_executable_bundle(spec: ExportBundleSpec) -> VnResult<Expo
         )));
     }
     export_executable_bundle(spec)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_graphics_backend_metadata_tracks_runtime_backend_preference() {
+        let (backend, fallback, diagnostic) = export_graphics_backend_from_value(Some("wgpu"));
+        assert_eq!(backend, "wgpu");
+        assert!(!fallback);
+        assert!(diagnostic.is_none());
+
+        let (backend, fallback, diagnostic) =
+            export_graphics_backend_from_value(Some("hardware"));
+        assert_eq!(backend, "wgpu");
+        assert!(!fallback);
+        assert!(diagnostic.is_none());
+
+        let (backend, fallback, diagnostic) = export_graphics_backend_from_value(Some("auto"));
+        assert_eq!(backend, "auto");
+        assert!(fallback);
+        assert!(diagnostic.is_none());
+
+        let (backend, fallback, diagnostic) = export_graphics_backend_from_value(None);
+        assert_eq!(backend, "software");
+        assert!(fallback);
+        assert!(diagnostic.is_none());
+
+        let (backend, fallback, diagnostic) = export_graphics_backend_from_value(Some("banana"));
+        assert_eq!(backend, "software");
+        assert!(fallback);
+        let diagnostic = diagnostic.expect("invalid backend should report a diagnostic");
+        assert_eq!(diagnostic.code, "export.render_backend.unsupported");
+        assert!(diagnostic
+            .message
+            .contains("unsupported VNENGINE_RENDER_BACKEND"));
+        assert_eq!(diagnostic.field.as_deref(), Some("VNENGINE_RENDER_BACKEND"));
+    }
 }

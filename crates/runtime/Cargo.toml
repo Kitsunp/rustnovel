@@ -6,6 +6,8 @@ license = "MIT"
 
 [dependencies]
 visual_novel_engine = { path = "../core" }
+ab_glyph = "0.2"
+image = { version = "0.25", default-features = false, features = ["png"] }
 pixels = "0.17.1"
 winit = "0.29"
 wgpu = "29"

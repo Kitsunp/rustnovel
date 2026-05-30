@@ -124,7 +124,7 @@ fn export_bundle(
     } else {
         ::visual_novel_engine::export_bundle(spec)
     }
-    .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+    .map_err(vn_error_to_py)?;
     Ok(report.into())
 }
 

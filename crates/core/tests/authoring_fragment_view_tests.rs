@@ -36,6 +36,52 @@ fn active_fragment_filters_visible_nodes_and_connections() {
 }
 
 #[test]
+fn stale_active_fragment_does_not_hide_the_root_graph() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, AuthoringPosition::new(0.0, 0.0));
+    let inside = graph.add_node(dialogue("inside"), AuthoringPosition::new(100.0, 0.0));
+    assert!(graph.create_fragment("frag", "Fragment", vec![inside]));
+
+    let mut payload = serde_json::to_value(&graph).expect("graph json");
+    payload["graph_stack"]["active_fragment"] = serde_json::json!("missing-fragment");
+    let restored: NodeGraph = serde_json::from_value(payload).expect("restore graph");
+
+    assert_eq!(restored.active_fragment(), None);
+    assert_eq!(restored.visible_node_ids(), vec![start]);
+}
+
+#[test]
+fn leave_fragment_skips_stale_breadcrumb_entries() {
+    let mut graph = NodeGraph::new();
+    let outer = graph.add_node(dialogue("outer"), AuthoringPosition::new(0.0, 0.0));
+    let inner = graph.add_node(dialogue("inner"), AuthoringPosition::new(100.0, 0.0));
+    assert!(graph.create_fragment("outer", "Outer", vec![outer]));
+    assert!(graph.create_fragment("inner", "Inner", vec![inner]));
+
+    let mut payload = serde_json::to_value(&graph).expect("graph json");
+    payload["graph_stack"]["active_fragment"] = serde_json::json!("inner");
+    payload["graph_stack"]["breadcrumb"] = serde_json::json!(["outer", "missing-fragment"]);
+    let mut restored: NodeGraph = serde_json::from_value(payload).expect("restore graph");
+
+    assert!(restored.leave_fragment());
+    assert_eq!(restored.active_fragment(), Some("outer"));
+}
+
+#[test]
+fn create_fragment_rejects_missing_node_ids_without_partial_fragment() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, AuthoringPosition::new(0.0, 0.0));
+    let inside = graph.add_node(dialogue("inside"), AuthoringPosition::new(100.0, 0.0));
+
+    assert!(
+        !graph.create_fragment("partial", "Partial", vec![inside, 999_999]),
+        "fragment creation must reject the full request instead of dropping missing node ids"
+    );
+    assert!(graph.fragment("partial").is_none());
+    assert_eq!(graph.visible_node_ids(), vec![start, inside]);
+}
+
+#[test]
 fn subgraph_call_two_outputs_export_to_distinct_targets() {
     let mut graph = NodeGraph::new();
     let start = graph.add_node(StoryNode::Start, AuthoringPosition::new(0.0, 0.0));

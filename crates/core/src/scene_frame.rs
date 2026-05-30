@@ -465,13 +465,20 @@ impl SceneFramePresenter for HeadlessSceneFramePresenter {
         let report = validate_ui_theme(theme);
         let mut diagnostics = report.warnings;
         diagnostics.extend(report.errors);
-        self.last_layout = frame.layout.clone().or_else(|| {
-            Some(resolve_layout(
-                display.clone(),
-                StageProfile::default(),
-                LayoutPolicy::default(),
-            ))
-        });
+        self.last_layout = match frame.layout.clone() {
+            Some(layout) => Some(layout),
+            None => {
+                diagnostics.push(format!(
+                    "scene frame '{}' has no resolved layout; presenter used default policy",
+                    frame.frame_schema
+                ));
+                Some(resolve_layout(
+                    display.clone(),
+                    StageProfile::default(),
+                    LayoutPolicy::default(),
+                ))
+            }
+        };
         UiResponse {
             activated_actions: Vec::new(),
             diagnostics,

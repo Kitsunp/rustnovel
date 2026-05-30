@@ -1,5 +1,9 @@
 use super::super::*;
 use crate::editor::StoryNode;
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::Path;
 
 #[test]
 fn test_workbench_initialization() {
@@ -73,6 +77,160 @@ fn export_wizard_initializes_project_defaults_without_executing() {
         .output_root
         .contains(workbench.export_wizard.target.as_str()));
     assert_eq!(workbench.export_wizard.entry_script, "main.json");
+}
+
+fn minimal_pe_exe() -> Vec<u8> {
+    let mut bytes = vec![0u8; 128];
+    bytes[0..2].copy_from_slice(b"MZ");
+    bytes[0x3c..0x40].copy_from_slice(&0x40u32.to_le_bytes());
+    bytes[0x40..0x44].copy_from_slice(b"PE\0\0");
+    bytes[0x44..0x46].copy_from_slice(&0x8664u16.to_le_bytes());
+    bytes
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
+fn read_json(path: &Path) -> serde_json::Value {
+    serde_json::from_str(&fs::read_to_string(path).expect("json file")).expect("json")
+}
+
+#[test]
+fn export_wizard_report_summary_matches_real_export_flow_outputs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let project_root = tmp.path().join("project");
+    fs::create_dir_all(project_root.join("assets/bgm")).expect("assets dir");
+    fs::create_dir_all(project_root.join("runtime")).expect("runtime dir");
+
+    visual_novel_engine::ProjectManifest::new("game", "studio")
+        .save(&project_root.join("project.vnm"))
+        .expect("manifest save");
+    let script = visual_novel_engine::runtime::ScriptRaw::new(
+        vec![
+            visual_novel_engine::runtime::EventRaw::Dialogue(
+                visual_novel_engine::runtime::DialogueRaw {
+                    speaker: "Narrator".to_string(),
+                    text: "hello from export".to_string(),
+                },
+            ),
+            visual_novel_engine::runtime::EventRaw::AudioAction(
+                visual_novel_engine::runtime::AudioActionRaw {
+                    channel: "bgm".to_string(),
+                    action: "play".to_string(),
+                    asset: Some("assets/bgm/theme.ogg".to_string()),
+                    volume: Some(0.8),
+                    fade_duration_ms: None,
+                    loop_playback: Some(true),
+                },
+            ),
+        ],
+        BTreeMap::from([("start".to_string(), 0)]),
+    );
+    fs::write(
+        project_root.join("main.json"),
+        script.to_json().expect("script json"),
+    )
+    .expect("script write");
+    fs::write(project_root.join("assets/bgm/theme.ogg"), [1u8, 2, 3, 4]).expect("asset");
+    let runtime_bytes = minimal_pe_exe();
+    fs::write(project_root.join("runtime/vn_player.exe"), &runtime_bytes).expect("runtime");
+
+    let output_root = project_root.join("dist");
+    let report = visual_novel_engine::export_bundle(visual_novel_engine::ExportBundleSpec {
+        project_root: project_root.clone(),
+        output_root: output_root.clone(),
+        target_platform: visual_novel_engine::ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: Some(std::path::PathBuf::from("runtime/vn_player.exe")),
+        integrity: visual_novel_engine::BundleIntegrity::HmacSha256,
+        output_layout_version: 1,
+        hmac_key: Some("wizard-flow-secret".to_string()),
+    })
+    .expect("export flow");
+
+    let package_report = read_json(&output_root.join("meta/package_report.json"));
+    let compat_report = read_json(&output_root.join("meta/compat_report.json"));
+    let bundle_manifest = read_json(&output_root.join("meta/bundle_file_manifest.json"));
+    let runtime_hash = sha256_hex(&runtime_bytes);
+    let signature = fs::read_to_string(output_root.join("meta/bundle.hmac_sha256"))
+        .expect("bundle signature");
+
+    assert_eq!(
+        package_report,
+        serde_json::to_value(&report).expect("report json"),
+        "wizard summary should be driven by the same report written to disk"
+    );
+    assert_eq!(package_report["runtime_artifact"], "runtime/vn_player.exe");
+    assert_eq!(package_report["runtime_artifact_sha256"], runtime_hash);
+    assert_eq!(compat_report["runtime_artifact_sha256"], runtime_hash);
+    assert_eq!(package_report["generator_os"], compat_report["generator_os"]);
+    assert_eq!(
+        package_report["expected_executable"],
+        compat_report["expected_executable"]
+    );
+    assert_eq!(
+        package_report["graphics_backend"],
+        compat_report["graphics_backend"]
+    );
+    assert_eq!(package_report["wgpu_fallback"], compat_report["wgpu_fallback"]);
+    assert_eq!(package_report["total_size"], compat_report["total_size"]);
+    assert_eq!(package_report["hashes"], bundle_manifest["files"]);
+    assert_eq!(compat_report["hashes"], bundle_manifest["files"]);
+    assert_eq!(
+        package_report["bundle_file_manifest_sha256"],
+        compat_report["bundle_file_manifest_sha256"]
+    );
+    assert_eq!(package_report["bundle_hmac_sha256"], signature);
+    assert_eq!(compat_report["bundle_hmac_sha256"], signature);
+    assert_eq!(
+        package_report["smoke_result"],
+        compat_report["smoke_result"],
+        "package and compat reports must expose the same smoke state"
+    );
+    assert!(bundle_manifest["files"]
+        .as_array()
+        .expect("manifest files")
+        .iter()
+        .any(|entry| entry["path"] == "runtime/vn_player.exe"
+            && entry["sha256"] == runtime_hash));
+
+    let lines = EditorWorkbench::export_report_summary_lines(&report);
+    assert!(lines
+        .iter()
+        .any(|line| line == &format!("Runtime: runtime/vn_player.exe sha256={runtime_hash}")));
+    assert!(lines
+        .iter()
+        .any(|line| line == "Expected executable: game.exe"));
+    assert!(lines
+        .iter()
+        .any(|line| line == "Backend: software fallback=true"));
+    assert!(lines.iter().any(|line| {
+        line == &format!(
+            "Payload: files={} total_size={}",
+            bundle_manifest["files"].as_array().expect("manifest files").len(),
+            package_report["total_size"].as_u64().expect("total size")
+        )
+    }));
+    assert!(lines.iter().any(|line| line
+        == &format!(
+            "Manifest: meta/bundle_file_manifest.json sha256={}",
+            package_report["bundle_file_manifest_sha256"]
+                .as_str()
+                .expect("manifest hash")
+        )));
+    assert!(lines
+        .iter()
+        .any(|line| line == "Compat: meta/compat_report.json"));
+    assert!(lines
+        .iter()
+        .any(|line| line == &format!("Integrity: hmac_sha256 scope=bundle_file_manifest_v2_signed_manifest_covers_payload_files hmac={signature}")));
+    assert!(lines
+        .iter()
+        .any(|line| line.starts_with("Smoke: status=not_run backend=software trace_id=export-smoke-")));
 }
 
 #[test]
@@ -413,6 +571,107 @@ fn report_export_import() {
     assert_eq!(issue.asset_path.as_deref(), Some("bg/room.png"));
     assert_eq!(target.selected_issue, Some(0));
     assert_eq!(target.selected_node, Some(12));
+}
+
+#[test]
+fn report_import_rejects_malformed_diagnostic_target() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+    let report = serde_json::json!({
+        "schema": "vnengine.authoring_validation_report.v2",
+        "issues": [
+            {
+                "phase": "GRAPH",
+                "code": "VAL_ASSET_NOT_FOUND",
+                "severity": "error",
+                "message": "Imported malformed target",
+                "target": {
+                    "target_kind": "node",
+                    "node_id": "not-a-node-id"
+                }
+            }
+        ]
+    });
+    let payload = serde_json::to_string(&report).expect("serialize report");
+
+    let err = workbench
+        .apply_diagnostic_report_json(&payload)
+        .expect_err("malformed target should not import silently");
+
+    assert!(err.contains("issue 0 target is invalid"), "{err}");
+    assert!(workbench.validation_issues.is_empty());
+}
+
+#[test]
+fn report_import_rejects_malformed_issue_location_numbers() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+    let report = serde_json::json!({
+        "schema": "vnengine.authoring_validation_report.v2",
+        "issues": [
+            {
+                "phase": "GRAPH",
+                "code": "VAL_ASSET_NOT_FOUND",
+                "severity": "error",
+                "message": "Imported malformed node id",
+                "node_id": "12"
+            }
+        ]
+    });
+    let payload = serde_json::to_string(&report).expect("serialize report");
+
+    let err = workbench
+        .apply_diagnostic_report_json(&payload)
+        .expect_err("string node_id should not import as missing location");
+
+    assert!(err.contains("issue 0 node_id must be an unsigned integer"), "{err}");
+    assert!(workbench.validation_issues.is_empty());
+}
+
+#[test]
+fn report_import_rejects_malformed_selection_fields() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+    let report = serde_json::json!({
+        "schema": "vnengine.authoring_validation_report.v2",
+        "selected_issue": "0",
+        "issues": []
+    });
+    let payload = serde_json::to_string(&report).expect("serialize report");
+
+    let err = workbench
+        .apply_diagnostic_report_json(&payload)
+        .expect_err("string selected_issue should not be silently ignored");
+
+    assert!(err.contains("selected_issue must be an unsigned integer"), "{err}");
+    assert!(workbench.validation_issues.is_empty());
+    assert_eq!(workbench.selected_issue, None);
+}
+
+#[test]
+fn report_import_rejects_malformed_semantic_values() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+    let report = serde_json::json!({
+        "schema": "vnengine.authoring_validation_report.v2",
+        "issues": [
+            {
+                "phase": "GRAPH",
+                "code": "VAL_ASSET_NOT_FOUND",
+                "severity": "error",
+                "message": "Imported malformed semantic values",
+                "semantic_values": "asset:bg/missing.png"
+            }
+        ]
+    });
+    let payload = serde_json::to_string(&report).expect("serialize report");
+
+    let err = workbench
+        .apply_diagnostic_report_json(&payload)
+        .expect_err("malformed semantic values should not import silently");
+
+    assert!(err.contains("issue 0 semantic_values must be an array"), "{err}");
+    assert!(workbench.validation_issues.is_empty());
 }
 
 #[test]

@@ -84,9 +84,15 @@ impl LocalizationCatalog {
             .collect();
         let mut issues = Vec::new();
 
-        for (locale, table) in &self.locales {
+        let mut locales_to_check = self.locales.keys().cloned().collect::<BTreeSet<_>>();
+        if !required.is_empty() {
+            locales_to_check.insert(self.default_locale.clone());
+        }
+
+        for locale in locales_to_check {
+            let table = self.locales.get(&locale);
             for key in &required {
-                if !table.contains_key(key) {
+                if !table.is_some_and(|table| table.contains_key(key)) {
                     issues.push(LocalizationIssue {
                         locale: locale.clone(),
                         key: key.clone(),
@@ -95,13 +101,15 @@ impl LocalizationCatalog {
                 }
             }
 
-            for key in table.keys() {
-                if !required.contains(key) {
-                    issues.push(LocalizationIssue {
-                        locale: locale.clone(),
-                        key: key.clone(),
-                        kind: LocalizationIssueKind::OrphanKey,
-                    });
+            if let Some(table) = table {
+                for key in table.keys() {
+                    if !required.contains(key) {
+                        issues.push(LocalizationIssue {
+                            locale: locale.clone(),
+                            key: key.clone(),
+                            kind: LocalizationIssueKind::OrphanKey,
+                        });
+                    }
                 }
             }
         }

@@ -104,6 +104,9 @@ class GuiBindingTests(unittest.TestCase):
             plan = plan_obj.to_dict()
             self.assertEqual(plan["schema"], "vnengine.export_plan.v1")
             self.assertEqual(plan["executable"], "game.exe")
+            self.assertNotIn("warnings", plan)
+            self.assertNotIn("errors", plan)
+            self.assertNotIn("warnings", plan["capabilities"])
 
             report_obj = vn.export_bundle(
                 str(project),
@@ -114,6 +117,7 @@ class GuiBindingTests(unittest.TestCase):
             report = report_obj.to_dict()
 
             self.assertEqual(report["runtime_artifact"], "runtime/vn-runtime.exe")
+            self.assertNotIn("warnings", report["capabilities"])
             self.assertEqual(
                 report["runtime_artifact_sha256"],
                 hashlib.sha256(runtime_bytes).hexdigest(),
@@ -126,12 +130,91 @@ class GuiBindingTests(unittest.TestCase):
             self.assertEqual((out / "game.exe").read_bytes(), runtime_bytes)
             package_report = json.loads((out / "meta/package_report.json").read_text())
             compat_report = json.loads((out / "meta/compat_report.json").read_text())
+            manifest_bytes = (out / "meta/bundle_file_manifest.json").read_bytes()
+            manifest = json.loads(manifest_bytes)
+            manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
             self.assertEqual(
                 compat_report["runtime_artifact_sha256"],
                 package_report["runtime_artifact_sha256"],
             )
+            self.assertEqual(report["generator_os"], compat_report["generator_os"])
+            self.assertEqual(
+                report["expected_executable"], compat_report["expected_executable"]
+            )
+            self.assertEqual(
+                report["graphics_backend"], compat_report["graphics_backend"]
+            )
+            self.assertEqual(report["wgpu_fallback"], compat_report["wgpu_fallback"])
+            self.assertEqual(report["total_size"], compat_report["total_size"])
+            self.assertEqual(report["hashes"], manifest["files"])
+            self.assertEqual(compat_report["hashes"], manifest["files"])
+            self.assertEqual(report["bundle_file_manifest_sha256"], manifest_hash)
+            self.assertEqual(
+                package_report["bundle_file_manifest_sha256"], manifest_hash
+            )
+            self.assertEqual(
+                compat_report["bundle_file_manifest_sha256"], manifest_hash
+            )
             self.assertEqual(package_report["smoke_result"], report["smoke_result"])
             self.assertEqual(compat_report["smoke_result"], report["smoke_result"])
+
+    def test_export_bundle_api_preserves_core_error_type_and_trace_context(self):
+        import visual_novel_engine as vn
+
+        with workspace_tempdir("export-bundle-error") as root:
+            project = root / "project"
+            project.mkdir(parents=True)
+            (project / "project.vnm").write_text(
+                "\n".join(
+                    [
+                        'manifest_schema_version = "1.0"',
+                        "",
+                        "[metadata]",
+                        'name = "Python Export Error"',
+                        'author = "QA"',
+                        'version = "0.1.0"',
+                        "",
+                        "[settings]",
+                        "resolution = [1280, 720]",
+                        'default_language = "en"',
+                        'supported_languages = ["en"]',
+                        'entry_point = "main.json"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (project / "main.json").write_text(
+                json.dumps(
+                    {
+                        "script_schema_version": SCRIPT_SCHEMA_VERSION,
+                        "events": [
+                            {
+                                "type": "dialogue",
+                                "speaker": "Narrator",
+                                "text": "Missing runtime should stay typed",
+                            }
+                        ],
+                        "labels": {"start": 0},
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+
+            out = root / "dist"
+            with self.assertRaises(vn.VnValidationError) as raised:
+                vn.export_bundle(
+                    str(project),
+                    str(out),
+                    require_executable=True,
+                )
+            message = str(raised.exception)
+            self.assertIn("export.runtime_artifact.missing", message)
+            self.assertIn("trace_id=export-", message)
+            self.assertIn("field=runtime_artifact", message)
+            self.assertIn("action=", message)
+            self.assertFalse(out.exists(), "failed Python export must not publish output")
 
     def test_node_graph_search_and_bookmarks(self):
         import visual_novel_engine as vn
@@ -398,7 +481,9 @@ class GuiBindingTests(unittest.TestCase):
         hub = source_connection[2]
         self.assertNotIn(hub, {source, first, second})
         self.assertEqual(set(graph.node_ids()), {source, first, second, hub})
-        self.assertEqual(graph.get_node(hub).node_type, "Choice")
+        hub_node = graph.get_node(hub)
+        self.assertIsNotNone(hub_node)
+        self.assertEqual(hub_node.node_type, "Choice")
         self.assertEqual(graph.node_position(hub), (0.0, 90.0))
         hub_edges = {
             (port, target)

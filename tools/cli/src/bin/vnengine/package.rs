@@ -65,6 +65,20 @@ pub(super) fn package_project(spec: ExportBundleSpec, require_executable: bool) 
     if let Some(executable) = report.executable {
         println!("executable={executable}");
     }
+    println!("expected_executable={}", report.expected_executable);
+    println!("generator_os={}", report.generator_os);
+    println!(
+        "graphics_backend={} wgpu_fallback={}",
+        report.graphics_backend, report.wgpu_fallback
+    );
+    println!(
+        "payload_files={} total_size={}",
+        report.hashes.len(),
+        report.total_size
+    );
+    if let Some(manifest_hash) = report.bundle_file_manifest_sha256 {
+        println!("bundle_file_manifest_sha256={manifest_hash}");
+    }
     if let Some(signature) = report.bundle_hmac_sha256 {
         println!("bundle_hmac_sha256={signature}");
     }

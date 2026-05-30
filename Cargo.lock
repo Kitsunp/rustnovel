@@ -3884,7 +3884,9 @@ dependencies = [
 name = "vnengine_runtime"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "bytemuck",
+ "image 0.25.9",
  "pixels",
  "pollster",
  "rodio",

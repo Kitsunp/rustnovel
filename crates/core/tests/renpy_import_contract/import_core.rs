@@ -245,3 +245,58 @@ label start:
     });
     assert_eq!(audio_asset.as_deref(), Some("assets/audio/theme.ogg"));
 }
+
+#[test]
+fn import_degrades_audio_play_without_resolved_asset_instead_of_emitting_noop_audio() {
+    let dir = tempdir().expect("tempdir");
+    let project_root = dir.path().join("renpy_project");
+    let game_dir = project_root.join("game");
+    fs::create_dir_all(&game_dir).expect("mkdir game");
+
+    fs::write(
+        game_dir.join("script.rpy"),
+        r#"
+label start:
+    play music theme_variable
+    "After"
+"#,
+    )
+    .expect("write script");
+
+    let output_root = dir.path().join("out_project");
+    let report = import_renpy_project(ImportRenpyOptions {
+        project_root,
+        output_root: output_root.clone(),
+        entry_label: "start".to_string(),
+        report_path: None,
+        profile: ImportProfile::StoryFirst,
+        include_tl: None,
+        include_ui: None,
+        include_patterns: Vec::new(),
+        exclude_patterns: Vec::new(),
+        strict_mode: false,
+        fallback_policy: ImportFallbackPolicy::DegradeWithTrace,
+    })
+    .expect("import");
+
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|issue| issue.code == "unsupported_audio_play_missing_asset"
+                && issue.fallback_applied.as_deref() == Some("event_raw.ext_call")),
+        "unresolved audio play must be traced as a degraded ext_call fallback"
+    );
+
+    let json = fs::read_to_string(output_root.join("main.json")).expect("read main");
+    let script = ScriptRaw::from_json(&json).expect("parse script");
+    script
+        .compile()
+        .expect("degraded unresolved audio import should still compile");
+    assert!(
+        script.events.iter().all(
+            |event| !matches!(event, EventRaw::AudioAction(action) if action.action == "play")
+        ),
+        "unresolved audio play must not be emitted as a runtime no-op"
+    );
+}

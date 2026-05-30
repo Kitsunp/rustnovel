@@ -527,26 +527,9 @@ impl EditorWorkbench {
                 }
                 if let Some(report) = &self.export_wizard.last_report {
                     ui.separator();
-                    ui.label(format!("Exported assets: {}", report.assets_copied));
-                    ui.label(format!("Launcher: {}", report.launcher));
-                    ui.label(format!(
-                        "Executable: {}",
-                        report.executable.as_deref().unwrap_or("none")
-                    ));
-                    ui.label(format!(
-                        "Manifest: {}",
-                        report
-                            .bundle_file_manifest
-                            .as_deref()
-                            .unwrap_or("meta/bundle_file_manifest.json")
-                    ));
-                    ui.label(format!(
-                        "Compat: {}",
-                        report
-                            .compat_report
-                            .as_deref()
-                            .unwrap_or("meta/compat_report.json")
-                    ));
+                    for line in Self::export_report_summary_lines(report) {
+                        ui.label(line);
+                    }
                     Self::render_export_diagnostics(ui, &report.diagnostics);
                 }
                 if !self.export_wizard.logs.is_empty() {
@@ -645,6 +628,98 @@ impl EditorWorkbench {
         });
     }
 
+    fn export_blocking_diagnostics_summary(
+        diagnostics: &[visual_novel_engine::ExportDiagnostic],
+    ) -> String {
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.blocking_release)
+            .map(|diagnostic| {
+                let mut scope = Vec::new();
+                if let Some(file) = &diagnostic.file {
+                    scope.push(format!("file={file}"));
+                }
+                if let Some(asset) = &diagnostic.asset {
+                    scope.push(format!("asset={asset}"));
+                }
+                if let Some(node) = &diagnostic.node {
+                    scope.push(format!("node={node}"));
+                }
+                if let Some(field) = &diagnostic.field {
+                    scope.push(format!("field={field}"));
+                }
+                let scope = if scope.is_empty() {
+                    "scope=project".to_string()
+                } else {
+                    scope.join(" ")
+                };
+                format!(
+                    "{} trace_id={} {} action={}",
+                    diagnostic.code, diagnostic.trace_id, scope, diagnostic.suggested_action
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
+    pub fn export_report_summary_lines(
+        report: &visual_novel_engine::ExportBundleReport,
+    ) -> Vec<String> {
+        vec![
+            format!("Exported assets: {}", report.assets_copied),
+            format!(
+                "Runtime: {} sha256={}",
+                report.runtime_artifact.as_deref().unwrap_or("none"),
+                report.runtime_artifact_sha256.as_deref().unwrap_or("none")
+            ),
+            format!("Launcher: {}", report.launcher),
+            format!(
+                "Executable: {}",
+                report.executable.as_deref().unwrap_or("none")
+            ),
+            format!("Expected executable: {}", report.expected_executable),
+            format!(
+                "Backend: {} fallback={}",
+                report.graphics_backend, report.wgpu_fallback
+            ),
+            format!(
+                "Payload: files={} total_size={}",
+                report.hashes.len(),
+                report.total_size
+            ),
+            format!(
+                "Manifest: {} sha256={}",
+                report
+                    .bundle_file_manifest
+                    .as_deref()
+                    .unwrap_or("meta/bundle_file_manifest.json"),
+                report
+                    .bundle_file_manifest_sha256
+                    .as_deref()
+                    .unwrap_or("none")
+            ),
+            format!(
+                "Compat: {}",
+                report
+                    .compat_report
+                    .as_deref()
+                    .unwrap_or("meta/compat_report.json")
+            ),
+            format!(
+                "Integrity: {} scope={} hmac={}",
+                report.integrity,
+                report.integrity_scope,
+                report.bundle_hmac_sha256.as_deref().unwrap_or("none")
+            ),
+            format!(
+                "Smoke: status={} backend={} trace_id={}",
+                report.smoke_result.status,
+                report.smoke_result.backend,
+                report.smoke_result.trace_id
+            ),
+        ]
+    }
+
     fn export_wizard_spec(&self) -> Result<visual_novel_engine::ExportBundleSpec, String> {
         let project_root = self
             .project_root
@@ -710,6 +785,11 @@ impl EditorWorkbench {
         };
         match visual_novel_engine::ExportService::new().plan_export(&spec) {
             Ok(plan) => {
+                let blocking = plan
+                    .diagnostics
+                    .iter()
+                    .filter(|diagnostic| diagnostic.blocking_release)
+                    .count();
                 let has_errors = plan
                     .diagnostics
                     .iter()
@@ -717,14 +797,13 @@ impl EditorWorkbench {
                 self.export_wizard.logs.push(format!(
                     "plan complete: diagnostics={} blocking={}",
                     plan.diagnostics.len(),
-                    plan.diagnostics
-                        .iter()
-                        .filter(|diagnostic| diagnostic.blocking_release)
-                        .count()
+                    blocking
                 ));
                 self.export_wizard.last_plan = Some(plan);
-                self.toast = Some(if has_errors {
-                    ToastState::warning("Export plan has blocking errors")
+                self.toast = Some(if blocking > 0 {
+                    ToastState::warning("Export plan has release-blocking diagnostics")
+                } else if has_errors {
+                    ToastState::warning("Export plan has error diagnostics")
                 } else {
                     ToastState::success("Export plan ready")
                 });
@@ -752,30 +831,34 @@ impl EditorWorkbench {
         };
         match visual_novel_engine::ExportService::new().plan_export(&spec) {
             Ok(plan) => {
-                if plan
+                let has_error_diagnostics = plan
                     .diagnostics
                     .iter()
-                    .any(|diagnostic| diagnostic.severity == "error")
-                {
+                    .any(|diagnostic| diagnostic.severity == "error");
+                let has_blocking_diagnostics = plan
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.blocking_release);
+                if has_error_diagnostics {
                     self.export_wizard.last_plan = Some(plan);
                     self.toast = Some(ToastState::error("Export blocked by plan diagnostics"));
+                    return;
+                }
+                if self.export_wizard.require_executable && has_blocking_diagnostics {
+                    let diagnostics = Self::export_blocking_diagnostics_summary(&plan.diagnostics);
+                    self.export_wizard.last_plan = Some(plan);
+                    self.export_wizard.last_error = Some(format!(
+                        "Executable export blocked by diagnostics: {diagnostics}"
+                    ));
+                    self.toast = Some(ToastState::error("Export blocked by release diagnostics"));
                     return;
                 }
                 if self.export_wizard.require_executable {
                     let expected = spec.target_platform.expected_executable_name();
                     if plan.executable.as_deref() != Some(expected) {
-                        let diagnostics = plan
-                            .diagnostics
-                            .iter()
-                            .filter(|diagnostic| diagnostic.blocking_release)
-                            .map(|diagnostic| {
-                                format!("{} {}", diagnostic.code, diagnostic.trace_id)
-                            })
-                            .collect::<Vec<_>>()
-                            .join("; ");
                         self.export_wizard.last_plan = Some(plan);
                         self.export_wizard.last_error = Some(format!(
-                            "{} export cannot produce {}; {diagnostics}",
+                            "{} export cannot produce {}; missing expected executable after planning",
                             spec.target_platform.as_str(),
                             expected
                         ));
@@ -1288,4 +1371,74 @@ fn color_value(
         ui.add(egui::Slider::new(&mut color.a, 0..=255).text("A"));
     });
     before != *color
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::fs;
+
+    use super::*;
+    use crate::VnConfig;
+    use visual_novel_engine::runtime::{DialogueRaw, EventRaw, ScriptRaw};
+
+    #[test]
+    fn export_wizard_blocks_executable_on_release_blocking_diagnostics() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let project_root = tmp.path().join("project");
+        fs::create_dir_all(&project_root).expect("project dir");
+        visual_novel_engine::ProjectManifest::new("game", "studio")
+            .save(&project_root.join("project.vnm"))
+            .expect("manifest");
+        let script = ScriptRaw::new(
+            vec![EventRaw::Dialogue(DialogueRaw {
+                speaker: "Narrator".to_string(),
+                text: "hello".to_string(),
+            })],
+            BTreeMap::from([("start".to_string(), 0)]),
+        );
+        fs::write(
+            project_root.join("main.json"),
+            script.to_json().expect("script json"),
+        )
+        .expect("script");
+
+        let mut workbench = EditorWorkbench::new(VnConfig::default());
+        workbench.project_root = Some(project_root.clone());
+        workbench.manifest = Some(visual_novel_engine::ProjectManifest::new("game", "studio"));
+        workbench.export_wizard.output_root =
+            project_root.join("dist").to_string_lossy().to_string();
+        workbench.export_wizard.entry_script = "main.json".to_string();
+        workbench.export_wizard.runtime_artifact.clear();
+        workbench.export_wizard.require_executable = true;
+        workbench.export_wizard.export_kind = ExportWizardKind::ExecutableGame;
+        workbench.export_wizard.dry_run = false;
+
+        workbench.plan_export_wizard();
+        let plan = workbench.export_wizard.last_plan.as_ref().expect("plan");
+        assert!(plan.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "export.runtime_artifact.missing"
+                && diagnostic.blocking_release
+                && diagnostic.trace_id.starts_with("export-")
+        }));
+        assert!(workbench.export_wizard.last_error.is_none());
+
+        workbench.execute_export_wizard();
+        let error = workbench
+            .export_wizard
+            .last_error
+            .as_deref()
+            .expect("blocking error");
+        assert!(
+            error.contains("Executable export blocked by diagnostics"),
+            "{error}"
+        );
+        assert!(error.contains("export.runtime_artifact.missing"), "{error}");
+        assert!(error.contains("trace_id=export-"), "{error}");
+        assert!(error.contains("field=runtime_artifact"), "{error}");
+        assert!(
+            !project_root.join("dist").exists(),
+            "blocked executable export must not publish output"
+        );
+    }
 }

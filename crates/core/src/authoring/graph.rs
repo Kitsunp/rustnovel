@@ -238,7 +238,10 @@ impl NodeGraph {
         if !from_node.can_connect_from() || !to_node.can_connect_to() {
             return;
         }
-        if matches!(from_node, StoryNode::Choice { .. }) {
+        if let StoryNode::Choice { options, .. } = &from_node {
+            if from_port > options.len() {
+                return;
+            }
             self.ensure_choice_option(from, from_port);
         } else if matches!(from_node, StoryNode::JumpIf { .. }) {
             if from_port > 1 {

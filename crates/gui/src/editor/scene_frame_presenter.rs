@@ -16,7 +16,9 @@ impl SceneFramePresenter for EguiSceneFramePresenter {
         display: &DisplayProfile,
         theme: &UiTheme,
     ) -> UiResponse {
-        let mut diagnostics = validate_ui_theme(theme).warnings;
+        let validation = validate_ui_theme(theme);
+        let mut diagnostics = validation.warnings;
+        diagnostics.extend(validation.errors);
         if frame.layout.is_none() {
             diagnostics.push(format!(
                 "scene frame '{}' has no resolved layout; presenter used default policy",

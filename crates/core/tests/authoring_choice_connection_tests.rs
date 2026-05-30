@@ -50,6 +50,31 @@ fn connect_or_branch_adds_route_to_existing_choice_target_without_nested_hub() {
         .any(|edge| edge.from == choice && edge.from_port == 1 && edge.to == second));
 }
 
+#[test]
+fn connect_or_branch_rejects_choice_ports_beyond_next_option() {
+    let mut graph = NodeGraph::new();
+    let choice = graph.add_node(
+        StoryNode::Choice {
+            prompt: "Where next?".to_string(),
+            options: vec!["A".to_string()],
+        },
+        pos(0.0, 0.0),
+    );
+    let target = graph.add_node(dialogue("Target"), pos(200.0, 0.0));
+
+    assert!(
+        !graph.connect_or_branch(choice, 5, target, pos(100.0, 100.0)),
+        "a far out-of-range choice port must not be silently remapped to the next option"
+    );
+    assert!(!graph
+        .connections()
+        .any(|edge| edge.from == choice && edge.to == target));
+    let Some(StoryNode::Choice { options, .. }) = graph.get_node(choice) else {
+        panic!("choice node should still exist");
+    };
+    assert_eq!(options, &vec!["A".to_string()]);
+}
+
 fn dialogue(text: &str) -> StoryNode {
     StoryNode::Dialogue {
         speaker: "Narrator".to_string(),

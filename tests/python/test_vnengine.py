@@ -1,4 +1,6 @@
 import json
+import sys
+import types
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -9,6 +11,7 @@ from vnengine.localization import LocalizationCatalog, collect_script_localizati
 from vnengine.types import (
     AudioAction,
     CharacterPlacement,
+    Choice,
     Dialogue,
     JumpIf,
     LEGACY_READ_ONLY,
@@ -118,9 +121,53 @@ class TypesTests(unittest.TestCase):
                     accepted,
                 )
 
+    def test_script_schema_validation_warns_on_incomplete_native_module(self):
+        original_module = sys.modules.get("visual_novel_engine")
+        module = types.ModuleType("visual_novel_engine")
+        module.__file__ = "/tmp/visual_novel_engine.py"
+        module.Engine = object
+        sys.modules["visual_novel_engine"] = module
+        try:
+            with self.assertWarnsRegex(
+                RuntimeWarning,
+                "does not expose validate_script_schema_version",
+            ) as ctx:
+                parsed = Script.from_json(
+                    f'{{"script_schema_version":"{SCRIPT_SCHEMA_VERSION}",'
+                    '"events":[],"labels":{"start":0}}'
+                )
+        finally:
+            if original_module is None:
+                sys.modules.pop("visual_novel_engine", None)
+            else:
+                sys.modules["visual_novel_engine"] = original_module
+
+        self.assertEqual(parsed.labels["start"], 0)
+        message = str(ctx.warning)
+        self.assertIn("does not expose validate_script_schema_version", message)
+        self.assertIn("/tmp/visual_novel_engine.py", message)
+        self.assertIn("Available public names", message)
+
     def test_event_from_dict_rejects_unknown_type(self):
         with self.assertRaises(ValueError):
             event_from_dict({"type": "unknown"})
+
+    def test_choice_from_dict_requires_options_instead_of_empty_default(self):
+        cases = [
+            ({"type": "choice", "prompt": "Route?"}, "Choice missing required 'options' field"),
+            (
+                {"type": "choice", "prompt": "Route?", "options": {"text": "A"}},
+                "Choice 'options' must be list",
+            ),
+            (
+                {"type": "choice", "prompt": "Route?", "options": ["A"]},
+                "ChoiceOption payload must be object",
+            ),
+        ]
+        for payload, message in cases:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(ValueError, message):
+                    Choice.from_dict(payload)
 
     def test_character_from_dict_coerces_optional_fields(self):
         placement = CharacterPlacement.from_dict(
@@ -176,6 +223,42 @@ class TypesTests(unittest.TestCase):
                 '{"script_schema_version":"1.0","events":[],"labels":{"start":true}}'
             )
 
+    def test_script_rejects_missing_payload_fields_instead_of_empty_defaults(self):
+        cases = [
+            (
+                '{"script_schema_version":"1.0","eventz":[],"labels":{"start":0}}',
+                "Script missing required 'events' field",
+            ),
+            (
+                '{"script_schema_version":"1.0","events":[]}',
+                "Script missing required 'labels' field",
+            ),
+        ]
+        for raw, message in cases:
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(ValueError, message):
+                    Script.from_json(raw)
+
+    def test_script_rejects_malformed_container_fields(self):
+        cases = [
+            (
+                '{"script_schema_version":"1.0","events":{},"labels":{"start":0}}',
+                "Script 'events' must be list",
+            ),
+            (
+                '{"script_schema_version":"1.0","events":[],"labels":[]}',
+                "Script 'labels' must be object",
+            ),
+            (
+                '{"script_schema_version":"1.0","events":["dialogue"],"labels":{"start":0}}',
+                "Script event at index 0 must be object",
+            ),
+        ]
+        for raw, message in cases:
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(ValueError, message):
+                    Script.from_json(raw)
+
     def test_set_var_rejects_bool_payload(self):
         with self.assertRaises(ValueError):
             SetVar.from_dict({"key": "counter", "value": True})
@@ -225,6 +308,23 @@ class LocalizationTests(unittest.TestCase):
         self.assertIn("en:dialogue.intro", missing)
         self.assertIn("es:dialogue.intro", missing)
         self.assertIn("es:unused", orphan)
+
+    def test_empty_localization_catalog_reports_default_locale_missing_keys(self):
+        missing, orphan = LocalizationCatalog(default_locale="en").validate_keys(
+            {"dialogue.intro"}
+        )
+
+        self.assertEqual(missing, ["en:dialogue.intro"])
+        self.assertEqual(orphan, [])
+
+    def test_resolve_or_key_preserves_intentional_empty_translation(self):
+        catalog = LocalizationCatalog(
+            default_locale="en",
+            locales={"en": {"ui.hidden_label": ""}},
+        )
+
+        self.assertEqual(catalog.resolve_or_key("en", "ui.hidden_label"), "")
+        self.assertEqual(catalog.resolve_or_key("en", "missing"), "missing")
 
 
 class BuilderTests(unittest.TestCase):
@@ -313,6 +413,15 @@ class EngineAppTests(unittest.TestCase):
 
         app = EngineApp(BrokenEngine())
         with self.assertRaises(RuntimeError):
+            app.run()
+
+    def test_engine_app_does_not_swallow_value_errors_that_only_mention_script_exhausted(self):
+        class BrokenEngine:
+            def current_event(self):
+                raise ValueError("cache lookup failed before script exhausted marker")
+
+        app = EngineApp(BrokenEngine())
+        with self.assertRaisesRegex(ValueError, "cache lookup failed"):
             app.run()
 
     def test_run_script_headless_wraps_engine_app(self):

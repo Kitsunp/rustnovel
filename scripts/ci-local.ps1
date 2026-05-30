@@ -378,7 +378,7 @@ function Invoke-PackageWindowsSmokeJob {
     if ($envelope.data.schema -ne "vnengine.export_bundle_report.v1") {
         throw "Package smoke JSON envelope did not return an export report"
     }
-    if ($report.target_platform -ne "windows" -or $report.executable -ne "game.exe") {
+    if ($report.target_platform -ne "windows" -or $report.executable -ne "game.exe" -or $report.expected_executable -ne "game.exe") {
         throw "Unexpected package report target/executable"
     }
     $runtimeEntry = @($manifest.files | Where-Object { $_.path -eq $report.runtime_artifact }) | Select-Object -First 1
@@ -388,25 +388,39 @@ function Invoke-PackageWindowsSmokeJob {
     if ($report.runtime_artifact_sha256 -ne $runtimeEntry.sha256 -or $compat.runtime_artifact_sha256 -ne $runtimeEntry.sha256) {
         throw "Runtime artifact sha256 disagrees between package report, compat report and bundle manifest"
     }
-    if ($envelope.data.executable -ne $report.executable -or $envelope.data.bundle_hmac_sha256 -ne $report.bundle_hmac_sha256) {
+    if ($envelope.data.executable -ne $report.executable -or $envelope.data.bundle_hmac_sha256 -ne $report.bundle_hmac_sha256 -or $envelope.data.bundle_file_manifest_sha256 -ne $report.bundle_file_manifest_sha256) {
         throw "CLI JSON envelope and package_report.json disagree"
     }
-    if ($compat.graphics_backend -ne "software" -or -not $compat.wgpu_fallback) {
-        throw "Compat report did not record software fallback contract"
+    if ($compat.generator_os -ne $report.generator_os) {
+        throw "Package and compat report generator_os disagree"
     }
-    if (-not $compat.bundle_file_manifest_sha256 -or $null -eq $compat.diagnostics) {
-        throw "Compat report is missing manifest hash or structured diagnostics"
+    if ($compat.expected_executable -ne $report.expected_executable) {
+        throw "Package and compat report expected_executable disagree"
+    }
+    if ($compat.graphics_backend -ne "software" -or $report.graphics_backend -ne "software" -or -not $compat.wgpu_fallback -or -not $report.wgpu_fallback) {
+        throw "Package or compat report did not record software fallback contract"
+    }
+    if (-not $compat.bundle_file_manifest_sha256 -or -not $report.bundle_file_manifest_sha256 -or $null -eq $compat.diagnostics) {
+        throw "Package or compat report is missing manifest hash or structured diagnostics"
     }
     if ($compat.bundle_hmac_sha256 -ne $signature -or $report.bundle_hmac_sha256 -ne $signature) {
         throw "HMAC signature disagrees between report, compat report and signature file"
     }
 
     $manifestHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestPath).Hash.ToLowerInvariant()
-    if ($compat.bundle_file_manifest_sha256 -ne $manifestHash) {
-        throw "Compat report manifest hash does not match bundle_file_manifest.json"
+    if ($compat.bundle_file_manifest_sha256 -ne $manifestHash -or $report.bundle_file_manifest_sha256 -ne $manifestHash) {
+        throw "Package or compat report manifest hash does not match bundle_file_manifest.json"
     }
     $totalSize = 0
     foreach ($entry in $manifest.files) {
+        $reportHashEntry = @($report.hashes | Where-Object { $_.path -eq $entry.path }) | Select-Object -First 1
+        $compatHashEntry = @($compat.hashes | Where-Object { $_.path -eq $entry.path }) | Select-Object -First 1
+        if ($null -eq $reportHashEntry -or $null -eq $compatHashEntry) {
+            throw "Package or compat hashes are missing manifest entry: $($entry.path)"
+        }
+        if ($reportHashEntry.sha256 -ne $entry.sha256 -or $compatHashEntry.sha256 -ne $entry.sha256 -or [int64]$reportHashEntry.size -ne [int64]$entry.size -or [int64]$compatHashEntry.size -ne [int64]$entry.size) {
+            throw "Package or compat hash entry disagrees with manifest entry: $($entry.path)"
+        }
         $relativePath = $entry.path -replace '/', [System.IO.Path]::DirectorySeparatorChar
         $path = Join-Path $bundleDir $relativePath
         if (-not (Test-Path $path)) {
@@ -422,8 +436,8 @@ function Invoke-PackageWindowsSmokeJob {
         }
         $totalSize += $item.Length
     }
-    if ([int64]$compat.total_size -ne [int64]$totalSize) {
-        throw "Compat total_size does not match manifest entries"
+    if ([int64]$compat.total_size -ne [int64]$totalSize -or [int64]$report.total_size -ne [int64]$totalSize) {
+        throw "Package or compat total_size does not match manifest entries"
     }
 
     $smokeReportPath = Join-Path $bundleDir "meta/runtime_smoke_report.json"
@@ -458,6 +472,18 @@ function Invoke-PackageWindowsSmokeJob {
         if ($smokeCodes -notcontains $code) {
             throw "Runtime smoke missing check code: $code"
         }
+    }
+    foreach ($check in $smoke.checks) {
+        if (-not $check.severity -or -not $check.probable_cause -or -not $check.suggested_action -or -not $check.consequence -or $check.trace_id -notlike "export-smoke-*") {
+            throw "Runtime smoke check is missing structured diagnostic fields: $($check.code)"
+        }
+        if ($check.status -eq "passed" -and $check.blocking_release) {
+            throw "Passed runtime smoke check must not be release-blocking: $($check.code)"
+        }
+    }
+    $assetLoadCheck = @($smoke.checks | Where-Object { $_.code -eq "export.runtime_smoke.asset_load" }) | Select-Object -First 1
+    if (-not $assetLoadCheck.asset) {
+        throw "Runtime smoke asset_load check did not record the asset path"
     }
 }
 

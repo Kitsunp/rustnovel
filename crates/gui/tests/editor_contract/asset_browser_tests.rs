@@ -171,6 +171,38 @@ fn asset_browser_audio_duration_uses_shared_resource_service_fingerprint_invalid
     assert!(resource_service.metrics().evictions >= 1);
 }
 
+#[test]
+fn asset_browser_audio_duration_reports_metadata_errors() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(temp.path().join("assets/audio")).expect("mkdir audio");
+    std::fs::write(temp.path().join("assets/audio/broken.wav"), b"not audio")
+        .expect("write broken audio");
+
+    let manifest = visual_novel_engine::manifest::ProjectManifest::new("Test", "Author");
+    let mut image_cache = std::collections::HashMap::new();
+    let mut image_failures = std::collections::HashMap::new();
+    let mut resource_service = crate::editor::resource_service::EditorResourceService::new();
+
+    let duration = {
+        let mut panel = super::AssetBrowserPanel::new(
+            &manifest,
+            Some(temp.path()),
+            &mut image_cache,
+            &mut image_failures,
+            &mut resource_service,
+        );
+        panel.audio_duration_secs("assets/audio/broken.wav")
+    };
+
+    assert_eq!(duration, None);
+    let failure = image_failures
+        .values()
+        .find(|message| message.contains("assets/audio/broken.wav"))
+        .expect("audio metadata error should be visible to the workbench");
+    assert!(failure.contains("metadata unavailable"), "{failure}");
+    assert!(failure.contains("Failed to decode audio"), "{failure}");
+}
+
 fn tiny_wav(duration: std::time::Duration, sample_rate: u32) -> Vec<u8> {
     let samples = (duration.as_secs_f32() * sample_rate as f32).round() as u32;
     let data_len = samples * 2;

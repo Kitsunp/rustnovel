@@ -268,7 +268,15 @@ impl EditorWorkbench {
     }
 
     fn apply_node_graph_command(&mut self, command: AuthoringCommand) -> Option<AuthoringDelta> {
-        self.apply_authoring_graph_command(command).ok()
+        match self.apply_authoring_graph_command(command) {
+            Ok(delta) => Some(delta),
+            Err(err) => {
+                self.toast = Some(ToastState::error(format!(
+                    "Visual Composer command failed: {err}"
+                )));
+                None
+            }
+        }
     }
 }
 

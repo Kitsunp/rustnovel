@@ -16,7 +16,13 @@ impl NodeGraph {
         if fragment_id.is_empty() || self.fragments.contains_key(&fragment_id) {
             return false;
         }
-        node_ids.retain(|node_id| self.get_node(*node_id).is_some());
+        if node_ids.is_empty()
+            || node_ids
+                .iter()
+                .any(|node_id| self.get_node(*node_id).is_none())
+        {
+            return false;
+        }
         node_ids.sort_unstable();
         node_ids.dedup();
         if node_ids.is_empty()
@@ -76,7 +82,10 @@ impl NodeGraph {
     }
 
     pub fn active_fragment(&self) -> Option<&str> {
-        self.graph_stack.active_fragment.as_deref()
+        self.graph_stack
+            .active_fragment
+            .as_deref()
+            .filter(|fragment_id| self.fragments.contains_key(*fragment_id))
     }
 
     pub fn node_fragment(&self, node_id: u32) -> Option<&str> {
@@ -209,16 +218,18 @@ impl NodeGraph {
     }
 
     pub fn leave_fragment(&mut self) -> bool {
-        let Some(previous) = self.graph_stack.breadcrumb.pop() else {
-            if self.graph_stack.active_fragment.take().is_some() {
+        while let Some(previous) = self.graph_stack.breadcrumb.pop() {
+            if self.fragments.contains_key(&previous) {
+                self.graph_stack.active_fragment = Some(previous);
                 self.modified = true;
                 return true;
             }
-            return false;
-        };
-        self.graph_stack.active_fragment = Some(previous);
-        self.modified = true;
-        true
+        }
+        if self.graph_stack.active_fragment.take().is_some() {
+            self.modified = true;
+            return true;
+        }
+        false
     }
 
     fn validate_fragment_container(

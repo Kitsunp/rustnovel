@@ -330,6 +330,38 @@ fn composer_overlay_dialogue_edit_updates_node_and_operation_trace() {
 }
 
 #[test]
+fn composer_overlay_command_failure_sets_toast_instead_of_silent_false() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+    let choice = workbench.node_graph.add_node(
+        StoryNode::Choice {
+            prompt: "Pick one".to_string(),
+            options: vec!["A".to_string()],
+        },
+        egui::pos2(0.0, 0.0),
+    );
+
+    let changed = workbench.apply_composer_node_mutation(
+        choice,
+        crate::editor::visual_composer::ComposerNodeMutation::DialogueText {
+            speaker: "Wrong surface".to_string(),
+            text: "This command should be rejected for a choice node.".to_string(),
+        },
+    );
+
+    assert!(!changed);
+    let message = workbench
+        .toast
+        .as_ref()
+        .map(|toast| toast.message.as_str())
+        .unwrap_or("<no toast>");
+    assert!(
+        message.contains("Visual Composer command failed"),
+        "command bus rejection should be surfaced, got: {message}"
+    );
+}
+
+#[test]
 fn composer_choice_reorder_preserves_option_target_pairs() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);

@@ -1,7 +1,7 @@
 //! Security policy validation for scripts.
 
 use crate::error::{VnError, VnResult};
-use crate::event::{EventCompiled, EventRaw};
+use crate::event::{AudioActionCompiled, EventCompiled, EventRaw};
 use crate::resource::ResourceLimiter;
 use crate::script::{ScriptCompiled, ScriptRaw};
 
@@ -275,6 +275,9 @@ impl SecurityPolicy {
                         flag_id
                     )));
                 }
+                EventCompiled::AudioAction(action) => {
+                    validate_compiled_audio_action(action)?;
+                }
                 _ => {}
             }
         }
@@ -306,6 +309,48 @@ fn validate_path(
 fn validate_positive_scale(scale: f32, name: &str) -> VnResult<()> {
     if !scale.is_finite() || scale <= 0.0 {
         return Err(VnError::InvalidScript(format!("{name} must be > 0")));
+    }
+    Ok(())
+}
+
+fn validate_compiled_audio_action(action: &AudioActionCompiled) -> VnResult<()> {
+    if action.channel > 2 {
+        return Err(VnError::InvalidScript(format!(
+            "invalid compiled audio channel {} (expected 0=bgm, 1=sfx, 2=voice)",
+            action.channel
+        )));
+    }
+    if action.action > 2 {
+        return Err(VnError::InvalidScript(format!(
+            "invalid compiled audio action {} (expected 0=play, 1=stop, 2=fade_out)",
+            action.action
+        )));
+    }
+    if action.action == 0
+        && !action
+            .asset
+            .as_deref()
+            .is_some_and(|asset| !asset.trim().is_empty())
+    {
+        return Err(VnError::InvalidScript(
+            "compiled audio play action requires a non-empty asset".to_string(),
+        ));
+    }
+    if action
+        .volume
+        .is_some_and(|volume| !volume.is_finite() || !(0.0..=1.0).contains(&volume))
+    {
+        return Err(VnError::InvalidScript(
+            "compiled audio volume must be finite and in 0.0..=1.0".to_string(),
+        ));
+    }
+    if action
+        .fade_duration_ms
+        .is_some_and(|duration| duration > 600_000)
+    {
+        return Err(VnError::InvalidScript(
+            "compiled audio fade duration must be <= 600000ms".to_string(),
+        ));
     }
     Ok(())
 }

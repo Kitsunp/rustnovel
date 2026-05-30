@@ -10,20 +10,17 @@ pub fn select_choice_index(
     step: usize,
     option_len: usize,
     choice_cursor: usize,
-) -> usize {
+) -> Option<usize> {
     if option_len == 0 {
-        return 0;
+        return None;
     }
-    match policy {
+    let index = match policy {
         ChoicePolicy::Strategy(ChoiceStrategy::First) => 0,
         ChoicePolicy::Strategy(ChoiceStrategy::Last) => option_len.saturating_sub(1),
         ChoicePolicy::Strategy(ChoiceStrategy::Alternating) => step % option_len,
-        ChoicePolicy::Scripted(path) => path
-            .get(choice_cursor)
-            .copied()
-            .unwrap_or(0)
-            .min(option_len.saturating_sub(1)),
-    }
+        ChoicePolicy::Scripted(path) => path.get(choice_cursor).copied()?,
+    };
+    (index < option_len).then_some(index)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -56,6 +53,7 @@ pub struct RouteEnumerationReport {
     pub routes_discovered: usize,
     pub route_limit_hit: bool,
     pub depth_limit_hit: bool,
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,11 +83,26 @@ pub fn enumerate_choice_routes_with_report(
     let mut routes = Vec::new();
     let mut route_limit_hit = false;
     let mut depth_limit_hit = false;
+    let mut errors = Vec::new();
     let mut visited = HashSet::new();
     let start_ip = match script.start_index() {
         Ok(idx) => idx,
-        Err(_) => return RouteEnumerationReport::default(),
+        Err(err) => {
+            return RouteEnumerationReport {
+                errors: vec![format!("route enumeration start error: {err}")],
+                ..Default::default()
+            };
+        }
     };
+    if start_ip >= script.events.len() {
+        return RouteEnumerationReport {
+            errors: vec![format!(
+                "route enumeration start label points outside executable events: start={start_ip}, events={}",
+                script.events.len()
+            )],
+            ..Default::default()
+        };
+    }
 
     let mut initial_state = RawSimulationState::default();
     bootstrap_initial_state(script, start_ip, &mut initial_state);
@@ -135,6 +148,10 @@ pub fn enumerate_choice_routes_with_report(
                     .get(&choice.options[option_idx].target)
                     .copied()
                 else {
+                    errors.push(format!(
+                        "choice at ip {} option {} targets missing label '{}'",
+                        frame.ip, option_idx, choice.options[option_idx].target
+                    ));
                     continue;
                 };
                 let mut next = frame.clone();
@@ -157,6 +174,10 @@ pub fn enumerate_choice_routes_with_report(
         match event {
             EventRaw::Jump { target } => {
                 let Some(target_ip) = script.labels.get(target).copied() else {
+                    errors.push(format!(
+                        "jump at ip {} targets missing label '{}'",
+                        next.ip, target
+                    ));
                     routes.push(next.choices);
                     continue;
                 };
@@ -164,6 +185,10 @@ pub fn enumerate_choice_routes_with_report(
             }
             EventRaw::JumpIf { cond, target } if eval_cond_raw(cond, &next.state) => {
                 let Some(target_ip) = script.labels.get(target).copied() else {
+                    errors.push(format!(
+                        "conditional jump at ip {} targets missing label '{}'",
+                        next.ip, target
+                    ));
                     routes.push(next.choices);
                     continue;
                 };
@@ -192,6 +217,7 @@ pub fn enumerate_choice_routes_with_report(
         routes_discovered,
         route_limit_hit,
         depth_limit_hit,
+        errors,
     }
 }
 
@@ -235,8 +261,11 @@ pub fn simulate_raw_sequence(
                 next_ip = target_ip;
             }
             EventRaw::Choice(choice) => {
-                let choice_idx =
-                    select_choice_index(policy, steps, choice.options.len(), choice_cursor);
+                let Some(choice_idx) =
+                    select_choice_index(policy, steps, choice.options.len(), choice_cursor)
+                else {
+                    break;
+                };
                 choice_cursor = choice_cursor.saturating_add(1);
                 let Some(target_label) = choice
                     .options

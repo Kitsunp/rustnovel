@@ -157,15 +157,9 @@ impl AuthoringCommandBus {
                 object_id, before, ..
             } => {
                 let (x, y, scale) = *before;
-                composer::move_scene_object(
-                    &mut self.graph,
-                    object_id,
-                    x.unwrap_or_default(),
-                    y.unwrap_or_default(),
-                    scale,
-                )
-                .then_some(())
-                .ok_or_else(|| format!("layer object '{object_id}' could not be reverted"))
+                composer::set_scene_object_pose(&mut self.graph, object_id, x, y, scale)
+                    .then_some(())
+                    .ok_or_else(|| format!("layer object '{object_id}' could not be reverted"))
             }
             AuthoringDelta::Reverted { reverted } => self.apply_inverse_delta(reverted),
         }

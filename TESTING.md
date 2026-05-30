@@ -47,8 +47,13 @@ bundle/logs como artifact. Los reportes deben coincidir en `runtime_artifact` y
 `runtime_artifact_sha256`, validado contra el entry correspondiente del
 `bundle_file_manifest`. El smoke valida paths de lanzamiento, parseo de
 script, init de engine, manifest de assets, carga de asset, render de frame,
-avance de escena y cierre con checks estructurados (`code`, `phase`, `target`,
-`trace_id`, `status`, `message`).
+avance de escena y cierre con checks estructurados (`code`, `severity`,
+`phase`, `target`, `trace_id`, `status`, `message`, `probable_cause`,
+`suggested_action`, `consequence`, `blocking_release` y `asset`/`file` cuando
+aplica). Si el smoke falla antes de completar el flujo, debe escribir
+`runtime_smoke_report.json` con `status = "failed"` y retropropagar ese mismo
+`smoke_result` a `package_report.json` y `compat_report.json` cuando esos
+reportes existan.
 
 El HMAC cubre el contenido exacto de `meta/bundle_file_manifest.json`. Ese
 manifest lista payload verificable y excluye metadata autorreferencial
@@ -57,6 +62,7 @@ manifest lista payload verificable y excluye metadata autorreferencial
 propia firma. `meta/runtime_smoke_report.json` tambien queda fuera del manifest
 firmado porque se produce despues de ejecutar el paquete. `meta/bundle.hmac_sha256`
 contiene la firma y `package_report.json`/`compat_report.json` retropropagan
+`generator_os`, `expected_executable`, backend/fallback, `total_size`, `hashes`,
 `bundle_file_manifest_sha256`, `bundle_hmac_sha256` y `smoke_result` para que
 CLI, GUI, API y CI puedan comparar el mismo origen. Los tests de manipulacion
 recalculan el HMAC sobre un manifest alterado y verifican que ya no coincide.

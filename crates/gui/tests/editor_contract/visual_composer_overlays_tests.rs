@@ -131,6 +131,7 @@ fn selected_authoring_choice_overlay_takes_precedence_over_stale_runtime_dialogu
         ComposerPreviewMode::IsolatedNode,
         &HashMap::new(),
     )
+    .expect("overlay selection should not hide runtime errors")
     .expect("selected choice overlay");
 
     assert_eq!(
@@ -178,6 +179,7 @@ fn hidden_authoring_choice_overlay_falls_back_to_runtime_overlay() {
         ComposerPreviewMode::IsolatedNode,
         &overrides,
     )
+    .expect("overlay selection should not hide runtime errors")
     .expect("runtime fallback overlay");
 
     assert_eq!(
@@ -242,6 +244,7 @@ fn runtime_preview_mode_uses_engine_overlay_instead_of_selected_authoring_node()
         ComposerPreviewMode::RuntimeInherited,
         &HashMap::new(),
     )
+    .expect("overlay selection should not hide runtime errors")
     .expect("runtime choice overlay");
 
     assert_eq!(
@@ -251,4 +254,38 @@ fn runtime_preview_mode_uses_engine_overlay_instead_of_selected_authoring_node()
             options: vec!["Runtime route".to_string()],
         }
     );
+}
+
+#[test]
+fn runtime_preview_overlay_reports_engine_error_instead_of_authoring_fallback() {
+    let script = visual_novel_engine::runtime::ScriptRaw::new(
+        vec![visual_novel_engine::runtime::EventRaw::Dialogue(
+            visual_novel_engine::runtime::DialogueRaw {
+                speaker: "Runtime".to_string(),
+                text: "One step".to_string(),
+            },
+        )],
+        std::collections::BTreeMap::from([("start".to_string(), 0usize)]),
+    );
+    let mut engine = visual_novel_engine::runtime::Engine::new(
+        script,
+        visual_novel_engine::SecurityPolicy::default(),
+        visual_novel_engine::ResourceLimiter::default(),
+    )
+    .expect("engine");
+    engine.step().expect("advance past the only event");
+    let selected = StoryNode::Dialogue {
+        speaker: "Selected".to_string(),
+        text: "This authoring overlay must not hide the exhausted runtime".to_string(),
+    };
+
+    let err = selected_overlay_source(
+        Some(&engine),
+        Some(&selected),
+        ComposerPreviewMode::RuntimeInherited,
+        &HashMap::new(),
+    )
+    .expect_err("runtime preview should surface exhausted runtime instead of falling back");
+
+    assert!(err.contains("runtime overlay current event unavailable"), "{err}");
 }

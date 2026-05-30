@@ -54,6 +54,50 @@ fn command_bus_replay_headless() {
 }
 
 #[test]
+fn command_bus_rejects_sparse_choice_ports_without_placeholder_options() {
+    let mut bus = AuthoringCommandBus::new(NodeGraph::new());
+    bus.apply(AuthoringCommand::CreateNode {
+        node_id: 0,
+        node: StoryNode::Choice {
+            prompt: "Pick".to_string(),
+            options: vec!["Only".to_string()],
+        },
+        position: pos(0.0, 0.0),
+    })
+    .expect("create choice");
+    bus.apply(AuthoringCommand::CreateNode {
+        node_id: 1,
+        node: StoryNode::Dialogue {
+            speaker: "N".to_string(),
+            text: "Target".to_string(),
+        },
+        position: pos(0.0, 90.0),
+    })
+    .expect("create target");
+
+    let operation_count = bus.operation_log().len();
+    let err = bus
+        .apply(AuthoringCommand::Connect {
+            from: 0,
+            from_port: 5,
+            to: 1,
+        })
+        .expect_err("sparse choice ports must be rejected instead of filled with placeholders");
+
+    assert!(err.contains("port 5"));
+    assert_eq!(bus.operation_log().len(), operation_count);
+    assert!(bus.graph().connections().next().is_none());
+    let Some(StoryNode::Choice { options, .. }) = bus.graph().get_node(0) else {
+        panic!("choice node should remain present");
+    };
+    assert_eq!(
+        options,
+        &vec!["Only".to_string()],
+        "failed sparse connections must not fabricate placeholder options"
+    );
+}
+
+#[test]
 fn undo_delta_memory_contract() {
     let mut bus = AuthoringCommandBus::new(NodeGraph::new());
     for node_id in 0..1000 {
@@ -149,7 +193,7 @@ fn operation_log_replay_create_connect_edit_import_move_revert() {
         .expect("character layer")
         .object_id;
     bus.apply(AuthoringCommand::MoveLayer {
-        object_id,
+        object_id: object_id.clone(),
         x: 640,
         y: 360,
         scale: Some(1.2),
@@ -157,6 +201,13 @@ fn operation_log_replay_create_connect_edit_import_move_revert() {
     .expect("move layer");
     bus.apply(AuthoringCommand::RevertLast)
         .expect("revert layer move");
+    let reverted_layer = composer::list_layered_objects(bus.graph(), Some(1))
+        .into_iter()
+        .find(|object| object.object_id == object_id)
+        .expect("reverted character layer");
+    assert_eq!(reverted_layer.x, None);
+    assert_eq!(reverted_layer.y, None);
+    assert_eq!(reverted_layer.scale, None);
 
     assert!(bus
         .operation_log()

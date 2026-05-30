@@ -109,10 +109,13 @@ pub fn run_dry_run(mut engine: Engine, policy: &ChoicePolicy, max_steps: usize) 
                 if choice.options.is_empty() {
                     Err(VnError::InvalidChoice)
                 } else {
-                    let idx =
-                        select_choice_index(policy, steps, choice.options.len(), choice_cursor);
-                    choice_cursor = choice_cursor.saturating_add(1);
-                    engine.choose(idx).map(|_| ())
+                    match select_choice_index(policy, steps, choice.options.len(), choice_cursor) {
+                        Some(idx) => {
+                            choice_cursor = choice_cursor.saturating_add(1);
+                            engine.choose(idx).map(|_| ())
+                        }
+                        None => Err(VnError::InvalidChoice),
+                    }
                 }
             }
             EventCompiled::ExtCall { .. } => engine.resume(),

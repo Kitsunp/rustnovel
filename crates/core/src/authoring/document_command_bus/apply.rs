@@ -74,6 +74,7 @@ impl AuthoringDocumentSession {
     }
 
     fn set_layer_visible(&mut self, object_id: &str, visible: bool) -> DocumentApplyResult {
+        self.ensure_composer_layer_exists(object_id)?;
         let before = self
             .document
             .composer_layer_overrides
@@ -104,6 +105,7 @@ impl AuthoringDocumentSession {
     }
 
     fn set_layer_locked(&mut self, object_id: &str, locked: bool) -> DocumentApplyResult {
+        self.ensure_composer_layer_exists(object_id)?;
         let before = self
             .document
             .composer_layer_overrides
@@ -186,6 +188,13 @@ impl AuthoringDocumentSession {
                 after_value: json_string(&Option::<BackgroundFit>::None),
             },
         ))
+    }
+
+    fn ensure_composer_layer_exists(&self, object_id: &str) -> Result<(), String> {
+        if self.read_model.composer_layer(object_id).is_some() {
+            return Ok(());
+        }
+        Err(format!("unknown composer layer object '{object_id}'"))
     }
 
     fn store_layer_override(

@@ -3,18 +3,21 @@
 //! These bindings expose the timeline, track, and keyframe types for
 //! use in Python-based visual editors and tools.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use visual_novel_engine::{Easing, EntityId, Keyframe, PropertyType, Timeline, Track};
 
 /// Converts a string to an Easing enum.
-fn parse_easing(s: &str) -> Easing {
+fn parse_easing(s: &str) -> Result<Easing, String> {
     match s.to_lowercase().as_str() {
-        "linear" => Easing::Linear,
-        "ease_in" | "easein" => Easing::EaseIn,
-        "ease_out" | "easeout" => Easing::EaseOut,
-        "ease_in_out" | "easeinout" => Easing::EaseInOut,
-        "step" => Easing::Step,
-        _ => Easing::Linear,
+        "linear" => Ok(Easing::Linear),
+        "ease_in" | "easein" => Ok(Easing::EaseIn),
+        "ease_out" | "easeout" => Ok(Easing::EaseOut),
+        "ease_in_out" | "easeinout" => Ok(Easing::EaseInOut),
+        "step" => Ok(Easing::Step),
+        _ => Err(format!(
+            "unknown easing '{s}'; expected one of: linear, ease_in, ease_out, ease_in_out, step"
+        )),
     }
 }
 
@@ -30,15 +33,17 @@ fn easing_to_string(e: Easing) -> &'static str {
 }
 
 /// Converts a string to a PropertyType enum.
-fn parse_property(s: &str) -> PropertyType {
+fn parse_property(s: &str) -> Result<PropertyType, String> {
     match s.to_lowercase().as_str() {
-        "position_x" | "positionx" | "x" => PropertyType::PositionX,
-        "position_y" | "positiony" | "y" => PropertyType::PositionY,
-        "z_order" | "zorder" | "z" => PropertyType::ZOrder,
-        "scale" => PropertyType::Scale,
-        "opacity" | "alpha" => PropertyType::Opacity,
-        "rotation" => PropertyType::Rotation,
-        _ => PropertyType::PositionX,
+        "position_x" | "positionx" | "x" => Ok(PropertyType::PositionX),
+        "position_y" | "positiony" | "y" => Ok(PropertyType::PositionY),
+        "z_order" | "zorder" | "z" => Ok(PropertyType::ZOrder),
+        "scale" => Ok(PropertyType::Scale),
+        "opacity" | "alpha" => Ok(PropertyType::Opacity),
+        "rotation" => Ok(PropertyType::Rotation),
+        _ => Err(format!(
+            "unknown property '{s}'; expected one of: position_x, position_y, z_order, scale, opacity, rotation"
+        )),
     }
 }
 
@@ -57,12 +62,15 @@ pub struct PyKeyframe {
 impl PyKeyframe {
     #[new]
     #[pyo3(signature = (time, value, easing=None))]
-    fn new(time: u32, value: i32, easing: Option<String>) -> Self {
-        Self {
+    fn new(time: u32, value: i32, easing: Option<String>) -> PyResult<Self> {
+        Ok(Self {
             time,
             value,
-            easing: easing.map(|s| parse_easing(&s)).unwrap_or(Easing::Linear),
-        }
+            easing: match easing {
+                Some(s) => parse_easing(&s).map_err(PyValueError::new_err)?,
+                None => Easing::Linear,
+            },
+        })
     }
 
     /// Gets the easing function as a string.
@@ -73,8 +81,9 @@ impl PyKeyframe {
 
     /// Sets the easing function from a string.
     #[setter]
-    fn set_easing(&mut self, easing: String) {
-        self.easing = parse_easing(&easing);
+    fn set_easing(&mut self, easing: String) -> PyResult<()> {
+        self.easing = parse_easing(&easing).map_err(PyValueError::new_err)?;
+        Ok(())
     }
 
     fn __repr__(&self) -> String {
@@ -112,10 +121,13 @@ pub struct PyTrack {
 #[pymethods]
 impl PyTrack {
     #[new]
-    fn new(entity_id: u32, property: String) -> Self {
-        Self {
-            inner: Track::new(EntityId::new(entity_id), parse_property(&property)),
-        }
+    fn new(entity_id: u32, property: String) -> PyResult<Self> {
+        Ok(Self {
+            inner: Track::new(
+                EntityId::new(entity_id),
+                parse_property(&property).map_err(PyValueError::new_err)?,
+            ),
+        })
     }
 
     /// Adds a keyframe to the track.
@@ -259,5 +271,40 @@ impl PyTimeline {
             self.inner.current_time(),
             self.inner.duration()
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_easing_rejects_unknown_tokens() {
+        let err = parse_easing("ease_sideways")
+            .err()
+            .expect("unknown easing tokens must be rejected instead of becoming linear");
+
+        assert!(err.to_string().contains("unknown easing"));
+    }
+
+    #[test]
+    fn parse_easing_accepts_documented_aliases() {
+        assert_eq!(parse_easing("easein").unwrap(), Easing::EaseIn);
+        assert_eq!(parse_easing("ease_in_out").unwrap(), Easing::EaseInOut);
+    }
+
+    #[test]
+    fn parse_property_rejects_unknown_tokens() {
+        let err = parse_property("blur_radius")
+            .err()
+            .expect("unknown property tokens must be rejected instead of becoming position_x");
+
+        assert!(err.to_string().contains("unknown property"));
+    }
+
+    #[test]
+    fn parse_property_accepts_documented_aliases() {
+        assert_eq!(parse_property("x").unwrap(), PropertyType::PositionX);
+        assert_eq!(parse_property("alpha").unwrap(), PropertyType::Opacity);
     }
 }

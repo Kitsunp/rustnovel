@@ -20,16 +20,18 @@ use visual_novel_engine::{
 };
 use winit::{
     dpi::LogicalSize,
-    event::{Event, WindowEvent},
+    event::{ElementState, Event, MouseButton, WindowEvent},
     event_loop::EventLoop,
     window::WindowBuilder,
 };
 
 pub use self::assets::{AssetStore, MemoryAssetStore};
 pub use self::audio::{audio_duration, Audio, AudioCapabilities, RodioBackend, SilentAudio};
-pub use self::input::{ConfigurableInput, Input, InputAction};
+pub use self::input::{pointer_action_for_scene_frame, ConfigurableInput, Input, InputAction};
 pub use self::render::RuntimeSceneFramePresenter;
-use self::render::{BuiltinSoftwareDrawer, RenderBackend, SoftwareBackend, WgpuBackend};
+use self::render::{
+    BuiltinSoftwareDrawer, RenderBackend, RenderFrame, SoftwareBackend, WgpuBackend,
+};
 
 // AssetStore and MemoryAssetStore moved to assets.rs
 
@@ -182,6 +184,11 @@ where
     pub fn handle_action(&mut self, action: InputAction) -> visual_novel_engine::VnResult<bool> {
         match action {
             InputAction::None => {}
+            InputAction::InvalidSceneAction => {
+                return Err(visual_novel_engine::VnError::InvalidScript(
+                    "scene-frame interaction action is unsupported or malformed".to_string(),
+                ));
+            }
             InputAction::Quit => return Ok(false),
             InputAction::Advance => {
                 let audio_commands = step_or_resume(&mut self.engine)?;
@@ -196,8 +203,17 @@ where
                 self.apply_audio_commands(&audio_commands);
                 self.prefetch_upcoming_assets();
             }
-            InputAction::Back | InputAction::Menu => {
-                // Action recognized but currently non-mutating in runtime mode.
+            InputAction::Back => {
+                return Err(visual_novel_engine::VnError::InvalidScript(
+                    "input action 'back' is recognized but not implemented in runtime mode"
+                        .to_string(),
+                ));
+            }
+            InputAction::Menu => {
+                return Err(visual_novel_engine::VnError::InvalidScript(
+                    "input action 'menu' is recognized but not implemented in runtime mode"
+                        .to_string(),
+                ));
             }
         }
         Ok(true)
@@ -332,7 +348,7 @@ where
                 window.clone(),
                 size.width,
                 size.height,
-                Box::new(BuiltinSoftwareDrawer),
+                Box::new(BuiltinSoftwareDrawer::new()),
             ) {
                 Ok(backend) => backend,
                 Err(err) => {
@@ -366,7 +382,7 @@ where
                         window.clone(),
                         size.width,
                         size.height,
-                        Box::new(BuiltinSoftwareDrawer),
+                        Box::new(BuiltinSoftwareDrawer::new()),
                     ) {
                         Ok(backend) => backend,
                         Err(err) => {
@@ -380,44 +396,74 @@ where
         }
     };
 
-    if let Err(err) = event_loop.run(move |event, elwt| {
-        match event {
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::CloseRequested => {
+    let mut cursor_position: Option<(f64, f64)> = None;
+
+    if let Err(err) = event_loop.run(move |event, elwt| match event {
+        Event::WindowEvent { event, .. } => match event {
+            WindowEvent::CloseRequested => {
+                elwt.exit();
+            }
+            WindowEvent::Resized(size) => {
+                if let Err(e) = backend.resize(size.width, size.height) {
+                    eprintln!("Resize error: {}", e);
                     elwt.exit();
                 }
-                WindowEvent::Resized(size) => {
-                    if let Err(e) = backend.resize(size.width, size.height) {
-                        eprintln!("Resize error: {}", e);
-                        elwt.exit();
-                    }
-                }
-                WindowEvent::RedrawRequested => {
-                    if let Err(e) = backend.render(app.ui()) {
-                        eprintln!("Render error: {}", e);
-                        elwt.exit();
-                    }
-                }
-                _ => {
-                    let action = app.input.handle_window_event(&event);
-                    match app.handle_action(action) {
-                        Ok(true) => {
-                            window.request_redraw();
-                        }
-                        Ok(false) => {
-                            elwt.exit();
-                        }
-                        Err(_) => {
-                            elwt.exit();
-                        }
-                    }
-                }
-            },
-            Event::AboutToWait => {
-                // window.request_redraw();
             }
-            _ => {}
+            WindowEvent::RedrawRequested => {
+                let frame = RenderFrame {
+                    ui: app.ui(),
+                    scene_frame: app.scene_frame(),
+                    assets: app.assets(),
+                };
+                if let Err(e) = backend.render(frame) {
+                    eprintln!("Render error: {}", e);
+                    elwt.exit();
+                }
+            }
+            _ => {
+                let action = match &event {
+                    WindowEvent::CursorMoved { position, .. } => {
+                        cursor_position = Some((position.x, position.y));
+                        InputAction::None
+                    }
+                    WindowEvent::MouseInput {
+                        state: ElementState::Pressed,
+                        button: MouseButton::Left,
+                        ..
+                    } => {
+                        let size = window.inner_size();
+                        cursor_position
+                            .map(|(x, y)| {
+                                pointer_action_for_scene_frame(
+                                    app.scene_frame(),
+                                    (size.width, size.height),
+                                    x,
+                                    y,
+                                )
+                            })
+                            .filter(|action| *action != InputAction::None)
+                            .unwrap_or_else(|| app.input.handle_window_event(&event))
+                    }
+                    _ => app.input.handle_window_event(&event),
+                };
+                match app.handle_action(action) {
+                    Ok(true) => {
+                        window.request_redraw();
+                    }
+                    Ok(false) => {
+                        elwt.exit();
+                    }
+                    Err(err) => {
+                        eprintln!("Input action error: {err}");
+                        elwt.exit();
+                    }
+                }
+            }
+        },
+        Event::AboutToWait => {
+            window.request_redraw();
         }
+        _ => {}
     }) {
         eprintln!("event loop error: {err}");
         std::process::exit(1);

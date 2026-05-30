@@ -242,7 +242,7 @@ impl EditorWorkbench {
             .ok_or_else(|| "missing issues array".to_string())?;
 
         let mut imported = Vec::with_capacity(issues_json.len());
-        for issue_json in issues_json {
+        for (issue_index, issue_json) in issues_json.iter().enumerate() {
             let envelope = issue_json.get("envelope_v2").unwrap_or(issue_json);
             let phase = parse_validation_phase(
                 issue_json
@@ -266,26 +266,34 @@ impl EditorWorkbench {
                     .unwrap_or("warning"),
             )?;
             let location = envelope.get("location").unwrap_or(issue_json);
-            let node_id = as_u32_field(
+            let node_id = parse_issue_u32_field(
                 issue_json
                     .get("node_id")
                     .or_else(|| location.get("node_id")),
-            );
-            let event_ip = as_u32_field(
+                "node_id",
+                issue_index,
+            )?;
+            let event_ip = parse_issue_u32_field(
                 issue_json
                     .get("event_ip")
                     .or_else(|| location.get("event_ip")),
-            );
-            let edge_from = as_u32_field(
+                "event_ip",
+                issue_index,
+            )?;
+            let edge_from = parse_issue_u32_field(
                 issue_json
                     .get("edge_from")
                     .or_else(|| location.get("edge_from")),
-            );
-            let edge_to = as_u32_field(
+                "edge_from",
+                issue_index,
+            )?;
+            let edge_to = parse_issue_u32_field(
                 issue_json
                     .get("edge_to")
                     .or_else(|| location.get("edge_to")),
-            );
+                "edge_to",
+                issue_index,
+            )?;
             let asset_path = issue_json
                 .get("asset_path")
                 .or_else(|| location.get("asset_path"))
@@ -311,29 +319,34 @@ impl EditorWorkbench {
             {
                 issue = issue.with_field_path(field_path.to_string());
             }
-            if let Some(target) = envelope
+            if let Some(target_value) = envelope
                 .get("target")
                 .or_else(|| location.get("target"))
-                .and_then(|value| {
-                    serde_json::from_value::<visual_novel_engine::authoring::DiagnosticTarget>(
-                        value.clone(),
-                    )
-                    .ok()
-                })
+                .filter(|value| !value.is_null())
             {
+                let target = serde_json::from_value::<
+                    visual_novel_engine::authoring::DiagnosticTarget,
+                >(target_value.clone())
+                .map_err(|err| format!("issue {issue_index} target is invalid: {err}"))?;
                 issue = issue.with_target(target);
             }
             if let Some(values) = envelope
                 .get("semantic_values")
-                .and_then(serde_json::Value::as_array)
+                .filter(|value| !value.is_null())
             {
-                for value in values {
-                    if let Ok(semantic) = serde_json::from_value::<
+                let values = values.as_array().ok_or_else(|| {
+                    format!("issue {issue_index} semantic_values must be an array")
+                })?;
+                for (value_index, value) in values.iter().enumerate() {
+                    let semantic = serde_json::from_value::<
                         visual_novel_engine::authoring::SemanticValue,
                     >(value.clone())
-                    {
-                        issue = issue.with_semantic_value(semantic);
-                    }
+                    .map_err(|err| {
+                        format!(
+                            "issue {issue_index} semantic_values[{value_index}] is invalid: {err}"
+                        )
+                    })?;
+                    issue = issue.with_semantic_value(semantic);
                 }
             }
             if let Some(blocked_by) = envelope
@@ -351,22 +364,26 @@ impl EditorWorkbench {
             {
                 issue = issue.with_operation_id(operation_id);
             }
-            if let Some(trace) = envelope.get("evidence_trace") {
-                if let Ok(trace) = serde_json::from_value::<
-                    visual_novel_engine::authoring::EvidenceTrace,
-                >(trace.clone())
-                {
-                    issue.evidence_trace = Some(trace);
-                } else if issue.evidence_trace.is_none() {
-                    issue = issue.with_evidence_trace();
-                }
+            if let Some(trace) = envelope
+                .get("evidence_trace")
+                .filter(|value| !value.is_null())
+            {
+                let trace =
+                    serde_json::from_value::<visual_novel_engine::authoring::EvidenceTrace>(
+                        trace.clone(),
+                    )
+                    .map_err(|err| {
+                        format!("issue {issue_index} evidence_trace is invalid: {err}")
+                    })?;
+                issue.evidence_trace = Some(trace);
             }
             imported.push(issue);
         }
 
         self.validation_issues = imported;
-        self.selected_issue = as_usize_field(parsed.get("selected_issue"));
-        self.selected_node = as_u32_field(parsed.get("selected_node"));
+        self.selected_issue =
+            parse_report_usize_field(parsed.get("selected_issue"), "selected_issue")?;
+        self.selected_node = parse_report_u32_field(parsed.get("selected_node"), "selected_node")?;
         if self.selected_node.is_none() {
             if let Some(issue_index) = self.selected_issue {
                 if let Some(issue) = self.validation_issues.get(issue_index) {
@@ -417,16 +434,59 @@ fn parse_severity(value: &str) -> Result<LintSeverity, String> {
         .ok_or_else(|| format!("unknown lint severity '{}'", value.trim()))
 }
 
-fn as_u32_field(value: Option<&serde_json::Value>) -> Option<u32> {
-    value
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|raw| u32::try_from(raw).ok())
+fn parse_report_u32_field(
+    value: Option<&serde_json::Value>,
+    field_name: &str,
+) -> Result<Option<u32>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let raw = value
+        .as_u64()
+        .ok_or_else(|| format!("{field_name} must be an unsigned integer"))?;
+    u32::try_from(raw)
+        .map(Some)
+        .map_err(|_| format!("{field_name} is too large for u32"))
 }
 
-fn as_usize_field(value: Option<&serde_json::Value>) -> Option<usize> {
-    value
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|raw| usize::try_from(raw).ok())
+fn parse_report_usize_field(
+    value: Option<&serde_json::Value>,
+    field_name: &str,
+) -> Result<Option<usize>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let raw = value
+        .as_u64()
+        .ok_or_else(|| format!("{field_name} must be an unsigned integer"))?;
+    usize::try_from(raw)
+        .map(Some)
+        .map_err(|_| format!("{field_name} is too large for usize"))
+}
+
+fn parse_issue_u32_field(
+    value: Option<&serde_json::Value>,
+    field_name: &str,
+    issue_index: usize,
+) -> Result<Option<u32>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let raw = value
+        .as_u64()
+        .ok_or_else(|| format!("issue {issue_index} {field_name} must be an unsigned integer"))?;
+    u32::try_from(raw)
+        .map(Some)
+        .map_err(|_| format!("issue {issue_index} {field_name} is too large for u32"))
 }
 
 fn localized_issue_message(issue_json: &serde_json::Value, language: DiagnosticLanguage) -> String {

@@ -300,7 +300,7 @@ impl<'a> AssetBrowserPanel<'a> {
                 return None;
             }
         }
-        self.asset_store(project_root)?;
+        self.asset_store(project_root, &request_cache_key, asset_path)?;
         let resolved_asset_path = match self.asset_store.as_ref()?.resolve_image_path(asset_path) {
             Ok(path) => normalize_asset_path(&path),
             Err(err) => {
@@ -349,15 +349,30 @@ impl<'a> AssetBrowserPanel<'a> {
         Some(id)
     }
 
-    fn asset_store(&mut self, project_root: &Path) -> Option<&vnengine_assets::AssetStore> {
+    fn asset_store(
+        &mut self,
+        project_root: &Path,
+        failure_key: &str,
+        asset_path: &str,
+    ) -> Option<&vnengine_assets::AssetStore> {
         if self.asset_store.is_none() {
-            self.asset_store = vnengine_assets::AssetStore::new(
+            self.asset_store = match vnengine_assets::AssetStore::new(
                 project_root.to_path_buf(),
                 vnengine_assets::SecurityMode::Trusted,
                 None,
                 false,
-            )
-            .ok();
+            ) {
+                Ok(store) => Some(store),
+                Err(err) => {
+                    self.image_failures.insert(
+                        failure_key.to_string(),
+                        format!(
+                            "asset browser image '{asset_path}' asset store initialization failed: {err}"
+                        ),
+                    );
+                    None
+                }
+            };
         }
         self.asset_store.as_ref()
     }
@@ -387,12 +402,28 @@ impl<'a> AssetBrowserPanel<'a> {
 
     pub fn audio_duration_secs(&mut self, asset_path: &str) -> Option<f32> {
         let root = self.project_root?;
-        self.resource_service
-            .audio_metadata(root, asset_path)
-            .ok()
-            .and_then(|metadata| metadata.duration)
-            .map(|duration| duration.as_secs_f32())
+        let failure_key = audio_failure_key(root, asset_path);
+        match self.resource_service.audio_metadata(root, asset_path) {
+            Ok(metadata) => {
+                self.image_failures.remove(&failure_key);
+                metadata.duration.map(|duration| duration.as_secs_f32())
+            }
+            Err(err) => {
+                self.image_failures.insert(
+                    failure_key,
+                    format!("audio '{asset_path}' metadata unavailable: {err}"),
+                );
+                None
+            }
+        }
     }
+}
+
+fn audio_failure_key(project_root: &Path, asset_path: &str) -> String {
+    format!(
+        "asset_browser::audio::{}::{asset_path}",
+        project_root.display()
+    )
 }
 
 pub fn asset_drag_payload(type_id: &str, value: &str, asset_path: &str) -> String {

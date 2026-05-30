@@ -167,10 +167,16 @@ fn export_bundle_hmac_changes_when_manifest_is_tampered() {
         &fs::read_to_string(out.join("meta/compat_report.json")).expect("compat report"),
     )
     .expect("compat json");
+    let package_report: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(out.join("meta/package_report.json")).expect("package report"),
+    )
+    .expect("package report json");
     let manifest_hash = Sha256::digest(manifest_text.as_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     assert_eq!(compat["bundle_file_manifest_sha256"], manifest_hash);
+    assert_eq!(package_report["bundle_file_manifest_sha256"], manifest_hash);
     assert_eq!(compat["bundle_hmac_sha256"], signature);
+    assert_eq!(package_report["bundle_hmac_sha256"], signature);
 }

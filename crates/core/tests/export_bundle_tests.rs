@@ -112,6 +112,23 @@ fn has_diagnostic_code(diagnostics: &[visual_novel_engine::ExportDiagnostic], co
     })
 }
 
+fn assert_no_legacy_export_warning_fields(value: &serde_json::Value) {
+    assert!(
+        value.get("warnings").is_none(),
+        "export reports must use diagnostics, not legacy warnings: {value}"
+    );
+    assert!(
+        value.get("errors").is_none(),
+        "export reports must use diagnostics, not legacy errors: {value}"
+    );
+    if let Some(capabilities) = value.get("capabilities") {
+        assert!(
+            capabilities.get("warnings").is_none(),
+            "capability report must use export diagnostics, not legacy warnings: {capabilities}"
+        );
+    }
+}
+
 #[test]
 fn export_package_flow_reports_manifest_hashes_and_hmac_agree() {
     let (_tmp, project_root) = build_project_fixture();
@@ -169,6 +186,10 @@ fn export_package_flow_reports_manifest_hashes_and_hmac_agree() {
         package_report["target_platform"]
     );
     assert_eq!(
+        package_report["generator_os"],
+        compat_report["generator_os"]
+    );
+    assert_eq!(
         compat_report["runtime_artifact"],
         package_report["runtime_artifact"]
     );
@@ -177,12 +198,28 @@ fn export_package_flow_reports_manifest_hashes_and_hmac_agree() {
         package_report["runtime_artifact_sha256"]
     );
     assert_eq!(compat_report["executable"], package_report["executable"]);
+    assert_eq!(
+        package_report["expected_executable"],
+        compat_report["expected_executable"]
+    );
     assert_eq!(compat_report["expected_executable"], "game.exe");
     assert_eq!(compat_report["graphics_backend"], "software");
+    assert_eq!(
+        package_report["graphics_backend"],
+        compat_report["graphics_backend"]
+    );
+    assert_eq!(
+        package_report["wgpu_fallback"],
+        compat_report["wgpu_fallback"]
+    );
     assert_eq!(compat_report["bundle_hmac_sha256"], signature);
     assert_eq!(
         compat_report["bundle_file_manifest_sha256"],
         sha256_hex(manifest_text.as_bytes())
+    );
+    assert_eq!(
+        package_report["bundle_file_manifest_sha256"],
+        compat_report["bundle_file_manifest_sha256"]
     );
     assert_eq!(
         signature,
@@ -192,9 +229,14 @@ fn export_package_flow_reports_manifest_hashes_and_hmac_agree() {
 
     let manifest_files = file_manifest["files"].as_array().expect("manifest files");
     let compat_hashes = compat_report["hashes"].as_array().expect("compat hashes");
+    let package_hashes = package_report["hashes"].as_array().expect("package hashes");
     assert_eq!(
         compat_hashes, manifest_files,
         "compat hashes must be the same manifest the HMAC signs"
+    );
+    assert_eq!(
+        package_hashes, manifest_files,
+        "package hashes must be the same manifest the HMAC signs"
     );
     assert!(manifest_files
         .iter()
@@ -228,6 +270,7 @@ fn export_package_flow_reports_manifest_hashes_and_hmac_agree() {
         );
     }
     assert_eq!(compat_report["total_size"], total_size);
+    assert_eq!(package_report["total_size"], total_size);
 
     let plan_trace_ids: Vec<_> = plan
         .diagnostics
@@ -245,6 +288,26 @@ fn export_package_flow_reports_manifest_hashes_and_hmac_agree() {
     );
     assert_eq!(compat_report["diagnostics"], package_report["diagnostics"]);
     assert_eq!(package_report["smoke_result"]["status"], "not_run");
+    assert_eq!(
+        package_report["smoke_result"]["checks"][0]["severity"],
+        "warning"
+    );
+    assert_eq!(
+        package_report["smoke_result"]["checks"][0]["blocking_release"],
+        true
+    );
+    assert!(
+        package_report["smoke_result"]["checks"][0]["probable_cause"]
+            .as_str()
+            .expect("smoke cause")
+            .contains("target runtime smoke")
+    );
+    assert!(
+        package_report["smoke_result"]["checks"][0]["suggested_action"]
+            .as_str()
+            .expect("smoke action")
+            .contains("package smoke job")
+    );
     assert_eq!(
         compat_report["smoke_result"],
         package_report["smoke_result"]
@@ -281,7 +344,6 @@ fn export_bundle_builds_expected_layout_and_manifest() {
         report.capabilities.audio_actions,
         vec!["bgm:play".to_string()]
     );
-    assert!(report.capabilities.warnings.is_empty());
     assert!(has_diagnostic_code(
         &report.diagnostics,
         "export.capability.audio_backend_required"
@@ -318,15 +380,27 @@ fn export_bundle_builds_expected_layout_and_manifest() {
     let compat_raw =
         fs::read_to_string(out.join("meta/compat_report.json")).expect("compat report");
     let compat: serde_json::Value = serde_json::from_str(&compat_raw).expect("compat json");
+    let package_report = read_json(&out.join("meta/package_report.json"));
+    assert_no_legacy_export_warning_fields(&package_report);
+    assert_no_legacy_export_warning_fields(&compat);
     assert_eq!(compat["schema"], "vnengine.export_compat_report.v1");
     assert_eq!(compat["target_platform"], "windows");
     assert_eq!(compat["expected_executable"], "game.exe");
+    assert_eq!(
+        package_report["expected_executable"],
+        compat["expected_executable"]
+    );
     assert_eq!(compat["graphics_backend"], "software");
+    assert_eq!(
+        package_report["graphics_backend"],
+        compat["graphics_backend"]
+    );
     assert_eq!(compat["wgpu_fallback"], true);
+    assert_eq!(package_report["wgpu_fallback"], compat["wgpu_fallback"]);
     assert_eq!(compat["assets_copied"], 1);
+    assert_eq!(package_report["total_size"], compat["total_size"]);
     assert!(compat["total_size"].as_u64().expect("total size") > 0);
     assert_eq!(compat["smoke_result"]["status"], "not_run");
-    let package_report = read_json(&out.join("meta/package_report.json"));
     assert_eq!(package_report["smoke_result"], compat["smoke_result"]);
     let diagnostics = compat["diagnostics"].as_array().expect("diagnostics");
     assert!(diagnostics.iter().any(|diagnostic| {
@@ -339,6 +413,7 @@ fn export_bundle_builds_expected_layout_and_manifest() {
             && diagnostic["blocking_release"] == true
     }));
     let hashes = compat["hashes"].as_array().expect("hashes");
+    assert_eq!(package_report["hashes"], compat["hashes"]);
     assert!(hashes
         .iter()
         .any(|entry| entry["path"] == "scripts/compiled.vnc"));
@@ -421,7 +496,26 @@ fn export_plan_cli_py_gui_parity() {
     assert_eq!(cli_plan.script_sha256, py_plan.script_sha256);
     assert_eq!(cli_plan.layout, py_plan.layout);
     assert_eq!(cli_plan.capabilities, py_plan.capabilities);
-    assert!(cli_plan.warnings.is_empty());
+    let plan_value = serde_json::to_value(&cli_plan).expect("plan value");
+    assert_no_legacy_export_warning_fields(&plan_value);
+    let mut legacy_plan_value = plan_value.clone();
+    legacy_plan_value["warnings"] = serde_json::json!(["legacy warning"]);
+    legacy_plan_value["errors"] = serde_json::json!(["legacy error"]);
+    legacy_plan_value["capabilities"]["warnings"] = serde_json::json!(["legacy capability"]);
+    let legacy_plan: visual_novel_engine::ExportPlan =
+        serde_json::from_value(legacy_plan_value).expect("legacy plan compatibility");
+    assert!(
+        legacy_plan.warnings.is_empty(),
+        "legacy flat warnings must not be accepted into the runtime model"
+    );
+    assert!(
+        legacy_plan.errors.is_empty(),
+        "legacy flat errors must not be accepted into the runtime model"
+    );
+    assert!(
+        legacy_plan.capabilities.warnings.is_empty(),
+        "legacy capability warnings must not be accepted into the runtime model"
+    );
     assert!(has_diagnostic_code(
         &cli_plan.diagnostics,
         "export.runtime_artifact.missing"
@@ -473,7 +567,8 @@ fn export_plan_extcall_audio_transition_missing_runtime() {
     })
     .expect("plan");
 
-    assert!(plan.warnings.is_empty());
+    let plan_value = serde_json::to_value(&plan).expect("plan value");
+    assert_no_legacy_export_warning_fields(&plan_value);
     assert!(plan
         .capabilities
         .ext_call_commands
@@ -513,7 +608,8 @@ fn export_plan_capability_policy_contract() {
     })
     .expect("plan with policy errors");
 
-    assert!(plan.errors.is_empty());
+    let plan_value = serde_json::to_value(&plan).expect("plan value");
+    assert_no_legacy_export_warning_fields(&plan_value);
     assert!(has_diagnostic_code(
         &plan.diagnostics,
         "export.runtime_artifact.unreadable"
@@ -595,7 +691,6 @@ fn export_bundle_reports_extcall_audio_transition_capabilities() {
         report.capabilities.transitions,
         vec!["dissolve".to_string()]
     );
-    assert!(report.capabilities.warnings.is_empty());
     assert!(has_diagnostic_code(
         &report.diagnostics,
         "export.capability.ext_call_runtime_required"

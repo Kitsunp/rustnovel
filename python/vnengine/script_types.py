@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass, field
 import json
+import warnings
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 from .types import (
@@ -59,13 +61,34 @@ class Script:
     def from_dict(
         cls, data: Mapping[str, Any], schema_policy: SchemaPolicy = STRICT_CURRENT
     ) -> "Script":
+        if not isinstance(data, MappingABC):
+            raise ValueError(
+                f"Script payload must be object, got {type(data).__name__}"
+            )
         found_version = _validate_schema_version(
             data.get("script_schema_version"), schema_policy
         )
-        events = [event_from_dict(item) for item in data.get("events", [])]
+        raw_events = _require_script_field(data, "events")
+        if not isinstance(raw_events, list):
+            raise ValueError(
+                f"Script 'events' must be list, got {type(raw_events).__name__}"
+            )
+        events = []
+        for index, item in enumerate(raw_events):
+            if not isinstance(item, MappingABC):
+                raise ValueError(
+                    "Script event at index "
+                    f"{index} must be object, got {type(item).__name__}"
+                )
+            events.append(event_from_dict(item))
+        raw_labels = _require_script_field(data, "labels")
+        if not isinstance(raw_labels, MappingABC):
+            raise ValueError(
+                f"Script 'labels' must be object, got {type(raw_labels).__name__}"
+            )
         labels = {
             str(key): _require_int(value, f"Script label '{key}'")
-            for key, value in data.get("labels", {}).items()
+            for key, value in raw_labels.items()
         }
         return cls(
             events=events, labels=labels, script_schema_version=str(found_version)
@@ -87,6 +110,8 @@ class Script:
 
 
 def event_from_dict(data: Mapping[str, Any]) -> Event:
+    if not isinstance(data, MappingABC):
+        raise ValueError(f"Event payload must be object, got {type(data).__name__}")
     event_type = data.get("type")
     decoder = _EVENT_DECODERS.get(str(event_type))
     if decoder is not None:
@@ -95,12 +120,22 @@ def event_from_dict(data: Mapping[str, Any]) -> Event:
 
 
 def cond_from_dict(data: Mapping[str, Any]) -> Cond:
+    if not isinstance(data, MappingABC):
+        raise ValueError(
+            f"Condition payload must be object, got {type(data).__name__}"
+        )
     kind = data.get("kind")
     if kind == "flag":
         return CondFlag.from_dict(data)
     if kind == "var_cmp":
         return CondVarCmp.from_dict(data)
     raise ValueError(f"Unknown condition kind: {kind}")
+
+
+def _require_script_field(data: Mapping[str, Any], field_name: str) -> Any:
+    if field_name not in data:
+        raise ValueError(f"Script missing required '{field_name}' field")
+    return data[field_name]
 
 
 def normalize_choice_options(
@@ -172,7 +207,28 @@ def _native_schema_validator() -> Optional[
     validator = getattr(native, "validate_script_schema_version", None)
     if callable(validator):
         return validator
+    module_file = getattr(native, "__file__", None)
+    if module_file is not None:
+        warnings.warn(
+            "Native module 'visual_novel_engine' was imported from "
+            f"{module_file!r}, but it does not expose "
+            "validate_script_schema_version; falling back to the Python "
+            "schema validator. Available public names: "
+            f"{_summarize_public_names(native)}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     return None
+
+
+def _summarize_public_names(value: Any, limit: int = 8) -> str:
+    names = [name for name in dir(value) if not name.startswith("_")]
+    if not names:
+        return "none"
+    preview = ", ".join(names[:limit])
+    if len(names) > limit:
+        return f"{preview}, ..."
+    return preview
 
 
 def _validate_schema_version_fallback(raw: Optional[str], policy: SchemaPolicy) -> str:

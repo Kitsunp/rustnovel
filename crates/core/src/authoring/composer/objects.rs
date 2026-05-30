@@ -49,6 +49,16 @@ pub fn move_scene_object(
     y: i32,
     scale: Option<f32>,
 ) -> bool {
+    set_scene_object_pose(graph, object_id, Some(x), Some(y), scale)
+}
+
+pub fn set_scene_object_pose(
+    graph: &mut NodeGraph,
+    object_id: &str,
+    x: Option<i32>,
+    y: Option<i32>,
+    scale: Option<f32>,
+) -> bool {
     let Some((node_id, index)) = parse_character_object_id(object_id) else {
         return false;
     };
@@ -56,8 +66,10 @@ pub fn move_scene_object(
         return false;
     };
     match node {
-        StoryNode::Scene { characters, .. } => move_character(characters, index, x, y, scale),
-        StoryNode::ScenePatch(ScenePatchRaw { add, .. }) => move_character(add, index, x, y, scale),
+        StoryNode::Scene { characters, .. } => set_character_pose(characters, index, x, y, scale),
+        StoryNode::ScenePatch(ScenePatchRaw { add, .. }) => {
+            set_character_pose(add, index, x, y, scale)
+        }
         _ => false,
     }
 }
@@ -222,18 +234,18 @@ fn parse_character_object_id(object_id: &str) -> Option<(u32, usize)> {
     Some((node_id, index))
 }
 
-fn move_character(
+fn set_character_pose(
     characters: &mut [CharacterPlacementRaw],
     index: usize,
-    x: i32,
-    y: i32,
+    x: Option<i32>,
+    y: Option<i32>,
     scale: Option<f32>,
 ) -> bool {
     let Some(character) = characters.get_mut(index) else {
         return false;
     };
-    character.x = Some(x);
-    character.y = Some(y);
+    character.x = x;
+    character.y = y;
     character.scale = scale;
     true
 }

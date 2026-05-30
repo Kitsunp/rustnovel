@@ -9,15 +9,16 @@ from .types import Script
 
 
 def _is_script_exhausted(exc: BaseException) -> bool:
+    native_module: Optional[object]
     try:
-        import visual_novel_engine as native
+        import visual_novel_engine as native_module
     except ImportError:
-        native = None
+        native_module = None
 
-    end_of_script_error = getattr(native, "VnEndOfScriptError", None)
+    end_of_script_error = getattr(native_module, "VnEndOfScriptError", None)
     if end_of_script_error is not None and isinstance(exc, end_of_script_error):
         return True
-    return isinstance(exc, ValueError) and "script exhausted" in str(exc)
+    return isinstance(exc, ValueError) and str(exc).strip() == "script exhausted"
 
 
 class EngineApp:
