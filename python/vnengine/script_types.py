@@ -121,9 +121,7 @@ def event_from_dict(data: Mapping[str, Any]) -> Event:
 
 def cond_from_dict(data: Mapping[str, Any]) -> Cond:
     if not isinstance(data, MappingABC):
-        raise ValueError(
-            f"Condition payload must be object, got {type(data).__name__}"
-        )
+        raise ValueError(f"Condition payload must be object, got {type(data).__name__}")
     kind = data.get("kind")
     if kind == "flag":
         return CondFlag.from_dict(data)

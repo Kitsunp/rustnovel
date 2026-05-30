@@ -49,7 +49,9 @@ def _require_field(data: Mapping[str, Any], field_name: str, owner: str) -> Any:
     return data[field_name]
 
 
-def _require_list_field(data: Mapping[str, Any], field_name: str, owner: str) -> List[Any]:
+def _require_list_field(
+    data: Mapping[str, Any], field_name: str, owner: str
+) -> List[Any]:
     value = _require_field(data, field_name, owner)
     if not isinstance(value, list):
         raise ValueError(

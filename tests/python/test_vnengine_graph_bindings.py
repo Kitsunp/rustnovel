@@ -214,7 +214,9 @@ class GuiBindingTests(unittest.TestCase):
             self.assertIn("trace_id=export-", message)
             self.assertIn("field=runtime_artifact", message)
             self.assertIn("action=", message)
-            self.assertFalse(out.exists(), "failed Python export must not publish output")
+            self.assertFalse(
+                out.exists(), "failed Python export must not publish output"
+            )
 
     def test_node_graph_search_and_bookmarks(self):
         import visual_novel_engine as vn

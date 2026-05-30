@@ -147,9 +147,7 @@ class Engine:
     def prefetch_assets_hint(self) -> Any:
         """Return upcoming asset paths suggested for prefetching."""
 
-        return call_native_method(
-            self._engine, "prefetch_assets_hint", "prefetch API"
-        )
+        return call_native_method(self._engine, "prefetch_assets_hint", "prefetch API")
 
     def last_audio_commands(self) -> Any:
         """Return the audio commands emitted by the last `step()` or `choose()` call."""

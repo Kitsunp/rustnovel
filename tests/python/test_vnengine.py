@@ -154,7 +154,10 @@ class TypesTests(unittest.TestCase):
 
     def test_choice_from_dict_requires_options_instead_of_empty_default(self):
         cases = [
-            ({"type": "choice", "prompt": "Route?"}, "Choice missing required 'options' field"),
+            (
+                {"type": "choice", "prompt": "Route?"},
+                "Choice missing required 'options' field",
+            ),
             (
                 {"type": "choice", "prompt": "Route?", "options": {"text": "A"}},
                 "Choice 'options' must be list",
@@ -415,7 +418,9 @@ class EngineAppTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             app.run()
 
-    def test_engine_app_does_not_swallow_value_errors_that_only_mention_script_exhausted(self):
+    def test_engine_app_does_not_swallow_value_errors_that_only_mention_script_exhausted(
+        self,
+    ):
         class BrokenEngine:
             def current_event(self):
                 raise ValueError("cache lookup failed before script exhausted marker")
