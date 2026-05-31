@@ -3,9 +3,7 @@ use std::{collections::BTreeMap, io};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::asset_refs::{
-    collect_character_assets, collect_event_asset_refs, collect_scene_patch_asset_refs, AssetRefSet,
-};
+use crate::asset_refs::{collect_character_assets, AssetRefSet};
 use crate::script::ScriptRaw;
 
 use super::{
@@ -267,24 +265,7 @@ pub fn collect_authoring_asset_refs(graph: &NodeGraph) -> Vec<String> {
 }
 
 fn collect_node_asset_refs(node: &StoryNode, refs: &mut AssetRefSet) {
-    match node {
-        StoryNode::Scene {
-            background,
-            music,
-            characters,
-            ..
-        } => {
-            refs.push_optional(background);
-            refs.push_optional(music);
-            collect_character_assets(characters, refs);
-        }
-        StoryNode::ScenePatch(patch) => collect_scene_patch_asset_refs(patch, refs),
-        StoryNode::AudioAction {
-            asset: Some(asset), ..
-        } => refs.push(asset),
-        StoryNode::Generic(event) => collect_event_asset_refs(event, refs),
-        _ => {}
-    }
+    crate::asset_refs::collect_node_asset_refs(node, refs);
 }
 
 fn collect_profile_asset_refs(profile: &SceneProfile, refs: &mut AssetRefSet) {

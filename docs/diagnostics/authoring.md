@@ -182,9 +182,9 @@ Runtime errors during dry-run must be reproduced and fixed before export.
 
 Preview/runtime signature mismatches indicate divergent semantics between editor and engine.
 
-## dry-extcall-simulated
+## dry-extcall-blocked
 
-ExtCall is simulated in headless validation for safety; reports are partial for that capability.
+ExtCall blocks headless validation until a host capability executes and reports completion.
 
 ## dry-finished
 

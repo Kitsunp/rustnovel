@@ -15,6 +15,11 @@ struct LineStats {
     blanks: usize,
 }
 
+struct SkippedFile {
+    path: String,
+    reason: String,
+}
+
 #[derive(Clone, Copy)]
 enum CommentStyle {
     Slash,
@@ -46,6 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn build_report(root: &Path) -> Result<String, Box<dyn Error>> {
     let mut by_language: BTreeMap<String, LineStats> = BTreeMap::new();
+    let mut skipped_files = Vec::new();
 
     for entry in WalkDir::new(root).into_iter().filter_entry(should_descend) {
         let entry = entry?;
@@ -55,7 +61,13 @@ fn build_report(root: &Path) -> Result<String, Box<dyn Error>> {
 
         let source = match fs::read_to_string(entry.path()) {
             Ok(source) => source,
-            Err(_) => continue,
+            Err(err) => {
+                skipped_files.push(SkippedFile {
+                    path: display_path(root, entry.path()),
+                    reason: err.to_string(),
+                });
+                continue;
+            }
         };
 
         let (language, style) = detect_language(entry.path());
@@ -111,8 +123,23 @@ fn build_report(root: &Path) -> Result<String, Box<dyn Error>> {
     writeln!(&mut report, "- Codigo: {total_code}")?;
     writeln!(&mut report, "- Comentarios: {total_comments}")?;
     writeln!(&mut report, "- Blancos: {total_blanks}")?;
+    if !skipped_files.is_empty() {
+        writeln!(&mut report)?;
+        writeln!(&mut report, "## Archivos omitidos")?;
+        writeln!(&mut report)?;
+        for skipped in skipped_files {
+            writeln!(&mut report, "- `{}`: {}", skipped.path, skipped.reason)?;
+        }
+    }
 
     Ok(report)
+}
+
+fn display_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn should_descend(entry: &DirEntry) -> bool {

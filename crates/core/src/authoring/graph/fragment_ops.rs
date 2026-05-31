@@ -209,6 +209,9 @@ impl NodeGraph {
         if !self.fragments.contains_key(fragment_id) {
             return false;
         }
+        if self.graph_stack.active_fragment.as_deref() == Some(fragment_id) {
+            return false;
+        }
         if let Some(active) = self.graph_stack.active_fragment.take() {
             self.graph_stack.breadcrumb.push(active);
         }

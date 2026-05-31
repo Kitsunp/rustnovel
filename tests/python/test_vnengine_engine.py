@@ -80,6 +80,12 @@ class EngineWrapperTests(unittest.TestCase):
             def last_ext_call_error(self):
                 return self.error
 
+            def pending_external_call(self):
+                return {"event_ip": 0, "command": "minigame_start", "args": ["cards"]}
+
+            def complete_external_call(self, success=True, message=None):
+                self.completed = (success, message)
+
         module.Engine = FakeEngine
         sys.modules["visual_novel_engine"] = module
 
@@ -95,6 +101,12 @@ class EngineWrapperTests(unittest.TestCase):
         engine.register_handler(sentinel)
         engine.clear_ext_call_capabilities()
         self.assertEqual(engine.last_ext_call_error(), None)
+        self.assertEqual(
+            engine.pending_external_call()["command"],
+            "minigame_start",
+        )
+        engine.complete_external_call(False, "boom")
+        self.assertEqual(engine.raw.completed, (False, "boom"))
         self.assertEqual(engine.raw.allowed, [])
         self.assertIs(engine.raw.handler, sentinel)
 

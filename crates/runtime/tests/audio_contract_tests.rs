@@ -43,30 +43,42 @@ struct AudioProbe {
 }
 
 impl Audio for AudioProbe {
-    fn play_music(&mut self, id: &str) {
-        self.play_music_with_options(id, true, None);
+    fn play_music(&mut self, id: &str) -> Result<(), String> {
+        self.play_music_with_options(id, true, None)
     }
 
-    fn play_music_with_options(&mut self, id: &str, loop_playback: bool, volume: Option<f32>) {
+    fn play_music_with_options(
+        &mut self,
+        id: &str,
+        loop_playback: bool,
+        volume: Option<f32>,
+    ) -> Result<(), String> {
         self.state
             .borrow_mut()
             .bgm_calls
             .push((id.to_string(), loop_playback, volume));
+        Ok(())
     }
 
-    fn stop_music(&mut self) {}
+    fn stop_music(&mut self) -> Result<(), String> {
+        Ok(())
+    }
 
-    fn play_sfx(&mut self, _id: &str) {}
+    fn play_sfx(&mut self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
 
-    fn play_voice_with_volume(&mut self, id: &str, volume: Option<f32>) {
+    fn play_voice_with_volume(&mut self, id: &str, volume: Option<f32>) -> Result<(), String> {
         self.state
             .borrow_mut()
             .voice_calls
             .push((id.to_string(), volume));
+        Ok(())
     }
 
-    fn stop_voice(&mut self) {
+    fn stop_voice(&mut self) -> Result<(), String> {
         self.state.borrow_mut().voice_stop_calls += 1;
+        Ok(())
     }
 }
 
@@ -77,12 +89,14 @@ fn audio_transition_default_preserves_loop_and_volume_options() {
         state: probe_state.clone(),
     };
 
-    probe.play_music_with_transition(
-        "music/theme.ogg",
-        false,
-        Some(0.25),
-        Some(Duration::from_millis(100)),
-    );
+    probe
+        .play_music_with_transition(
+            "music/theme.ogg",
+            false,
+            Some(0.25),
+            Some(Duration::from_millis(100)),
+        )
+        .expect("transition should delegate");
 
     assert_eq!(
         probe_state.borrow().bgm_calls,
@@ -100,6 +114,36 @@ fn silent_audio_declares_noop_capabilities() {
     assert!(!caps.stop_voice);
 }
 
+#[test]
+fn silent_audio_reports_playback_as_unavailable() {
+    let mut audio = SilentAudio;
+
+    let err = audio
+        .play_music("music/theme.ogg")
+        .expect_err("silent backend must not pretend playback happened");
+
+    assert!(err.contains("audio backend unavailable"));
+    assert!(err.contains("music/theme.ogg"));
+    assert!(audio.stop_music().is_ok());
+}
+
+#[derive(Default)]
+struct FailingAudio;
+
+impl Audio for FailingAudio {
+    fn play_music(&mut self, id: &str) -> Result<(), String> {
+        Err(format!("cannot play {id}"))
+    }
+
+    fn stop_music(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn play_sfx(&mut self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 fn build_engine(events: Vec<EventRaw>) -> Engine {
     let script = ScriptRaw::new(events, BTreeMap::from([("start".to_string(), 0)]));
     Engine::new(
@@ -108,6 +152,36 @@ fn build_engine(events: Vec<EventRaw>) -> Engine {
         ResourceLimiter::default(),
     )
     .expect("engine")
+}
+
+#[test]
+fn runtime_propagates_audio_command_failures() {
+    let events = vec![
+        EventRaw::AudioAction(AudioActionRaw {
+            channel: "bgm".to_string(),
+            action: "play".to_string(),
+            asset: Some("music/theme.ogg".to_string()),
+            volume: Some(0.42),
+            fade_duration_ms: Some(250),
+            loop_playback: Some(false),
+        }),
+        EventRaw::Dialogue(DialogueRaw {
+            speaker: "Narrator".to_string(),
+            text: "done".to_string(),
+        }),
+    ];
+    let engine = build_engine(events);
+    let mut app = RuntimeApp::new(engine, NullInput, FailingAudio, NullAssets).expect("runtime");
+
+    let err = app
+        .handle_action(InputAction::Advance)
+        .expect_err("audio backend failure must propagate");
+    let err = err.to_string();
+
+    assert!(err.contains("audio command"));
+    assert!(err.contains("play_bgm"));
+    assert!(err.contains("music/theme.ogg"));
+    assert!(err.contains("cannot play music/theme.ogg"));
 }
 
 fn build_engine_with_labels(events: Vec<EventRaw>, labels: BTreeMap<String, usize>) -> Engine {

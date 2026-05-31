@@ -18,15 +18,36 @@ pub fn copy_external_asset(
     kind: AssetImportKind,
     extension: &str,
 ) -> Result<PathBuf, String> {
+    let canonical_root = project_root
+        .canonicalize()
+        .map_err(|err| format!("project root unavailable: {err}"))?;
     let dest_dir = PathBuf::from(kind.destination_dir());
-    let dest_rel = unique_destination_path(project_root, &dest_dir, source, extension);
+    let dest_rel = unique_destination_path(project_root, &dest_dir, source, extension)?;
     let dest_abs = project_root.join(&dest_rel);
     if let Some(parent) = dest_abs.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create asset directory: {err}"))?;
+        let canonical_parent = parent
+            .canonicalize()
+            .map_err(|err| format!("asset destination unavailable: {err}"))?;
+        if !canonical_parent.starts_with(&canonical_root) {
+            return Err(format!(
+                "asset destination escapes project root: {}",
+                parent.display()
+            ));
+        }
     }
     std::fs::copy(source, &dest_abs)
         .map_err(|err| format!("failed to copy external asset into project: {err}"))?;
+    let canonical_dest = dest_abs
+        .canonicalize()
+        .map_err(|err| format!("copied asset unavailable: {err}"))?;
+    if !canonical_dest.starts_with(&canonical_root) {
+        return Err(format!(
+            "copied asset escaped project root: {}",
+            dest_abs.display()
+        ));
+    }
     Ok(dest_rel)
 }
 
@@ -35,7 +56,7 @@ fn unique_destination_path(
     dest_dir: &Path,
     source: &Path,
     extension: &str,
-) -> PathBuf {
+) -> Result<PathBuf, String> {
     let base = sanitized_stem(source);
     let mut suffix = 0usize;
     loop {
@@ -45,8 +66,15 @@ fn unique_destination_path(
             format!("{base}-{suffix}.{extension}")
         };
         let rel = dest_dir.join(name);
-        if !project_root.join(&rel).exists() {
-            return rel;
+        match std::fs::symlink_metadata(project_root.join(&rel)) {
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(rel),
+            Err(err) => {
+                return Err(format!(
+                    "failed to inspect asset destination {}: {err}",
+                    project_root.join(&rel).display()
+                ));
+            }
         }
         suffix += 1;
     }

@@ -163,6 +163,70 @@ fn presentation_snapshot_runtime_objects_use_visual_state_provenance() {
 }
 
 #[test]
+fn composer_preview_reuses_engine_limits_instead_of_silent_current_state_fallback() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let first_scene = graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/first.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        },
+        pos(0.0, 90.0),
+    );
+    let selected_scene = graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/selected.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        },
+        pos(0.0, 180.0),
+    );
+    let long_text = "x".repeat(ResourceLimiter::default().max_text_length + 1);
+    let long_dialogue = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: long_text.clone(),
+        },
+        pos(0.0, 270.0),
+    );
+    let end = graph.add_node(StoryNode::End, pos(0.0, 360.0));
+    graph.connect(start, first_scene);
+    graph.connect(first_scene, selected_scene);
+    graph.connect(selected_scene, long_dialogue);
+    graph.connect(long_dialogue, end);
+
+    let limits = ResourceLimiter {
+        max_text_length: long_text.len() + 1,
+        ..Default::default()
+    };
+    let engine = Engine::new(
+        graph.to_script_strict().expect("script"),
+        SecurityPolicy::default(),
+        limits,
+    )
+    .expect("engine with expanded limits");
+
+    let snapshot = composer::compose_scene_snapshot(
+        &graph,
+        Some(selected_scene),
+        None,
+        Some(&engine),
+        None,
+        None,
+    );
+    let background = snapshot
+        .objects
+        .iter()
+        .find(|object| object.kind == composer::StageLayerKind::Background)
+        .expect("selected background object");
+    assert_eq!(background.asset_path.as_deref(), Some("bg/selected.png"));
+    assert_eq!(background.source_node_id, Some(selected_scene));
+}
+
+#[test]
 fn presentation_snapshot_selected_authoring_overlay_wins_layer_provenance() {
     let mut graph = NodeGraph::new();
     let selected_choice = graph.add_node(

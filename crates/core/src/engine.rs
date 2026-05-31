@@ -5,4 +5,7 @@ mod prefetch;
 mod runtime;
 
 pub use prefetch::PrefetchMode;
-pub use runtime::{ChoiceHistoryEntry, Engine, StateChange};
+pub use runtime::{
+    ChoiceHistoryEntry, Engine, ExternalCallOutcome, ExternalCallRequest, ExternalCallStatus,
+    StateChange,
+};

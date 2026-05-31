@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -64,6 +65,48 @@ pub(super) fn canonicalize_within_root(
     }
 
     Ok(canonical_path)
+}
+
+pub(super) fn ensure_regular_file(path: &Path, field_name: &str) -> VnResult<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(()),
+        Ok(_) => Err(invalid_bundle(format!(
+            "{field_name} is not a regular file: '{}'",
+            path.display()
+        ))),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(invalid_bundle(format!(
+            "missing {field_name} '{}'",
+            path.display()
+        ))),
+        Err(err) => Err(invalid_bundle(format!(
+            "inspect {field_name} '{}': {err}",
+            path.display()
+        ))),
+    }
+}
+
+pub(super) fn output_root_exists_as_directory(path: &Path) -> VnResult<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_dir() => Ok(true),
+        Ok(_) => Err(invalid_bundle(format!(
+            "output_root is not a directory: '{}'",
+            path.display()
+        ))),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(invalid_bundle(format!(
+            "inspect output_root '{}': {err}",
+            path.display()
+        ))),
+    }
+}
+
+pub(super) fn planned_output_root(path: &Path) -> VnResult<PathBuf> {
+    if output_root_exists_as_directory(path)? {
+        path.canonicalize()
+            .map_err(|e| invalid_bundle(format!("canonicalize output_root: {e}")))
+    } else {
+        Ok(path.to_path_buf())
+    }
 }
 
 pub(super) fn normalize_path_display(path: &Path) -> String {

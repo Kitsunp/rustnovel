@@ -14,7 +14,8 @@ use std::sync::Arc;
 // Logic moved to software.rs
 use visual_novel_engine::{
     runtime::{
-        AudioCommand, Engine, EventCompiled, PrefetchMode, SceneFrame, UiState, VisualState,
+        AudioCommand, Engine, EventCompiled, ExternalCallOutcome, PrefetchMode, SceneFrame,
+        UiState, UiView, VisualState,
     },
     RenderOutput, TextRenderer,
 };
@@ -26,7 +27,9 @@ use winit::{
 };
 
 pub use self::assets::{AssetStore, MemoryAssetStore};
-pub use self::audio::{audio_duration, Audio, AudioCapabilities, RodioBackend, SilentAudio};
+pub use self::audio::{
+    audio_duration, Audio, AudioCapabilities, AudioResult, RodioBackend, SilentAudio,
+};
 pub use self::input::{pointer_action_for_scene_frame, ConfigurableInput, Input, InputAction};
 pub use self::render::RuntimeSceneFramePresenter;
 use self::render::{
@@ -129,7 +132,7 @@ where
             prefetch_depth: Self::DEFAULT_PREFETCH_DEPTH,
         };
         let audio_commands = app.engine.take_audio_commands();
-        app.apply_audio_commands(&audio_commands);
+        app.apply_audio_commands(&audio_commands)?;
         app.prefetch_upcoming_assets();
         Ok(app)
     }
@@ -193,14 +196,14 @@ where
             InputAction::Advance => {
                 let audio_commands = step_or_resume(&mut self.engine)?;
                 self.refresh_state()?;
-                self.apply_audio_commands(&audio_commands);
+                self.apply_audio_commands(&audio_commands)?;
                 self.prefetch_upcoming_assets();
             }
             InputAction::Choose(index) => {
                 self.engine.choose(index)?;
                 let audio_commands = self.engine.take_audio_commands();
                 self.refresh_state()?;
-                self.apply_audio_commands(&audio_commands);
+                self.apply_audio_commands(&audio_commands)?;
                 self.prefetch_upcoming_assets();
             }
             InputAction::Back => {
@@ -219,12 +222,39 @@ where
         Ok(true)
     }
 
-    fn refresh_state(&mut self) -> visual_novel_engine::VnResult<()> {
-        let event = self.engine.current_event()?;
-        self.visual = Self::derive_visual(&self.engine, &event);
-        self.ui = UiState::from_event(&event, &self.visual);
-        self.scene_frame = self.engine.scene_frame();
+    pub fn complete_external_call(
+        &mut self,
+        outcome: ExternalCallOutcome,
+    ) -> visual_novel_engine::VnResult<()> {
+        self.engine.complete_external_call(outcome)?;
+        let audio_commands = self.engine.take_audio_commands();
+        self.refresh_state()?;
+        self.apply_audio_commands(&audio_commands)?;
+        self.prefetch_upcoming_assets();
         Ok(())
+    }
+
+    fn refresh_state(&mut self) -> visual_novel_engine::VnResult<()> {
+        match self.engine.current_event() {
+            Ok(event) => {
+                self.visual = Self::derive_visual(&self.engine, &event);
+                self.ui = UiState::from_event(&event, &self.visual);
+                self.scene_frame = self.engine.scene_frame();
+                Ok(())
+            }
+            Err(visual_novel_engine::VnError::EndOfScript) => {
+                self.visual = self.engine.visual_state().clone();
+                self.ui = UiState {
+                    view: UiView::System {
+                        message: "End of script".to_string(),
+                    },
+                    pending_transition: None,
+                };
+                self.scene_frame = self.engine.scene_frame();
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
     }
 
     fn derive_visual(engine: &Engine, event: &EventCompiled) -> VisualState {
@@ -235,7 +265,10 @@ where
         visual
     }
 
-    fn apply_audio_commands(&mut self, commands: &[AudioCommand]) {
+    fn apply_audio_commands(
+        &mut self,
+        commands: &[AudioCommand],
+    ) -> visual_novel_engine::VnResult<()> {
         for command in commands {
             match command {
                 AudioCommand::PlayBgm {
@@ -245,32 +278,40 @@ where
                     fade_in,
                     ..
                 } => {
-                    self.audio.play_music_with_transition(
-                        path.as_ref(),
-                        *r#loop,
-                        *volume,
-                        Some(*fade_in),
-                    );
+                    self.audio
+                        .play_music_with_transition(path.as_ref(), *r#loop, *volume, Some(*fade_in))
+                        .map_err(|err| audio_command_error(command, err))?;
                     self.last_bgm_path = Some(path.as_ref().to_string());
                 }
                 AudioCommand::StopBgm { fade_out } => {
-                    self.audio.stop_music_with_fade(Some(*fade_out));
+                    self.audio
+                        .stop_music_with_fade(Some(*fade_out))
+                        .map_err(|err| audio_command_error(command, err))?;
                     self.last_bgm_path = None;
                 }
                 AudioCommand::PlaySfx { path, volume, .. } => {
-                    self.audio.play_sfx_with_volume(path.as_ref(), *volume);
+                    self.audio
+                        .play_sfx_with_volume(path.as_ref(), *volume)
+                        .map_err(|err| audio_command_error(command, err))?;
                 }
                 AudioCommand::StopSfx => {
-                    self.audio.stop_sfx();
+                    self.audio
+                        .stop_sfx()
+                        .map_err(|err| audio_command_error(command, err))?;
                 }
                 AudioCommand::PlayVoice { path, volume, .. } => {
-                    self.audio.play_voice_with_volume(path.as_ref(), *volume);
+                    self.audio
+                        .play_voice_with_volume(path.as_ref(), *volume)
+                        .map_err(|err| audio_command_error(command, err))?;
                 }
                 AudioCommand::StopVoice => {
-                    self.audio.stop_voice();
+                    self.audio
+                        .stop_voice()
+                        .map_err(|err| audio_command_error(command, err))?;
                 }
             }
         }
+        Ok(())
     }
 
     fn prefetch_upcoming_assets(&mut self) {
@@ -301,12 +342,49 @@ where
 }
 
 fn step_or_resume(engine: &mut Engine) -> visual_novel_engine::VnResult<Vec<AudioCommand>> {
-    if matches!(engine.current_event()?, EventCompiled::ExtCall { .. }) {
-        engine.resume()?;
-        Ok(engine.take_audio_commands())
-    } else {
-        let (audio_commands, _) = engine.step()?;
-        Ok(audio_commands)
+    if let Some(request) = engine.pending_external_call()? {
+        return Err(visual_novel_engine::VnError::external_call_pending(
+            request.event_ip,
+            request.command,
+        ));
+    }
+    let (audio_commands, _) = engine.step()?;
+    Ok(audio_commands)
+}
+
+fn audio_command_error(command: &AudioCommand, err: String) -> visual_novel_engine::VnError {
+    visual_novel_engine::VnError::invalid_script(format!(
+        "audio command '{}' failed: {err}",
+        audio_command_trace(command)
+    ))
+}
+
+fn audio_command_trace(command: &AudioCommand) -> String {
+    match command {
+        AudioCommand::PlayBgm {
+            path,
+            r#loop,
+            volume,
+            fade_in,
+            ..
+        } => format!(
+            "play_bgm path={} loop={} volume={:?} fade_in_ms={}",
+            path.as_ref(),
+            r#loop,
+            volume,
+            fade_in.as_millis()
+        ),
+        AudioCommand::StopBgm { fade_out } => {
+            format!("stop_bgm fade_out_ms={}", fade_out.as_millis())
+        }
+        AudioCommand::PlaySfx { path, volume, .. } => {
+            format!("play_sfx path={} volume={:?}", path.as_ref(), volume)
+        }
+        AudioCommand::StopSfx => "stop_sfx".to_string(),
+        AudioCommand::PlayVoice { path, volume, .. } => {
+            format!("play_voice path={} volume={:?}", path.as_ref(), volume)
+        }
+        AudioCommand::StopVoice => "stop_voice".to_string(),
     }
 }
 

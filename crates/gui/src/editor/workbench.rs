@@ -95,10 +95,18 @@ pub struct PendingEditorOperation {
     pub after_value: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AutoFixBatchSkip {
+    pub diagnostic_id: String,
+    pub fix_id: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AutoFixBatchResult {
     pub applied: usize,
     pub skipped: usize,
+    pub skipped_details: Vec<AutoFixBatchSkip>,
 }
 
 #[derive(Clone, Debug)]
@@ -450,8 +458,16 @@ impl EditorWorkbench {
     }
 
     fn load_layout_prefs(path: &std::path::Path) -> Result<Option<LayoutPreferences>, String> {
-        if !path.exists() {
-            return Ok(None);
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_dir() => {
+                return Err(format!(
+                    "layout preferences path is a directory: '{}'",
+                    path.display()
+                ));
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(format!("inspect '{}': {err}", path.display())),
         }
         let raw = std::fs::read_to_string(path)
             .map_err(|err| format!("read '{}': {err}", path.display()))?;
@@ -586,6 +602,25 @@ mod workspace_layout_ops;
 mod tests {
     use super::*;
 
+    fn create_file_symlink(link: &std::path::Path, target: &std::path::Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, link).is_ok()
+        }
+
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = link;
+            let _ = target;
+            false
+        }
+    }
+
     #[test]
     fn corrupt_layout_prefs_are_not_silently_ignored() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -596,6 +631,23 @@ mod tests {
             .expect_err("corrupt layout preferences must report an error");
 
         assert!(err.contains("parse layout preferences"));
+        assert!(err.contains("layout.json"));
+    }
+
+    #[test]
+    fn dangling_layout_prefs_symlink_is_not_silently_ignored() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("layout.json");
+        let missing_target = dir.path().join("missing-layout.json");
+        if !create_file_symlink(&path, &missing_target) {
+            eprintln!("file symlink creation not supported on this platform");
+            return;
+        }
+
+        let err = EditorWorkbench::load_layout_prefs(&path)
+            .expect_err("dangling layout preferences symlink must report an error");
+
+        assert!(err.contains("read '"));
         assert!(err.contains("layout.json"));
     }
 }

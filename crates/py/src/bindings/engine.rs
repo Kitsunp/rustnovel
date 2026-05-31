@@ -1,13 +1,14 @@
 use super::audio::PyAudio;
 use super::conversion::{event_to_python, ui_state_to_python};
 use super::types::{vn_error_to_py, PyResourceConfig, PyRouteTree, PySceneFrame};
-use pyo3::exceptions::{PyMemoryError, PyNotImplementedError, PyValueError};
+use pyo3::exceptions::{PyMemoryError, PyNotImplementedError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyDictMethods, PyList, PyListMethods};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use visual_novel_engine::runtime::{
-    AudioCommand, Engine as CoreEngine, EventCompiled, EventRaw, ScriptRaw, UiState,
+    AudioCommand, Engine as CoreEngine, EventCompiled, EventRaw, ExternalCallOutcome, ScriptRaw,
+    UiState,
 };
 use visual_novel_engine::{ResourceLimiter, SecurityPolicy};
 
@@ -176,19 +177,38 @@ impl PyEngine {
         self.last_audio_commands = audio;
         let event = change.event;
         if let EventCompiled::ExtCall { command, args } = &event {
+            let event_ip = self.inner.state().position;
             if !self.allowed_ext_call_commands.contains(command.as_str()) {
-                self.last_ext_call_error =
-                    Some(format!("ext_call '{command}' denied by capability policy"));
+                let msg = format!("ext_call '{command}' denied by capability policy");
+                self.last_ext_call_error = Some(msg.clone());
+                return Err(PyRuntimeError::new_err(msg));
             } else if let Some(handler) = &self.handler {
                 let handler = handler.clone_ref(py);
                 if let Err(e) = handler.call1(py, (command.as_str(), args.clone())) {
                     let msg = format!("ExtCall handler error for '{command}': {e}");
                     self.last_ext_call_error = Some(msg.clone());
-                    return Err(pyo3::exceptions::PyRuntimeError::new_err(msg));
+                    let err = self
+                        .inner
+                        .complete_external_call(ExternalCallOutcome::failed(
+                            event_ip,
+                            command.clone(),
+                            msg,
+                        ))
+                        .expect_err("failed ext_call outcome must not advance");
+                    return Err(PyRuntimeError::new_err(err.to_string()));
                 }
+                self.inner
+                    .complete_external_call(ExternalCallOutcome::succeeded(
+                        event_ip,
+                        command.clone(),
+                    ))
+                    .map_err(vn_error_to_py)?;
+                self.last_audio_commands = self.inner.take_audio_commands();
                 self.last_ext_call_error = None;
             } else {
-                self.last_ext_call_error = None;
+                let msg = format!("ext_call '{command}' requires a registered handler");
+                self.last_ext_call_error = Some(msg.clone());
+                return Err(PyRuntimeError::new_err(msg));
             }
         } else {
             self.last_ext_call_error = None;
@@ -441,6 +461,38 @@ impl PyEngine {
 
     fn last_ext_call_error(&self) -> Option<String> {
         self.last_ext_call_error.clone()
+    }
+
+    fn pending_external_call<'py>(&self, py: Python<'py>) -> PyResult<Option<PyObject>> {
+        let Some(request) = self.inner.pending_external_call().map_err(vn_error_to_py)? else {
+            return Ok(None);
+        };
+        let dict = PyDict::new(py);
+        dict.set_item("event_ip", request.event_ip)?;
+        dict.set_item("command", request.command)?;
+        dict.set_item("args", request.args)?;
+        Ok(Some(dict.into()))
+    }
+
+    #[pyo3(signature = (success = true, message = None))]
+    fn complete_external_call(&mut self, success: bool, message: Option<String>) -> PyResult<()> {
+        let request = self
+            .inner
+            .pending_external_call()
+            .map_err(vn_error_to_py)?
+            .ok_or_else(|| PyRuntimeError::new_err("no external call is pending"))?;
+        let outcome = if success {
+            ExternalCallOutcome::succeeded(request.event_ip, request.command)
+        } else {
+            ExternalCallOutcome::failed(
+                request.event_ip,
+                request.command,
+                message.unwrap_or_else(|| "external call failed".to_string()),
+            )
+        };
+        self.inner
+            .complete_external_call(outcome)
+            .map_err(vn_error_to_py)
     }
 
     fn resume(&mut self) -> PyResult<()> {

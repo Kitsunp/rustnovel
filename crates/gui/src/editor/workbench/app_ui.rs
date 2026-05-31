@@ -198,10 +198,24 @@ impl EditorWorkbench {
         if self.pending_auto_fix_batch.is_some() {
             match self.apply_pending_autofix_batch() {
                 Ok(result) => {
-                    self.toast = Some(ToastState::success(format!(
+                    let summary = format!(
                         "Auto-fix batch applied: {} applied, {} skipped",
                         result.applied, result.skipped
-                    )));
+                    );
+                    if let Some(first_skip) = result.skipped_details.first() {
+                        let remaining = result.skipped_details.len().saturating_sub(1);
+                        let suffix = if remaining == 0 {
+                            String::new()
+                        } else {
+                            format!(" (+{remaining} more)")
+                        };
+                        self.toast = Some(ToastState::warning(format!(
+                            "{summary}; first skipped fix '{}' for {} failed: {}{}",
+                            first_skip.fix_id, first_skip.diagnostic_id, first_skip.reason, suffix
+                        )));
+                    } else {
+                        self.toast = Some(ToastState::success(summary));
+                    }
                 }
                 Err(err) => {
                     self.toast = Some(ToastState::error(format!("Auto-fix batch failed: {err}")));

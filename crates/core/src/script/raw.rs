@@ -1,14 +1,10 @@
-use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 
 use crate::error::{VnError, VnResult};
-use crate::event::{
-    CharacterPatchCompiled, CharacterPlacementCompiled, ChoiceCompiled, ChoiceOptionCompiled,
-    CondCompiled, CondRaw, DialogueCompiled, EventCompiled, EventRaw, ScenePatchCompiled,
-    SceneUpdateCompiled, SharedStr,
-};
+use crate::event::EventRaw;
+use crate::event_behavior::{event_behavior_for_raw, CompileCtx, EventBehavior};
 use crate::resource::ResourceLimiter;
 use crate::schema_policy::{validate_script_schema_value, SchemaPolicy};
 use crate::version::SCRIPT_SCHEMA_VERSION;
@@ -140,11 +136,8 @@ impl ScriptRaw {
     pub fn compile(&self) -> VnResult<ScriptCompiled> {
         let _event_len = u32::try_from(self.events.len())
             .map_err(|_| VnError::InvalidScript("event count exceeds u32::MAX".to_string()))?;
-        let mut pool = StringPool::default();
         let mut compiled_events = Vec::with_capacity(self.events.len());
         let mut compiled_labels = BTreeMap::new();
-        let mut flag_map: HashMap<String, u32> = HashMap::new();
-        let mut var_map: HashMap<String, u32> = HashMap::new();
 
         for (label, index) in &self.labels {
             if *index > self.events.len() {
@@ -167,174 +160,20 @@ impl ScriptRaw {
             .copied()
             .ok_or_else(|| VnError::InvalidScript("missing 'start' label".to_string()))?;
 
-        for event in &self.events {
-            let compiled = match event {
-                EventRaw::Dialogue(dialogue) => EventCompiled::Dialogue(DialogueCompiled {
-                    speaker: pool.intern(&dialogue.speaker),
-                    text: pool.intern(&dialogue.text),
-                }),
-                EventRaw::Choice(choice) => EventCompiled::Choice(ChoiceCompiled {
-                    prompt: pool.intern(&choice.prompt),
-                    options: choice
-                        .options
-                        .iter()
-                        .map(|option| {
-                            let target_ip = compiled_labels
-                                .get(&option.target)
-                                .copied()
-                                .ok_or_else(|| {
-                                    VnError::InvalidScript(format!(
-                                        "choice target '{}' not found",
-                                        option.target
-                                    ))
-                                })?;
-                            Ok(ChoiceOptionCompiled {
-                                text: pool.intern(&option.text),
-                                target_ip,
-                            })
-                        })
-                        .collect::<VnResult<Vec<_>>>()?,
-                }),
-                EventRaw::Scene(scene) => EventCompiled::Scene(SceneUpdateCompiled {
-                    background: scene.background.as_deref().map(|value| pool.intern(value)),
-                    music: scene.music.as_deref().map(|value| pool.intern(value)),
-                    characters: scene
-                        .characters
-                        .iter()
-                        .map(|character| CharacterPlacementCompiled {
-                            name: pool.intern(&character.name),
-                            expression: character
-                                .expression
-                                .as_deref()
-                                .map(|value| pool.intern(value)),
-                            position: character
-                                .position
-                                .as_deref()
-                                .map(|value| pool.intern(value)),
-                            x: character.x,
-                            y: character.y,
-                            scale: character.scale,
-                        })
-                        .collect(),
-                }),
-                EventRaw::Jump { target } => {
-                    let target_ip = compiled_labels.get(target).copied().ok_or_else(|| {
-                        VnError::InvalidScript(format!("jump target '{target}' not found"))
-                    })?;
-                    EventCompiled::Jump { target_ip }
-                }
-                EventRaw::SetFlag { key, value } => {
-                    let flag_id = get_or_insert_id(&mut flag_map, key)?;
-                    EventCompiled::SetFlag {
-                        flag_id,
-                        value: *value,
-                    }
-                }
-                EventRaw::SetVar { key, value } => {
-                    let var_id = get_or_insert_id(&mut var_map, key)?;
-                    EventCompiled::SetVar {
-                        var_id,
-                        value: *value,
-                    }
-                }
-                EventRaw::JumpIf { cond, target } => {
-                    let target_ip = compiled_labels.get(target).copied().ok_or_else(|| {
-                        VnError::InvalidScript(format!("jump_if target '{target}' not found"))
-                    })?;
-                    let cond = compile_cond(cond, &mut flag_map, &mut var_map)?;
-                    EventCompiled::JumpIf { cond, target_ip }
-                }
-                EventRaw::Patch(patch) => EventCompiled::Patch(ScenePatchCompiled {
-                    background: patch.background.as_deref().map(|value| pool.intern(value)),
-                    music: patch.music.as_deref().map(|value| pool.intern(value)),
-                    add: patch
-                        .add
-                        .iter()
-                        .map(|character| CharacterPlacementCompiled {
-                            name: pool.intern(&character.name),
-                            expression: character
-                                .expression
-                                .as_deref()
-                                .map(|value| pool.intern(value)),
-                            position: character
-                                .position
-                                .as_deref()
-                                .map(|value| pool.intern(value)),
-                            x: character.x,
-                            y: character.y,
-                            scale: character.scale,
-                        })
-                        .collect(),
-                    update: patch
-                        .update
-                        .iter()
-                        .map(|character| CharacterPatchCompiled {
-                            name: pool.intern(&character.name),
-                            expression: character
-                                .expression
-                                .as_deref()
-                                .map(|value| pool.intern(value)),
-                            position: character
-                                .position
-                                .as_deref()
-                                .map(|value| pool.intern(value)),
-                            x: character.x,
-                            y: character.y,
-                            scale: character.scale,
-                        })
-                        .collect(),
-                    remove: patch.remove.iter().map(|name| pool.intern(name)).collect(),
-                }),
-                EventRaw::ExtCall { command, args } => EventCompiled::ExtCall {
-                    command: command.clone(),
-                    args: args.clone(),
-                },
-                EventRaw::AudioAction(action) => {
-                    let channel = compile_audio_channel(&action.channel)?;
-                    let action_kind = compile_audio_action(&action.action)?;
-                    if action_kind == 0
-                        && action
-                            .asset
-                            .as_deref()
-                            .is_none_or(|asset| asset.trim().is_empty())
-                    {
-                        return Err(VnError::InvalidScript(
-                            "audio play action requires a non-empty asset".to_string(),
-                        ));
-                    }
-                    EventCompiled::AudioAction(crate::event::AudioActionCompiled {
-                        channel,
-                        action: action_kind,
-                        asset: action.asset.as_deref().map(|s| pool.intern(s)),
-                        volume: action.volume,
-                        fade_duration_ms: action.fade_duration_ms,
-                        loop_playback: action.loop_playback,
-                    })
-                }
-                EventRaw::Transition(transition) => {
-                    EventCompiled::Transition(crate::event::SceneTransitionCompiled {
-                        kind: compile_transition_kind(&transition.kind)?,
-                        duration_ms: transition.duration_ms,
-                        color: transition.color.as_deref().map(|s| pool.intern(s)),
-                    })
-                }
-                EventRaw::SetCharacterPosition(pos) => EventCompiled::SetCharacterPosition(
-                    crate::event::SetCharacterPositionCompiled {
-                        name: pool.intern(&pos.name),
-                        x: pos.x,
-                        y: pos.y,
-                        scale: pos.scale,
-                    },
-                ),
-            };
-            compiled_events.push(compiled);
-        }
+        let flag_count = {
+            let mut compile_ctx = CompileCtx::new(&compiled_labels);
+            for event in &self.events {
+                let compiled = event_behavior_for_raw(event).compile(&mut compile_ctx, event)?;
+                compiled_events.push(compiled);
+            }
+            compile_ctx.flag_count()
+        };
 
         Ok(ScriptCompiled {
             events: compiled_events,
             labels: compiled_labels,
             start_ip,
-            flag_count: flag_map.len() as u32,
+            flag_count,
         })
     }
 }
@@ -392,90 +231,4 @@ fn json_error_window(input: &str, offset: usize, length: usize) -> (String, usiz
     }
     let window = input[start..end].to_string();
     (window, offset.saturating_sub(start))
-}
-
-#[derive(Default)]
-struct StringPool {
-    cache: HashMap<String, SharedStr>,
-}
-
-impl StringPool {
-    fn intern(&mut self, value: &str) -> SharedStr {
-        if let Some(existing) = self.cache.get(value) {
-            return existing.clone();
-        }
-        let shared: SharedStr = Arc::from(value);
-        self.cache.insert(value.to_string(), shared.clone());
-        shared
-    }
-}
-
-fn get_or_insert_id(map: &mut HashMap<String, u32>, key: &str) -> VnResult<u32> {
-    if let Some(id) = map.get(key) {
-        return Ok(*id);
-    }
-    let next_id =
-        u32::try_from(map.len()).map_err(|_| VnError::InvalidScript("too many ids".to_string()))?;
-    map.insert(key.to_string(), next_id);
-    Ok(next_id)
-}
-
-fn compile_cond(
-    cond: &CondRaw,
-    flag_map: &mut HashMap<String, u32>,
-    var_map: &mut HashMap<String, u32>,
-) -> VnResult<CondCompiled> {
-    match cond {
-        CondRaw::Flag { key, is_set } => {
-            let flag_id = get_or_insert_id(flag_map, key)?;
-            Ok(CondCompiled::Flag {
-                flag_id,
-                is_set: *is_set,
-            })
-        }
-        CondRaw::VarCmp { key, op, value } => {
-            let var_id = get_or_insert_id(var_map, key)?;
-            Ok(CondCompiled::VarCmp {
-                var_id,
-                op: *op,
-                value: *value,
-            })
-        }
-    }
-}
-
-fn compile_audio_channel(channel: &str) -> VnResult<u8> {
-    let normalized = channel.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "bgm" => Ok(0),
-        "sfx" => Ok(1),
-        "voice" => Ok(2),
-        _ => Err(VnError::InvalidScript(format!(
-            "invalid audio channel '{channel}' (expected bgm|sfx|voice)"
-        ))),
-    }
-}
-
-fn compile_audio_action(action: &str) -> VnResult<u8> {
-    let normalized = action.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "play" => Ok(0),
-        "stop" => Ok(1),
-        "fade_out" => Ok(2),
-        _ => Err(VnError::InvalidScript(format!(
-            "invalid audio action '{action}' (expected play|stop|fade_out)"
-        ))),
-    }
-}
-
-fn compile_transition_kind(kind: &str) -> VnResult<u8> {
-    let normalized = kind.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "fade" | "fade_black" => Ok(0),
-        "dissolve" => Ok(1),
-        "cut" => Ok(2),
-        _ => Err(VnError::InvalidScript(format!(
-            "invalid transition kind '{kind}' (expected fade|fade_black|dissolve|cut)"
-        ))),
-    }
 }

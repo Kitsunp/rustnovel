@@ -4,7 +4,7 @@ use visual_novel_engine::{
     resolve_layout,
     runtime::{
         CharacterPlacementRaw, DialogueRaw, Engine, EventRaw, SceneFramePresenter, SceneUpdateRaw,
-        ScriptRaw,
+        ScriptRaw, UiView,
     },
     DisplayProfile, LayoutPolicy, ResourceLimiter, SecurityPolicy, StageProfile, UiTheme,
 };
@@ -34,9 +34,17 @@ impl AssetStore for MemoryAssets {
 struct SilentAudio;
 
 impl Audio for SilentAudio {
-    fn play_music(&mut self, _id: &str) {}
-    fn stop_music(&mut self) {}
-    fn play_sfx(&mut self, _id: &str) {}
+    fn play_music(&mut self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn stop_music(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn play_sfx(&mut self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[test]
@@ -139,6 +147,33 @@ fn runtime_app_reports_unimplemented_navigation_actions() {
             "unexpected error for {label}: {err}"
         );
     }
+}
+
+#[test]
+fn runtime_app_advance_past_final_event_reports_end_state_without_error() {
+    let script = ScriptRaw::new(
+        vec![EventRaw::Dialogue(DialogueRaw {
+            speaker: "Ava".to_string(),
+            text: "Done".to_string(),
+        })],
+        BTreeMap::from([("start".to_string(), 0)]),
+    );
+    let engine = Engine::new(
+        script,
+        SecurityPolicy::default(),
+        ResourceLimiter::default(),
+    )
+    .expect("engine");
+    let mut app =
+        RuntimeApp::new(engine, NullInput, SilentAudio, MemoryAssets).expect("runtime app");
+
+    assert!(app
+        .handle_action(InputAction::Advance)
+        .expect("advance past final event should not error"));
+    assert!(matches!(
+        &app.ui().view,
+        UiView::System { message } if message == "End of script"
+    ));
 }
 
 #[test]

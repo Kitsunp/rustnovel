@@ -1,37 +1,12 @@
 use crate::event::{CondCompiled, CondRaw, EventCompiled, EventRaw};
+use crate::event_behavior::{event_spec_for_compiled, event_spec_for_raw};
 
 pub(crate) fn event_kind_compiled(event: &EventCompiled) -> &'static str {
-    match event {
-        EventCompiled::Dialogue(_) => "dialogue",
-        EventCompiled::Choice(_) => "choice",
-        EventCompiled::Scene(_) => "scene",
-        EventCompiled::Jump { .. } => "jump",
-        EventCompiled::SetFlag { .. } => "set_flag",
-        EventCompiled::SetVar { .. } => "set_var",
-        EventCompiled::JumpIf { .. } => "jump_if",
-        EventCompiled::Patch(_) => "patch",
-        EventCompiled::ExtCall { .. } => "ext_call",
-        EventCompiled::AudioAction(_) => "audio_action",
-        EventCompiled::Transition(_) => "transition",
-        EventCompiled::SetCharacterPosition(_) => "set_character_position",
-    }
+    event_spec_for_compiled(event).trace_kind
 }
 
 pub(crate) fn event_kind_raw(event: &EventRaw) -> &'static str {
-    match event {
-        EventRaw::Dialogue(_) => "dialogue",
-        EventRaw::Choice(_) => "choice",
-        EventRaw::Scene(_) => "scene",
-        EventRaw::Jump { .. } => "jump",
-        EventRaw::SetFlag { .. } => "set_flag",
-        EventRaw::SetVar { .. } => "set_var",
-        EventRaw::JumpIf { .. } => "jump_if",
-        EventRaw::Patch(_) => "patch",
-        EventRaw::ExtCall { .. } => "ext_call",
-        EventRaw::AudioAction(_) => "audio_action",
-        EventRaw::Transition(_) => "transition",
-        EventRaw::SetCharacterPosition(_) => "set_character_position",
-    }
+    event_spec_for_raw(event).trace_kind
 }
 
 pub(crate) fn compiled_event_signature(event: &EventCompiled) -> String {

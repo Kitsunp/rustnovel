@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use crate::event_behavior::{node_behavior_for_authoring_node, NodeBehavior, ValidationCtx};
+
 use super::super::{
-    validate_authoring_graph_no_io, AuthoringPosition, DiagnosticTarget, FieldPath,
-    GraphConnection, LintCode, LintIssue, NodeGraph, SemanticValue, SemanticValueKind, StoryNode,
-    ValidationPhase,
+    validate_authoring_graph_no_io, AuthoringPosition, DiagnosticTarget, LintCode, LintIssue,
+    NodeGraph, StoryNode, ValidationPhase,
 };
 use super::AuthoringDelta;
 
@@ -326,80 +327,30 @@ fn node_diagnostic_ids(
     let mut issues = Vec::new();
     validate_layout_position(node_id, position, &mut issues);
     validate_reachability(graph, node_id, &mut issues);
-    if !node.is_marker() && !node.export_supported() {
-        issues.push(
-            LintIssue::error(
-                Some(node_id),
-                ValidationPhase::Graph,
-                LintCode::ContractUnsupportedExport,
-                "Node is not export-compatible",
-            )
-            .with_target(DiagnosticTarget::Node { node_id })
-            .with_field_path(format!("graph.nodes[{node_id}]"))
-            .with_evidence_trace(),
-        );
-    }
-    match node {
-        StoryNode::Dialogue { speaker, .. } if speaker.trim().is_empty() => {
-            issues.push(
-                LintIssue::warning(
-                    Some(node_id),
-                    ValidationPhase::Graph,
-                    LintCode::EmptySpeakerName,
-                    "Dialogue speaker is empty",
-                )
-                .with_target(DiagnosticTarget::Character {
-                    node_id: Some(node_id),
-                    name: speaker.clone(),
-                    field_path: Some(FieldPath::new(format!("graph.nodes[{node_id}].speaker"))),
-                })
-                .with_field_path(format!("graph.nodes[{node_id}].speaker"))
-                .with_semantic_value(SemanticValue::new(
-                    SemanticValueKind::CharacterRef,
-                    speaker.clone(),
-                    format!("graph.nodes[{node_id}].speaker"),
-                ))
-                .with_evidence_trace(),
-            );
-        }
-        StoryNode::Choice { options, .. } => validate_choice(graph, node_id, options, &mut issues),
-        StoryNode::SetVariable { key, .. } | StoryNode::SetFlag { key, .. }
-            if key.trim().is_empty() =>
-        {
-            issues.push(
-                LintIssue::error(
-                    Some(node_id),
-                    ValidationPhase::Graph,
-                    LintCode::EmptyStateKey,
-                    "State key is empty",
-                )
-                .with_field_path(format!("graph.nodes[{node_id}].key"))
-                .with_semantic_value(SemanticValue::new(
-                    SemanticValueKind::VariableRef,
-                    key.clone(),
-                    format!("graph.nodes[{node_id}].key"),
-                ))
-                .with_evidence_trace(),
-            );
-        }
-        _ => {}
-    }
-    if !matches!(node, StoryNode::End) && !graph.connections().any(|conn| conn.from == node_id) {
-        issues.push(
-            LintIssue::warning(
-                Some(node_id),
-                ValidationPhase::Graph,
-                LintCode::DeadEnd,
-                "Node has no outgoing transition",
-            )
-            .with_target(DiagnosticTarget::Node { node_id })
-            .with_evidence_trace(),
-        );
-    }
+    let script_labels = script_labels_for_validation(graph);
+    let asset_exists = |_asset: &str| true;
+    let ctx = ValidationCtx::new(graph, node_id, &script_labels, &asset_exists);
+    issues.extend(node_behavior_for_authoring_node(node).validate(&ctx, node));
     issues
         .into_iter()
         .map(|issue| issue.diagnostic_id())
         .collect()
+}
+
+fn script_labels_for_validation(graph: &NodeGraph) -> BTreeSet<String> {
+    if graph
+        .nodes()
+        .any(|(_, node, _)| matches!(node, StoryNode::Jump { .. } | StoryNode::JumpIf { .. }))
+    {
+        graph
+            .to_script_lossy_for_diagnostics()
+            .labels
+            .keys()
+            .cloned()
+            .collect()
+    } else {
+        BTreeSet::new()
+    }
 }
 
 fn validate_layout_position(
@@ -502,92 +453,6 @@ fn reachable_nodes(graph: &NodeGraph) -> BTreeSet<u32> {
         }
     }
     reachable
-}
-
-fn validate_choice(
-    graph: &NodeGraph,
-    node_id: u32,
-    options: &[String],
-    issues: &mut Vec<LintIssue>,
-) {
-    if options.is_empty() {
-        issues.push(
-            LintIssue::error(
-                Some(node_id),
-                ValidationPhase::Graph,
-                LintCode::ChoiceNoOptions,
-                "Choice has no options",
-            )
-            .with_target(DiagnosticTarget::Node { node_id })
-            .with_field_path(format!("graph.nodes[{node_id}].options"))
-            .with_evidence_trace(),
-        );
-    }
-    for (idx, option) in options.iter().enumerate() {
-        if option.trim() == format!("Option {}", idx + 1) {
-            issues.push(
-                LintIssue::warning(
-                    Some(node_id),
-                    ValidationPhase::Graph,
-                    LintCode::PlaceholderChoiceOption,
-                    format!("Choice option {idx} still uses placeholder text"),
-                )
-                .with_target(DiagnosticTarget::ChoiceOption {
-                    node_id,
-                    option_index: idx,
-                })
-                .with_field_path(format!("graph.nodes[{node_id}].options[{idx}].text"))
-                .with_semantic_value(SemanticValue::new(
-                    SemanticValueKind::Text,
-                    option.clone(),
-                    format!("graph.nodes[{node_id}].options[{idx}].text"),
-                ))
-                .with_evidence_trace(),
-            );
-        }
-    }
-    let outgoing = graph
-        .connections()
-        .filter(|conn| conn.from == node_id)
-        .collect::<Vec<&GraphConnection>>();
-    for idx in 0..options.len() {
-        if !outgoing.iter().any(|conn| conn.from_port == idx) {
-            issues.push(
-                LintIssue::warning(
-                    Some(node_id),
-                    ValidationPhase::Graph,
-                    LintCode::ChoiceOptionUnlinked,
-                    format!("Choice option {idx} is unlinked"),
-                )
-                .with_edge(Some(node_id), None)
-                .with_target(DiagnosticTarget::ChoiceOption {
-                    node_id,
-                    option_index: idx,
-                })
-                .with_field_path(format!("graph.nodes[{node_id}].options[{idx}].target"))
-                .with_evidence_trace(),
-            );
-        }
-    }
-    for conn in outgoing {
-        if conn.from_port >= options.len() {
-            issues.push(
-                LintIssue::warning(
-                    Some(node_id),
-                    ValidationPhase::Graph,
-                    LintCode::ChoicePortOutOfRange,
-                    "Choice connection port is out of range",
-                )
-                .with_edge(Some(conn.from), Some(conn.to))
-                .with_target(DiagnosticTarget::Edge {
-                    from: conn.from,
-                    from_port: conn.from_port,
-                    to: Some(conn.to),
-                })
-                .with_evidence_trace(),
-            );
-        }
-    }
 }
 
 fn node_id_from_character_object_id(object_id: &str) -> Option<u32> {

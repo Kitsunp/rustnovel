@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use crate::event::{CharacterPlacementRaw, EventCompiled, ScenePatchRaw};
-use crate::resource::ResourceLimiter;
 use crate::runtime::Engine;
 
 use super::super::{NodeGraph, StoryNode};
@@ -99,7 +98,7 @@ pub(super) fn preview_engine_for_selection(
     let mut preview = Engine::from_compiled(
         engine.script().clone(),
         engine.policy().clone(),
-        ResourceLimiter::default(),
+        engine.limits(),
     )
     .unwrap_or_else(|_| engine.clone());
     let max_steps = (target_ip as usize).saturating_add(64).min(4096);

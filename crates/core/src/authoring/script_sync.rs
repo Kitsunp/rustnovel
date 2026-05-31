@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::event::EventRaw;
+use crate::event_behavior::{event_spec_for_raw, node_from_event_raw};
 use crate::script::ScriptRaw;
 
 use super::{AuthoringPosition, NodeGraph, StoryNode, NODE_VERTICAL_SPACING};
@@ -23,7 +24,7 @@ pub fn from_script(script: &ScriptRaw) -> NodeGraph {
 
     for (idx, event) in script.events.iter().enumerate() {
         let y = 100.0 + (idx as f32) * NODE_VERTICAL_SPACING;
-        let node = node_from_event(event);
+        let node = node_from_event_raw(event);
         let id = graph.add_node(node, AuthoringPosition::new(100.0, y));
         index_to_id.insert(idx, id);
     }
@@ -90,69 +91,7 @@ fn autoconnect_dangling_nodes(
 }
 
 fn should_autoconnect_dangling(event: &EventRaw) -> bool {
-    !matches!(
-        event,
-        EventRaw::Jump { .. } | EventRaw::JumpIf { .. } | EventRaw::Choice(_)
-    )
-}
-
-fn node_from_event(event: &EventRaw) -> StoryNode {
-    match event {
-        EventRaw::Dialogue(dialogue) => StoryNode::Dialogue {
-            speaker: dialogue.speaker.clone(),
-            text: dialogue.text.clone(),
-        },
-        EventRaw::Choice(choice) => StoryNode::Choice {
-            prompt: choice.prompt.clone(),
-            options: choice
-                .options
-                .iter()
-                .map(|option| option.text.clone())
-                .collect(),
-        },
-        EventRaw::Scene(scene) => StoryNode::Scene {
-            profile: None,
-            background: scene.background.clone(),
-            music: scene.music.clone(),
-            characters: scene.characters.clone(),
-        },
-        EventRaw::Jump { target } => StoryNode::Jump {
-            target: target.clone(),
-        },
-        EventRaw::SetFlag { key, value } => StoryNode::SetFlag {
-            key: key.clone(),
-            value: *value,
-        },
-        EventRaw::SetVar { key, value } => StoryNode::SetVariable {
-            key: key.clone(),
-            value: *value,
-        },
-        EventRaw::JumpIf { cond, target } => StoryNode::JumpIf {
-            target: target.clone(),
-            cond: cond.clone(),
-        },
-        EventRaw::Patch(patch) => StoryNode::ScenePatch(patch.clone()),
-        EventRaw::AudioAction(action) => StoryNode::AudioAction {
-            channel: action.channel.clone(),
-            action: action.action.clone(),
-            asset: action.asset.clone(),
-            volume: action.volume,
-            fade_duration_ms: action.fade_duration_ms,
-            loop_playback: action.loop_playback,
-        },
-        EventRaw::Transition(transition) => StoryNode::Transition {
-            kind: transition.kind.clone(),
-            duration_ms: transition.duration_ms,
-            color: transition.color.clone(),
-        },
-        EventRaw::SetCharacterPosition(pos) => StoryNode::CharacterPlacement {
-            name: pos.name.clone(),
-            x: pos.x,
-            y: pos.y,
-            scale: pos.scale,
-        },
-        EventRaw::ExtCall { .. } => StoryNode::Generic(event.clone()),
-    }
+    !event_spec_for_raw(event).flow.has_explicit_targets()
 }
 
 fn connect_event_flow(

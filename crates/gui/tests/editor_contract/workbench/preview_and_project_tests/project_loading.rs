@@ -121,7 +121,7 @@ fn loaded_example_project_can_prepare_player_mode() {
 }
 
 #[test]
-fn load_project_with_status_ignores_locales_outside_locale_root() {
+fn load_project_with_status_rejects_locales_outside_locale_root() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);
     let dir = tempdir().expect("tempdir");
@@ -172,19 +172,68 @@ entry_point = "main.json"
     )
     .expect("write manifest");
 
-    workbench
+    let err = workbench
         .load_project_with_status(project_root.join("project.vnm"), false)
-        .expect("project should load");
+        .expect_err("manifest-declared locale escape must fail loudly");
 
-    assert_eq!(
-        workbench.localization_catalog.locale_codes(),
-        vec!["en".to_string()],
-        "only locale files contained in locales/ should be loaded"
-    );
-    assert_eq!(workbench.localization_catalog.default_locale, "en");
+    assert!(err.contains("escapes project root"), "err={err}");
     assert!(
-        workbench.current_script.is_some(),
-        "entry script should load"
+        workbench.current_script.is_none(),
+        "project state must not be partially loaded after locale failure"
+    );
+}
+
+#[test]
+fn load_project_with_status_rejects_corrupt_manifest_locale() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+    let dir = tempdir().expect("tempdir");
+    let project_root = dir.path().join("project");
+    let locale_root = project_root.join("locales");
+    fs::create_dir_all(&locale_root).expect("mkdir locales");
+
+    fs::write(
+        project_root.join("main.json"),
+        r#"{
+  "script_schema_version": "1.0",
+  "events": [
+    { "type": "dialogue", "speaker": "Narrator", "text": "Hola" }
+  ],
+  "labels": { "start": 0 }
+}"#,
+    )
+    .expect("write script");
+    fs::write(locale_root.join("en.json"), r#"{"hello":"hola""#).expect("write corrupt locale");
+
+    fs::write(
+        project_root.join("project.vnm"),
+        r#"
+manifest_schema_version = "1.0"
+
+[metadata]
+name = "Locale Parse Safety"
+author = "QA"
+version = "0.1.0"
+
+[settings]
+resolution = [1280, 720]
+default_language = "en"
+supported_languages = ["en"]
+entry_point = "main.json"
+
+[assets]
+"#,
+    )
+    .expect("write manifest");
+
+    let err = workbench
+        .load_project_with_status(project_root.join("project.vnm"), false)
+        .expect_err("corrupt manifest-declared locale must fail loudly");
+
+    assert!(err.contains("parse locale 'en'"), "err={err}");
+    assert!(
+        workbench.current_script.is_none(),
+        "project state must not be partially loaded after locale parse failure"
     );
 }
 
@@ -283,5 +332,49 @@ entry_point = "main.json"
                 if image.path.as_ref() == "backgrounds/new.png"
         )),
         "preview scene should come from the newly loaded script"
+    );
+}
+
+#[test]
+fn load_standalone_script_warns_about_corrupt_discovered_locale() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+    let dir = tempdir().expect("tempdir");
+    let project_root = dir.path().join("script_project");
+    fs::create_dir_all(project_root.join("locales")).expect("mkdir locales");
+
+    fs::write(
+        project_root.join("main.json"),
+        r#"{
+  "script_schema_version": "1.0",
+  "events": [
+    { "type": "dialogue", "speaker": "Narrator", "text": "Bonjour" }
+  ],
+  "labels": { "start": 0 }
+}"#,
+    )
+    .expect("write script");
+    fs::write(project_root.join("locales/fr.json"), r#"{"hello":"bonjour""#)
+        .expect("write corrupt locale");
+
+    workbench.load_script(project_root.join("main.json"));
+
+    let toast = workbench
+        .toast
+        .as_ref()
+        .map(|toast| toast.message.as_str())
+        .unwrap_or("<no toast>");
+    assert!(
+        toast.contains("Locale discovery skipped 1 file(s)")
+            && toast.contains("parse locale 'fr'"),
+        "corrupt discovered locale should be visible to the user: {toast}"
+    );
+    assert!(
+        workbench.current_script.is_some(),
+        "standalone script should still load when best-effort locale discovery warns"
+    );
+    assert!(
+        workbench.localization_catalog.locale_codes().is_empty(),
+        "corrupt discovered locale must not be loaded"
     );
 }

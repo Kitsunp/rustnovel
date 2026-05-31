@@ -8,6 +8,7 @@ mod engine;
 mod entity;
 mod error;
 mod event;
+mod event_behavior;
 mod event_signature;
 mod execution_contract;
 mod graph;

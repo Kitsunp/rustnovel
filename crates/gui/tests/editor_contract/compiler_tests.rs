@@ -140,7 +140,10 @@ fn preview_runtime_sequence_matches_raw_sequence_for_default_route() {
         .map(|step| step.event_signature.clone())
         .collect();
     let first = ChoicePolicy::Strategy(ChoiceStrategy::First);
-    let raw_seq: Vec<String> = simulate_raw_sequence(&result.script, 32, &first)
+    let raw_report = simulate_raw_sequence(&result.script, 32, &first);
+    assert!(raw_report.errors.is_empty(), "{:?}", raw_report.errors);
+    let raw_seq: Vec<String> = raw_report
+        .steps
         .into_iter()
         .map(|step| step.event_signature)
         .collect();
@@ -180,12 +183,22 @@ fn raw_simulation_supports_multiple_choice_routes() {
     let last = simulate_raw_sequence(&script, 32, &last_policy);
     let alternating = simulate_raw_sequence(&script, 32, &alternating_policy);
 
-    assert!(!first.is_empty());
-    assert!(!last.is_empty());
-    assert!(!alternating.is_empty());
+    assert!(first.errors.is_empty(), "{:?}", first.errors);
+    assert!(last.errors.is_empty(), "{:?}", last.errors);
+    assert!(alternating.errors.is_empty(), "{:?}", alternating.errors);
+    assert!(!first.steps.is_empty());
+    assert!(!last.steps.is_empty());
+    assert!(!alternating.steps.is_empty());
     assert_ne!(
-        first.iter().map(|s| &s.event_signature).collect::<Vec<_>>(),
-        last.iter().map(|s| &s.event_signature).collect::<Vec<_>>()
+        first
+            .steps
+            .iter()
+            .map(|s| &s.event_signature)
+            .collect::<Vec<_>>(),
+        last.steps
+            .iter()
+            .map(|s| &s.event_signature)
+            .collect::<Vec<_>>()
     );
 }
 

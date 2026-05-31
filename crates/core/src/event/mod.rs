@@ -90,20 +90,7 @@ pub enum EventCompiled {
 }
 
 impl EventRaw {
-    pub const TYPE_NAMES: &'static [&'static str] = &[
-        "dialogue",
-        "choice",
-        "scene",
-        "jump",
-        "set_flag",
-        "set_var",
-        "jump_if",
-        "patch",
-        "ext_call",
-        "audio_action",
-        "transition",
-        "set_character_position",
-    ];
+    pub const TYPE_NAMES: &'static [&'static str] = crate::event_behavior::EventKind::STABLE_NAMES;
 
     /// Serializes the raw event to JSON.
     pub fn to_json_value(&self) -> serde_json::Value {

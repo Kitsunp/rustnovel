@@ -9,7 +9,7 @@ pub use dry_run::{run_dry_run, DryRunOutcome};
 pub use repro::{build_minimal_repro_script, check_preview_runtime_parity};
 pub use route_sim::{
     enumerate_choice_routes, enumerate_choice_routes_with_report, simulate_raw_sequence,
-    RawStepTrace, RouteEnumerationReport,
+    RawSimulationReport, RawSimulationStopReason, RawStepTrace, RouteEnumerationReport,
 };
 
 use std::collections::HashSet;
@@ -104,6 +104,7 @@ pub enum DryRunStopReason {
     Finished,
     StepLimit,
     RuntimeError,
+    ExternalCallBlocked,
 }
 
 impl DryRunStopReason {
@@ -112,6 +113,7 @@ impl DryRunStopReason {
             DryRunStopReason::Finished => "finished",
             DryRunStopReason::StepLimit => "step_limit",
             DryRunStopReason::RuntimeError => "runtime_error",
+            DryRunStopReason::ExternalCallBlocked => "external_call_blocked",
         }
     }
 }
@@ -123,6 +125,7 @@ pub struct DryRunStepTrace {
     pub event_kind: String,
     pub event_signature: String,
     pub execution_fidelity: FidelityClass,
+    pub execution_note: Option<String>,
     pub simulation_note: Option<String>,
     pub visual_background: Option<String>,
     pub visual_music: Option<String>,

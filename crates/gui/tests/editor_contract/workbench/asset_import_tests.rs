@@ -19,6 +19,54 @@ fn workbench_with_project(root: &std::path::Path) -> EditorWorkbench {
     workbench
 }
 
+#[cfg(unix)]
+fn create_dir_symlink(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(unix)]
+fn create_file_symlink(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn create_dir_symlink(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(target, link)
+}
+
+#[cfg(windows)]
+fn create_file_symlink(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(target, link)
+}
+
+fn create_dir_symlink_if_supported(target: &std::path::Path, link: &std::path::Path) -> bool {
+    match create_dir_symlink(target, link) {
+        Ok(()) => true,
+        Err(err) if symlink_unavailable(&err) => false,
+        Err(err) => panic!(
+            "failed to create symlink {} -> {}: {err}",
+            link.display(),
+            target.display()
+        ),
+    }
+}
+
+fn create_file_symlink_if_supported(target: &std::path::Path, link: &std::path::Path) -> bool {
+    match create_file_symlink(target, link) {
+        Ok(()) => true,
+        Err(err) if symlink_unavailable(&err) => false,
+        Err(err) => panic!(
+            "failed to create symlink {} -> {}: {err}",
+            link.display(),
+            target.display()
+        ),
+    }
+}
+
+fn symlink_unavailable(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::PermissionDenied || err.raw_os_error() == Some(1314)
+}
+
 #[test]
 fn import_external_audio_copies_into_project_manifest() {
     let temp = tempdir().expect("tempdir");
@@ -64,6 +112,68 @@ fn import_external_audio_copies_into_project_manifest() {
     assert_eq!(
         entry.after_value.as_deref(),
         Some("assets/audio/theme_track.ogg")
+    );
+}
+
+#[test]
+fn import_external_asset_rejects_symlinked_destination_escape() {
+    let temp = tempdir().expect("tempdir");
+    let project_root = temp.path().join("project");
+    let outside_root = temp.path().join("outside");
+    let escaped_assets = temp.path().join("escaped_assets");
+    std::fs::create_dir_all(&project_root).expect("mkdir project");
+    std::fs::create_dir_all(&outside_root).expect("mkdir outside");
+    std::fs::create_dir_all(&escaped_assets).expect("mkdir escaped assets");
+    if !create_dir_symlink_if_supported(&escaped_assets, &project_root.join("assets")) {
+        return;
+    }
+    let source = outside_root.join("room.png");
+    std::fs::write(&source, b"fake-image").expect("write source");
+
+    let mut workbench = workbench_with_project(&project_root);
+    let err = workbench
+        .import_asset_file(&source, AssetImportKind::Background)
+        .expect_err("symlinked asset destination must be rejected");
+
+    assert!(err.contains("asset destination escapes project root"));
+    assert!(
+        !escaped_assets.join("backgrounds").join("room.png").exists(),
+        "import must not copy into a symlink target outside the project"
+    );
+    assert!(workbench
+        .manifest
+        .as_ref()
+        .expect("manifest")
+        .assets
+        .backgrounds
+        .is_empty());
+}
+
+#[test]
+fn import_external_asset_does_not_copy_through_existing_destination_symlink() {
+    let temp = tempdir().expect("tempdir");
+    let project_root = temp.path().join("project");
+    let outside_root = temp.path().join("outside");
+    std::fs::create_dir_all(project_root.join("assets/backgrounds")).expect("mkdir assets");
+    std::fs::create_dir_all(&outside_root).expect("mkdir outside");
+    let source = outside_root.join("room.png");
+    let escaped_target = outside_root.join("escaped_room.png");
+    let symlink_path = project_root.join("assets/backgrounds/room.png");
+    if !create_file_symlink_if_supported(&escaped_target, &symlink_path) {
+        return;
+    }
+    std::fs::write(&source, b"fake-image").expect("write source");
+
+    let mut workbench = workbench_with_project(&project_root);
+    let imported = workbench
+        .import_asset_file(&source, AssetImportKind::Background)
+        .expect("background import should choose a non-symlink sibling");
+
+    assert_eq!(imported, "assets/backgrounds/room-1.png");
+    assert!(project_root.join(&imported).is_file());
+    assert!(
+        !escaped_target.exists(),
+        "import must not write through the pre-existing destination symlink"
     );
 }
 

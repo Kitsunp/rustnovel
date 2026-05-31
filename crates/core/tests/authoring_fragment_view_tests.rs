@@ -36,6 +36,25 @@ fn active_fragment_filters_visible_nodes_and_connections() {
 }
 
 #[test]
+fn entering_active_fragment_twice_does_not_duplicate_breadcrumb() {
+    let mut graph = NodeGraph::new();
+    let inside = graph.add_node(dialogue("inside"), AuthoringPosition::new(100.0, 0.0));
+    assert!(graph.create_fragment("chapter_intro", "Chapter intro", vec![inside]));
+
+    assert!(graph.enter_fragment("chapter_intro"));
+    assert!(
+        !graph.enter_fragment("chapter_intro"),
+        "entering the already-active fragment must be a visible no-op"
+    );
+    assert!(graph.leave_fragment());
+    assert_eq!(graph.active_fragment(), None);
+    assert!(
+        !graph.leave_fragment(),
+        "a duplicated breadcrumb would require a second leave"
+    );
+}
+
+#[test]
 fn stale_active_fragment_does_not_hide_the_root_graph() {
     let mut graph = NodeGraph::new();
     let start = graph.add_node(StoryNode::Start, AuthoringPosition::new(0.0, 0.0));

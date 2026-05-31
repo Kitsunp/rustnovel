@@ -47,15 +47,28 @@ pub fn run_repro_case_with_limits(
                     };
 
                     let event_ip = engine.state().position;
-                    let simulation_note = matches!(event, EventCompiled::ExtCall { .. })
-                        .then(|| "external_call_simulated".to_string());
+                    let execution_note = match &event {
+                        EventCompiled::ExtCall { command, .. } => {
+                            Some(format!("external_call_requires_host:{command}"))
+                        }
+                        _ => None,
+                    };
                     traces.push(build_step_trace(
                         steps,
                         event_ip,
                         &event,
                         &engine,
-                        simulation_note,
+                        execution_note,
                     ));
+                    if let EventCompiled::ExtCall { command, .. } = &event {
+                        failing_event_ip = Some(event_ip);
+                        break (
+                            ReproStopReason::ExternalCallBlocked,
+                            format!(
+                                "external call '{command}' at ip {event_ip} requires host completion"
+                            ),
+                        );
+                    }
 
                     let step_result = match &event {
                         EventCompiled::Choice(choice) => {
@@ -73,7 +86,6 @@ pub fn run_repro_case_with_limits(
                             choice_cursor = choice_cursor.saturating_add(1);
                             engine.choose(selected).map(|_| ())
                         }
-                        EventCompiled::ExtCall { .. } => engine.resume().map(|_| ()),
                         _ => engine.step().map(|_| ()),
                     };
                     if let Err(err) = step_result {
@@ -160,7 +172,7 @@ fn build_step_trace(
     event_ip: u32,
     event: &EventCompiled,
     engine: &Engine,
-    simulation_note: Option<String>,
+    execution_note: Option<String>,
 ) -> ReproStepTrace {
     ReproStepTrace {
         step,
@@ -168,11 +180,12 @@ fn build_step_trace(
         event_kind: event_kind_compiled(event).to_string(),
         event_signature: compiled_event_signature(event),
         execution_fidelity: if matches!(event, EventCompiled::ExtCall { .. }) {
-            FidelityClass::HeadlessSimulated
+            FidelityClass::HostRequired
         } else {
             FidelityClass::RuntimeReal
         },
-        simulation_note,
+        execution_note,
+        simulation_note: None,
         visual_background: engine
             .visual_state()
             .background

@@ -23,6 +23,7 @@ pub enum ReproStopReason {
     Finished,
     StepLimit,
     RuntimeError,
+    ExternalCallBlocked,
     CompileError,
     InitError,
 }
@@ -33,6 +34,7 @@ impl ReproStopReason {
             ReproStopReason::Finished => "finished",
             ReproStopReason::StepLimit => "step_limit",
             ReproStopReason::RuntimeError => "runtime_error",
+            ReproStopReason::ExternalCallBlocked => "external_call_blocked",
             ReproStopReason::CompileError => "compile_error",
             ReproStopReason::InitError => "init_error",
         }
@@ -85,6 +87,8 @@ pub struct ReproStepTrace {
     pub event_signature: String,
     #[serde(default = "default_runtime_real_fidelity")]
     pub execution_fidelity: FidelityClass,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simulation_note: Option<String>,
     pub visual_background: Option<String>,

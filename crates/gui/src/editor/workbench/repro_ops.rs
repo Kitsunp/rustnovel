@@ -232,5 +232,8 @@ fn map_dry_run_stop_reason(
         crate::editor::compiler::DryRunStopReason::RuntimeError => {
             visual_novel_engine::ReproStopReason::RuntimeError
         }
+        crate::editor::compiler::DryRunStopReason::ExternalCallBlocked => {
+            visual_novel_engine::ReproStopReason::ExternalCallBlocked
+        }
     }
 }

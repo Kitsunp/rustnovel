@@ -17,7 +17,7 @@ mod report_fingerprint;
 mod scene_profile;
 mod script_sync;
 mod types;
-mod validation;
+pub(crate) mod validation;
 mod validation_report;
 
 pub use command_bus::{

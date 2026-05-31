@@ -5,7 +5,7 @@ use crate::authoring::{
     ValidationPhase,
 };
 
-pub(super) struct AudioValidation<'a> {
+pub(crate) struct AudioValidation<'a> {
     pub id: u32,
     pub channel: &'a str,
     pub action: &'a str,
@@ -14,7 +14,7 @@ pub(super) struct AudioValidation<'a> {
     pub fade_duration_ms: &'a Option<u64>,
 }
 
-pub(super) fn validate_audio<F>(
+pub(crate) fn validate_audio<F>(
     audio: AudioValidation<'_>,
     asset_exists: &F,
     issues: &mut Vec<LintIssue>,
@@ -96,7 +96,7 @@ pub(super) fn validate_audio<F>(
     validate_asset(Some(audio.id), audio.asset, "audio", asset_exists, issues);
 }
 
-pub(super) fn validate_transition(
+pub(crate) fn validate_transition(
     id: u32,
     kind: &str,
     duration_ms: u32,
@@ -141,7 +141,7 @@ pub(super) fn validate_transition(
     }
 }
 
-pub(super) fn validate_character(
+pub(crate) fn validate_character(
     id: u32,
     name: &str,
     scale: &Option<f32>,

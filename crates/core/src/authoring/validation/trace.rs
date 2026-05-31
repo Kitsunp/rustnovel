@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-pub(super) struct ImportTraceContext {
+pub(crate) struct ImportTraceContext {
     pub trace_id: String,
     pub issue_code: String,
     pub source_command: String,
@@ -11,7 +11,7 @@ pub(super) struct ImportTraceContext {
     pub blocked_by: String,
 }
 
-pub(super) fn parse_import_trace_context(args: &[String]) -> Option<ImportTraceContext> {
+pub(crate) fn parse_import_trace_context(args: &[String]) -> Option<ImportTraceContext> {
     let envelope_raw = args.first()?;
     if let Ok(parsed) = serde_json::from_str::<Value>(envelope_raw) {
         if parsed.get("schema").and_then(Value::as_str) != Some("vn.import.trace.extcall.v2") {

@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use visual_novel_engine::{
-    runtime::{DialogueRaw, Engine, EventRaw, ScriptRaw},
-    ResourceLimiter, SecurityPolicy,
+    runtime::{DialogueRaw, Engine, EventCompiled, EventRaw, ExternalCallOutcome, ScriptRaw},
+    ResourceLimiter, SecurityPolicy, VnError,
 };
 use vnengine_runtime::{AssetStore, Audio, Input, InputAction, RuntimeApp};
 
@@ -28,13 +28,21 @@ impl AssetStore for NullAssets {
 struct SilentAudio;
 
 impl Audio for SilentAudio {
-    fn play_music(&mut self, _id: &str) {}
-    fn stop_music(&mut self) {}
-    fn play_sfx(&mut self, _id: &str) {}
+    fn play_music(&mut self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn stop_music(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn play_sfx(&mut self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[test]
-fn runtime_advance_resumes_ext_call_without_stalling() {
+fn runtime_advance_reports_pending_ext_call_until_host_completes_it() {
     let events = vec![
         EventRaw::ExtCall {
             command: "minigame.open".to_string(),
@@ -55,14 +63,38 @@ fn runtime_advance_resumes_ext_call_without_stalling() {
     .expect("engine");
 
     let mut app = RuntimeApp::new(engine, NullInput, SilentAudio, NullAssets).expect("runtime");
-    app.handle_action(InputAction::Advance).expect("advance");
+    let err = app
+        .handle_action(InputAction::Advance)
+        .expect_err("advance should wait for host completion");
+    assert!(
+        matches!(
+            err,
+            VnError::ExternalCallPending {
+                event_ip: 0,
+                ref command,
+            } if command == "minigame.open"
+        ),
+        "advance should report the pending external call with traceable context"
+    );
 
     let current = app.engine().current_event().expect("current event");
     assert!(
         matches!(
             current,
-            visual_novel_engine::runtime::EventCompiled::Dialogue(_)
+            EventCompiled::ExtCall {
+                command,
+                args,
+            } if command == "minigame.open" && args == vec!["cards".to_string()]
         ),
-        "advance should resume ext_call and move to next event"
+        "runtime should not move past an external call before the host reports an outcome"
+    );
+
+    app.complete_external_call(ExternalCallOutcome::succeeded(0, "minigame.open"))
+        .expect("complete extcall");
+
+    let current = app.engine().current_event().expect("current event");
+    assert!(
+        matches!(current, EventCompiled::Dialogue(_)),
+        "host completion should move to the next event"
     );
 }

@@ -155,10 +155,14 @@ impl PlayerAudioController {
         }
     }
 
-    pub fn apply_commands(&mut self, commands: Vec<AudioCommand>) {
+    pub fn apply_commands(&mut self, commands: Vec<AudioCommand>) -> Result<(), String> {
+        let mut first_error = None;
         for command in commands {
-            self.apply_command(command);
+            if let Err(err) = self.apply_command(command) {
+                first_error.get_or_insert(err);
+            }
         }
+        first_error.map_or(Ok(()), Err)
     }
 
     pub fn last_event(&self) -> Option<&str> {
@@ -190,8 +194,9 @@ impl PlayerAudioController {
         }
     }
 
-    fn apply_command(&mut self, command: AudioCommand) {
-        self.last_event = Some(audio_command_label(&command));
+    fn apply_command(&mut self, command: AudioCommand) -> Result<(), String> {
+        let label = audio_command_label(&command);
+        self.last_event = Some(label.clone());
         match command {
             AudioCommand::PlayBgm {
                 path,
@@ -201,72 +206,78 @@ impl PlayerAudioController {
                 ..
             } => {
                 let path = path.as_ref();
-                if self.audio_asset_is_ready("BGM", path) {
-                    let command_volume = sanitize_command_volume(volume);
-                    let effective_volume = self
-                        .mix
-                        .effective_volume(PlayerAudioChannel::Bgm, Some(command_volume));
-                    self.backend.play_music_with_transition(
-                        path,
-                        r#loop,
-                        Some(effective_volume),
-                        Some(fade_in),
-                    );
-                    self.bgm = PlayerAudioChannelState {
-                        active: true,
-                        path: Some(path.to_string()),
-                        command_volume,
-                        effective_volume,
-                    };
-                }
+                self.ensure_audio_asset_ready("BGM", path)?;
+                let command_volume = sanitize_command_volume(volume);
+                let effective_volume = self
+                    .mix
+                    .effective_volume(PlayerAudioChannel::Bgm, Some(command_volume));
+                let result = self.backend.play_music_with_transition(
+                    path,
+                    r#loop,
+                    Some(effective_volume),
+                    Some(fade_in),
+                );
+                self.record_audio_result(&label, result)?;
+                self.bgm = PlayerAudioChannelState {
+                    active: true,
+                    path: Some(path.to_string()),
+                    command_volume,
+                    effective_volume,
+                };
             }
             AudioCommand::StopBgm { fade_out } => {
-                self.backend.stop_music_with_fade(Some(fade_out));
+                let result = self.backend.stop_music_with_fade(Some(fade_out));
+                self.record_audio_result(&label, result)?;
                 self.bgm = PlayerAudioChannelState::default();
             }
             AudioCommand::PlaySfx { path, volume, .. } => {
                 let path = path.as_ref();
-                if self.audio_asset_is_ready("SFX", path) {
-                    let command_volume = sanitize_command_volume(volume);
-                    let effective_volume = self
-                        .mix
-                        .effective_volume(PlayerAudioChannel::Sfx, Some(command_volume));
-                    self.backend
-                        .play_sfx_with_volume(path, Some(effective_volume));
-                    self.sfx = PlayerAudioChannelState {
-                        active: true,
-                        path: Some(path.to_string()),
-                        command_volume,
-                        effective_volume,
-                    };
-                }
+                self.ensure_audio_asset_ready("SFX", path)?;
+                let command_volume = sanitize_command_volume(volume);
+                let effective_volume = self
+                    .mix
+                    .effective_volume(PlayerAudioChannel::Sfx, Some(command_volume));
+                let result = self
+                    .backend
+                    .play_sfx_with_volume(path, Some(effective_volume));
+                self.record_audio_result(&label, result)?;
+                self.sfx = PlayerAudioChannelState {
+                    active: true,
+                    path: Some(path.to_string()),
+                    command_volume,
+                    effective_volume,
+                };
             }
             AudioCommand::StopSfx => {
-                self.backend.stop_sfx();
+                let result = self.backend.stop_sfx();
+                self.record_audio_result(&label, result)?;
                 self.sfx = PlayerAudioChannelState::default();
             }
             AudioCommand::PlayVoice { path, volume, .. } => {
                 let path = path.as_ref();
-                if self.audio_asset_is_ready("Voice", path) {
-                    let command_volume = sanitize_command_volume(volume);
-                    let effective_volume = self
-                        .mix
-                        .effective_volume(PlayerAudioChannel::Voice, Some(command_volume));
-                    self.backend
-                        .play_voice_with_volume(path, Some(effective_volume));
-                    self.voice = PlayerAudioChannelState {
-                        active: true,
-                        path: Some(path.to_string()),
-                        command_volume,
-                        effective_volume,
-                    };
-                }
+                self.ensure_audio_asset_ready("Voice", path)?;
+                let command_volume = sanitize_command_volume(volume);
+                let effective_volume = self
+                    .mix
+                    .effective_volume(PlayerAudioChannel::Voice, Some(command_volume));
+                let result = self
+                    .backend
+                    .play_voice_with_volume(path, Some(effective_volume));
+                self.record_audio_result(&label, result)?;
+                self.voice = PlayerAudioChannelState {
+                    active: true,
+                    path: Some(path.to_string()),
+                    command_volume,
+                    effective_volume,
+                };
             }
             AudioCommand::StopVoice => {
-                self.backend.stop_voice();
+                let result = self.backend.stop_voice();
+                self.record_audio_result(&label, result)?;
                 self.voice = PlayerAudioChannelState::default();
             }
         }
+        Ok(())
     }
 
     fn reapply_channel_volumes(&mut self) {
@@ -279,27 +290,46 @@ impl PlayerAudioController {
         let voice_volume = self
             .mix
             .effective_volume(PlayerAudioChannel::Voice, Some(self.voice.command_volume));
-        self.backend.set_music_volume(bgm_volume);
-        self.backend.set_sfx_volume(sfx_volume);
-        self.backend.set_voice_volume(voice_volume);
+        if let Err(err) = self.backend.set_music_volume(bgm_volume) {
+            self.last_warning = Some(format!("Audio mix update failed for BGM: {err}"));
+        }
+        if let Err(err) = self.backend.set_sfx_volume(sfx_volume) {
+            self.last_warning = Some(format!("Audio mix update failed for SFX: {err}"));
+        }
+        if let Err(err) = self.backend.set_voice_volume(voice_volume) {
+            self.last_warning = Some(format!("Audio mix update failed for Voice: {err}"));
+        }
         self.bgm.effective_volume = if self.bgm.active { bgm_volume } else { 0.0 };
         self.sfx.effective_volume = if self.sfx.active { sfx_volume } else { 0.0 };
         self.voice.effective_volume = if self.voice.active { voice_volume } else { 0.0 };
     }
 
-    fn audio_asset_is_ready(&mut self, channel: &str, path: &str) -> bool {
+    fn ensure_audio_asset_ready(&mut self, channel: &str, path: &str) -> Result<(), String> {
         let Some(assets) = &self.assets else {
-            return false;
+            let message = format!("{channel} audio '{path}' has no asset store available");
+            self.last_warning = Some(message.clone());
+            return Err(message);
         };
         match visual_novel_runtime::audio_duration(assets.as_ref(), path) {
-            Ok(_) => true,
+            Ok(_) => Ok(()),
             Err(err) => {
-                self.last_warning = Some(format!(
-                    "{channel} audio '{path}' could not be loaded: {err}"
-                ));
-                false
+                let message = format!("{channel} audio '{path}' could not be loaded: {err}");
+                self.last_warning = Some(message.clone());
+                Err(message)
             }
         }
+    }
+
+    fn record_audio_result(
+        &mut self,
+        label: &str,
+        result: Result<(), String>,
+    ) -> Result<(), String> {
+        result.map_err(|err| {
+            let message = format!("Audio command '{label}' failed: {err}");
+            self.last_warning = Some(message.clone());
+            message
+        })
     }
 }
 

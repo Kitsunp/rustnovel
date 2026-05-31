@@ -115,6 +115,7 @@ pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
 
 fn export_bundle_atomic(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
     let final_output_root = spec.output_root.clone();
+    output_root_exists_as_directory(&final_output_root)?;
     let parent = final_output_root
         .parent()
         .map(Path::to_path_buf)
@@ -133,10 +134,7 @@ fn export_bundle_atomic(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> 
     staging_spec.output_root = staging_root.clone();
     match export_bundle_materialized(staging_spec, &final_output_root) {
         Ok(report) => {
-            let output_root = final_output_root
-                .canonicalize()
-                .unwrap_or(final_output_root);
-            publish_staged_bundle(&staging_root, &output_root, &backup_root)?;
+            publish_staged_bundle(&staging_root, &final_output_root, &backup_root)?;
             Ok(report)
         }
         Err(err) => {
@@ -223,12 +221,7 @@ fn export_bundle_materialized(
         .map_err(|e| invalid_bundle(format!("canonicalize output_root: {e}")))?;
 
     let manifest_path = project_root.join("project.vnm");
-    if !manifest_path.is_file() {
-        return Err(invalid_bundle(format!(
-            "missing manifest '{}'",
-            manifest_path.display()
-        )));
-    }
+    ensure_regular_file(&manifest_path, "manifest")?;
     let manifest = ProjectManifest::load(&manifest_path)
         .map_err(|e| invalid_bundle(format!("load manifest '{}': {e}", manifest_path.display())))?;
 

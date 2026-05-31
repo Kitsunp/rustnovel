@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub struct GuiAudioAssetStore {
-    project_root: Option<PathBuf>,
     trusted_store: Option<vnengine_assets::AssetStore>,
 }
 
@@ -20,10 +19,7 @@ impl GuiAudioAssetStore {
             ),
             None => None,
         };
-        Ok(Self {
-            project_root,
-            trusted_store,
-        })
+        Ok(Self { trusted_store })
     }
 }
 
@@ -35,17 +31,9 @@ impl visual_novel_runtime::AssetStore for GuiAudioAssetStore {
         }
 
         if let Some(store) = &self.trusted_store {
-            if let Ok(bytes) = store.load_bytes(id) {
-                return Ok(bytes);
-            }
-        }
-
-        if let Some(root) = &self.project_root {
-            let candidate = root.join(id);
-            if candidate.is_file() {
-                return fs::read(&candidate)
-                    .map_err(|err| format!("audio file '{id}' read failed: {err}"));
-            }
+            return store
+                .load_bytes(id)
+                .map_err(|err| format!("audio asset '{id}' load failed: {err}"));
         }
 
         Err(format!("audio asset '{id}' not found"))

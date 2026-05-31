@@ -38,14 +38,15 @@ impl AssetStore {
                 if manifest.manifest_version != 1 {
                     return Err(AssetError::ManifestVersion(manifest.manifest_version));
                 }
-                manifest.assets = manifest
-                    .assets
-                    .into_iter()
-                    .map(|(raw_key, entry)| {
-                        let rel = sanitize_rel_path(Path::new(&raw_key))?;
-                        Ok((normalize_asset_key(&rel), entry))
-                    })
-                    .collect::<Result<BTreeMap<_, _>, AssetError>>()?;
+                let mut normalized_assets = BTreeMap::new();
+                for (raw_key, entry) in manifest.assets {
+                    let rel = sanitize_rel_path(Path::new(&raw_key))?;
+                    let key = normalize_asset_key(&rel);
+                    if normalized_assets.insert(key.clone(), entry).is_some() {
+                        return Err(AssetError::ManifestDuplicateEntry(key));
+                    }
+                }
+                manifest.assets = normalized_assets;
                 Some(manifest)
             }
             None => None,
@@ -140,7 +141,12 @@ impl AssetStore {
             match full_path.canonicalize() {
                 Ok(canonical_path) => {
                     if canonical_path.starts_with(&canonical_root) {
-                        return Ok(candidate);
+                        match fs::metadata(&canonical_path) {
+                            Ok(metadata) if metadata.is_file() => return Ok(candidate),
+                            Ok(_) => continue,
+                            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                            Err(err) => return Err(AssetError::Io(err)),
+                        }
                     }
                     return Err(AssetError::Traversal);
                 }

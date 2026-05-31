@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::time::Duration;
 
 use eframe::egui;
@@ -13,6 +14,25 @@ use visual_novel_gui::editor::project_io::{
 };
 use visual_novel_gui::editor::resource_service::EditorResourceService;
 use visual_novel_gui::editor::{BackgroundFit, EditorError, NodeGraph, StoryNode};
+
+fn create_dir_symlink(link: &Path, target: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target, link).is_ok()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = link;
+        let _ = target;
+        false
+    }
+}
 
 #[test]
 fn load_project_rejects_legacy_manifest_schema_alias() {
@@ -89,6 +109,87 @@ entry_point = "../outside.json"
 
     match load_project(manifest_path) {
         Ok(_) => panic!("escape must be rejected"),
+        Err(EditorError::CompileError(message)) => {
+            assert!(message.contains("escapes project root"))
+        }
+        Err(other) => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn load_project_rejects_entry_point_directory_instead_of_silent_none() {
+    let dir = tempdir().expect("tempdir");
+    let project_root = dir.path().join("project");
+    fs::create_dir_all(project_root.join("main.json")).expect("mkdir entry directory");
+    let manifest_path = project_root.join("project.vnm");
+
+    fs::write(
+        &manifest_path,
+        r#"
+manifest_schema_version = "1.0"
+
+[metadata]
+name = "Directory Entry Test"
+author = "QA"
+version = "0.1.0"
+
+[settings]
+resolution = [1280, 720]
+default_language = "en"
+supported_languages = ["en"]
+entry_point = "main.json"
+
+[assets]
+"#,
+    )
+    .expect("write manifest");
+
+    match load_project(manifest_path) {
+        Ok(_) => panic!("entry point directory must not be silently ignored"),
+        Err(EditorError::CompileError(message)) => {
+            assert!(message.contains("not a regular file"))
+        }
+        Err(other) => panic!("unexpected error: {other}"),
+    }
+}
+
+#[test]
+fn load_project_rejects_entry_point_directory_symlink_escape() {
+    let dir = tempdir().expect("tempdir");
+    let project_root = dir.path().join("project");
+    let outside_root = dir.path().join("outside");
+    fs::create_dir_all(&project_root).expect("mkdir project");
+    fs::create_dir_all(&outside_root).expect("mkdir outside");
+    let link = project_root.join("main.json");
+    if !create_dir_symlink(&link, &outside_root) {
+        eprintln!("directory symlink creation not supported on this platform");
+        return;
+    }
+    let manifest_path = project_root.join("project.vnm");
+
+    fs::write(
+        &manifest_path,
+        r#"
+manifest_schema_version = "1.0"
+
+[metadata]
+name = "Directory Symlink Entry Test"
+author = "QA"
+version = "0.1.0"
+
+[settings]
+resolution = [1280, 720]
+default_language = "en"
+supported_languages = ["en"]
+entry_point = "main.json"
+
+[assets]
+"#,
+    )
+    .expect("write manifest");
+
+    match load_project(manifest_path) {
+        Ok(_) => panic!("entry point directory symlink escape must not be silently ignored"),
         Err(EditorError::CompileError(message)) => {
             assert!(message.contains("escapes project root"))
         }

@@ -78,7 +78,7 @@ fn repro_case_json_roundtrip() {
     assert!(loaded
         .capabilities
         .iter()
-        .any(|cap| cap == "extcall_simulated"));
+        .any(|cap| cap == "extcall_host_required"));
     assert_eq!(loaded.plugins, vec!["sample-plugin"]);
 }
 

@@ -649,9 +649,8 @@ pub(crate) fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
         fs::create_dir_all(parent)
             .with_context(|| format!("create output parent {}", parent.display()))?;
     }
-    let temp_path = unique_sibling_path(path, "tmp");
-    let mut temp_file = fs::File::create(&temp_path)
-        .with_context(|| format!("create temp output {}", temp_path.display()))?;
+    let had_existing = existing_regular_output(path)?;
+    let (temp_path, mut temp_file) = create_unique_sibling_file(path, "tmp")?;
     temp_file
         .write_all(content)
         .with_context(|| format!("write temp output {}", temp_path.display()))?;
@@ -660,8 +659,9 @@ pub(crate) fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
         .with_context(|| format!("sync temp output {}", temp_path.display()))?;
     drop(temp_file);
 
-    if path.exists() {
+    if had_existing {
         let rollback_path = unique_sibling_path(path, "rollback");
+        reject_existing_output_path(&rollback_path, "rollback output")?;
         fs::rename(path, &rollback_path).with_context(|| {
             format!(
                 "prepare rollback {} -> {}",
@@ -711,6 +711,45 @@ pub(crate) fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn existing_regular_output(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(true),
+        Ok(_) => anyhow::bail!("output path is not a regular file: {}", path.display()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err).with_context(|| format!("inspect output {}", path.display())),
+    }
+}
+
+fn reject_existing_output_path(path: &Path, role: &str) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => anyhow::bail!("{role} already exists: {}", path.display()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("inspect {role} {}", path.display())),
+    }
+}
+
+fn create_unique_sibling_file(path: &Path, role: &str) -> Result<(PathBuf, fs::File)> {
+    for _ in 0..16 {
+        let candidate = unique_sibling_path(path, role);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("create temp output {}", candidate.display()));
+            }
+        }
+    }
+    anyhow::bail!(
+        "could not allocate unique {role} output for {}",
+        path.display()
+    )
+}
+
 fn unique_sibling_path(path: &Path, role: &str) -> PathBuf {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let name = path
@@ -751,18 +790,27 @@ fn route_tree_command(script: &Path) -> Result<Option<serde_json::Value>> {
 }
 
 fn read_model_command(input: &Path) -> Result<Option<serde_json::Value>> {
-    if let Ok(bytes) = fs::read(input) {
-        if let Ok(save) = SaveData::from_any_binary(&bytes, AUTH_SAVE_KEY) {
-            return Ok(Some(serde_json::json!({
-                "schema": "vnengine.cli.read_model.v1",
-                "source": "save",
-                "read_model": save.state.read_model,
-                "route_progress": save.state.route_progress
-            })));
-        }
-    }
+    let save_attempt_error = match fs::read(input) {
+        Ok(bytes) => match SaveData::from_any_binary(&bytes, AUTH_SAVE_KEY) {
+            Ok(save) => {
+                return Ok(Some(serde_json::json!({
+                    "schema": "vnengine.cli.read_model.v1",
+                    "source": "save",
+                    "read_model": save.state.read_model,
+                    "route_progress": save.state.route_progress
+                })));
+            }
+            Err(err) => Some(format!("parse save '{}': {err}", input.display())),
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => Some(format!("read save '{}': {err}", input.display())),
+    };
 
-    let script_raw = load_runtime_script_from_entry(input).context("load script or save")?;
+    let context = match save_attempt_error {
+        Some(err) => format!("load script or save; save attempt failed: {err}"),
+        None => "load script or save".to_string(),
+    };
+    let script_raw = load_runtime_script_from_entry(input).with_context(|| context)?;
     let max_steps = script_raw.events.len().saturating_mul(4).saturating_add(32);
     let mut engine = Engine::new(
         script_raw,
@@ -911,11 +959,14 @@ fn compile_script(path: &Path, output: &Path) -> Result<serde_json::Value> {
         fs::create_dir_all(parent)?;
     }
     atomic_write(output, &bytes)?;
+    let bytes_written = fs::metadata(output)
+        .with_context(|| format!("read compiled output metadata {}", output.display()))?
+        .len();
     Ok(serde_json::json!({
         "schema": "vnengine.cli.compile.v1",
         "script": normalize_cli_path(path),
         "output": normalize_cli_path(output),
-        "bytes_written": fs::metadata(output).map(|metadata| metadata.len()).unwrap_or(0)
+        "bytes_written": bytes_written
     }))
 }
 
@@ -1014,11 +1065,12 @@ fn build_manifest(root: &Path, output: &Path) -> Result<()> {
     let canonical_root = root
         .canonicalize()
         .with_context(|| format!("canonicalize {}", root.display()))?;
+    let canonical_output = output.canonicalize().ok();
     let mut assets = std::collections::BTreeMap::new();
     for entry in WalkDir::new(root) {
         let entry = entry.with_context(|| format!("walk {}", root.display()))?;
         let path = entry.path();
-        if path.is_dir() {
+        if entry.file_type().is_dir() {
             continue;
         }
         let rel = path.strip_prefix(root).unwrap_or(path);
@@ -1028,6 +1080,9 @@ fn build_manifest(root: &Path, output: &Path) -> Result<()> {
             .with_context(|| format!("canonicalize {}", path.display()))?;
         if !canonical_path.starts_with(&canonical_root) {
             anyhow::bail!("manifest asset escapes root: {}", path.display());
+        }
+        if canonical_output.as_ref() == Some(&canonical_path) {
+            continue;
         }
         let (sha256, size) = sha256_file_hex(&canonical_path)?;
         assets.insert(rel_str, AssetEntry { sha256, size });

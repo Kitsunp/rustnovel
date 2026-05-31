@@ -99,6 +99,56 @@ label start:
 }
 
 #[test]
+fn import_skips_directory_asset_candidate_before_extension_fallback() {
+    let (_dir, project_root, game_dir, output_root) = temp_renpy_fixture();
+    fs::create_dir_all(game_dir.join("bg").join("room")).expect("directory candidate");
+    fs::write(game_dir.join("bg").join("room.png"), b"img").expect("write asset");
+    write_renpy_file(
+        &game_dir.join("script.rpy"),
+        r#"
+label start:
+    scene "bg/room"
+"#,
+    );
+    let report = import_renpy_project(ImportRenpyOptions {
+        project_root,
+        output_root: output_root.clone(),
+        entry_label: "start".to_string(),
+        report_path: None,
+        profile: ImportProfile::StoryFirst,
+        include_tl: None,
+        include_ui: None,
+        include_patterns: Vec::new(),
+        exclude_patterns: Vec::new(),
+        strict_mode: false,
+        fallback_policy: ImportFallbackPolicy::DegradeWithTrace,
+    })
+    .expect("import");
+
+    assert!(
+        report
+            .issues
+            .iter()
+            .all(|issue| { issue.code != "asset_copy_failed" && issue.code != "asset_not_found" }),
+        "directory candidates must not hide the real image fallback: {:?}",
+        report.issues
+    );
+    assert!(output_root
+        .join("assets")
+        .join("bg")
+        .join("room.png")
+        .is_file());
+
+    let json = fs::read_to_string(output_root.join("main.json")).expect("read main");
+    let script = ScriptRaw::from_json(&json).expect("parse script");
+    let scene_bg = script.events.iter().find_map(|event| match event {
+        EventRaw::Scene(scene) => scene.background.clone(),
+        _ => None,
+    });
+    assert_eq!(scene_bg.as_deref(), Some("assets/bg/room.png"));
+}
+
+#[test]
 fn import_does_not_report_symbolic_black_background_as_missing_asset() {
     let (_dir, project_root, game_dir, output_root) = temp_renpy_fixture();
     fs::create_dir_all(&game_dir).expect("mkdir game");

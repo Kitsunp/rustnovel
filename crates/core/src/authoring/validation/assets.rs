@@ -95,10 +95,17 @@ pub fn asset_exists_from_project_root(project_root: &Path, path: &str) -> bool {
     let Ok(root) = project_root.canonicalize() else {
         return false;
     };
-    let Ok(candidate) = root.join(path.trim()).canonicalize() else {
+    asset_exists_from_canonical_project_root(&root, path)
+}
+
+pub(super) fn asset_exists_from_canonical_project_root(canonical_root: &Path, path: &str) -> bool {
+    if is_unsafe_asset_ref(path) {
+        return false;
+    }
+    let Ok(candidate) = canonical_root.join(path.trim()).canonicalize() else {
         return false;
     };
-    candidate.starts_with(&root) && candidate.is_file()
+    candidate.starts_with(canonical_root) && candidate.is_file()
 }
 
 pub fn should_probe_asset_exists(path: &str) -> bool {

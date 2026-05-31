@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::helpers::{
     infer_asset_kind, is_allowed_by_extension, normalize_asset_key, sha256_file_and_size,
@@ -20,6 +20,8 @@ impl AssetFingerprintCatalog {
     pub fn build(root: &Path, allowed_extensions: &[&str]) -> Result<Self, AssetError> {
         let mut entries = BTreeMap::new();
         let mut dedup_groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let canonical_root = root.canonicalize()?;
+        let mut visited_dirs = HashSet::from([canonical_root.clone()]);
         let allowed: HashSet<String> = allowed_extensions
             .iter()
             .map(|value| value.to_ascii_lowercase())
@@ -30,7 +32,21 @@ impl AssetFingerprintCatalog {
             for entry in fs::read_dir(&dir)? {
                 let entry = entry?;
                 let path = entry.path();
-                if path.is_dir() {
+                let file_type = entry.file_type()?;
+                let canonical_path = canonical_asset_path(&path, &canonical_root)?;
+                if canonical_path.is_dir() {
+                    if !file_type.is_dir() && !file_type.is_symlink() {
+                        continue;
+                    }
+                    if visited_dirs.insert(canonical_path) {
+                        stack.push(path);
+                    }
+                    continue;
+                }
+                if !canonical_path.is_file() {
+                    continue;
+                }
+                if file_type.is_dir() {
                     stack.push(path);
                     continue;
                 }
@@ -44,7 +60,7 @@ impl AssetFingerprintCatalog {
                     .map_err(|_| AssetError::Traversal)?
                     .to_path_buf();
                 let rel = normalize_asset_key(&rel);
-                let (sha256, size) = sha256_file_and_size(&path)?;
+                let (sha256, size) = sha256_file_and_size(&canonical_path)?;
                 entries.insert(
                     rel.clone(),
                     AssetFingerprintEntry {
@@ -171,4 +187,12 @@ impl AssetFingerprintCatalog {
             cache_hit_rate,
         }
     }
+}
+
+fn canonical_asset_path(path: &Path, canonical_root: &Path) -> Result<PathBuf, AssetError> {
+    let canonical_path = path.canonicalize()?;
+    if !canonical_path.starts_with(canonical_root) {
+        return Err(AssetError::Traversal);
+    }
+    Ok(canonical_path)
 }

@@ -4,9 +4,7 @@ use std::io;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::asset_refs::{
-    collect_character_assets, collect_event_asset_refs, collect_scene_patch_asset_refs, AssetRefSet,
-};
+use crate::asset_refs::{collect_node_asset_refs as collect_behavior_node_asset_refs, AssetRefSet};
 
 use super::super::report_fingerprint::build_fingerprint_from_parts;
 use super::super::{
@@ -503,24 +501,7 @@ fn connection_key(connection: &GraphConnection) -> (u32, usize, u32) {
 
 fn node_asset_refs(node: &StoryNode) -> Vec<String> {
     let mut refs = AssetRefSet::default();
-    match node {
-        StoryNode::Scene {
-            background,
-            music,
-            characters,
-            ..
-        } => {
-            refs.push_optional(background);
-            refs.push_optional(music);
-            collect_character_assets(characters, &mut refs);
-        }
-        StoryNode::ScenePatch(patch) => collect_scene_patch_asset_refs(patch, &mut refs),
-        StoryNode::AudioAction {
-            asset: Some(asset), ..
-        } => refs.push(asset),
-        StoryNode::Generic(event) => collect_event_asset_refs(event, &mut refs),
-        _ => {}
-    }
+    collect_behavior_node_asset_refs(node, &mut refs);
     refs.into_vec()
 }
 

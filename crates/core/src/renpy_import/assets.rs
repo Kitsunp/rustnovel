@@ -316,29 +316,41 @@ fn resolve_existing_asset_path(
 ) -> Result<Option<(PathBuf, String)>, &'static str> {
     for candidate in asset_resolution_candidates(normalized) {
         let scan_candidate = scan_root.join(&candidate);
-        if scan_candidate.exists() {
-            let canonical_candidate = scan_candidate
-                .canonicalize()
-                .map_err(|_| "asset_path_traversal")?;
-            if !canonical_candidate.starts_with(project_root) {
-                return Err("asset_path_traversal");
-            }
+        if let Some(canonical_candidate) = resolve_asset_candidate(project_root, &scan_candidate)? {
             return Ok(Some((canonical_candidate, candidate)));
         }
 
         let project_candidate = project_root.join(&candidate);
-        if project_candidate.exists() {
-            let canonical_candidate = project_candidate
-                .canonicalize()
-                .map_err(|_| "asset_path_traversal")?;
-            if !canonical_candidate.starts_with(project_root) {
-                return Err("asset_path_traversal");
-            }
+        if let Some(canonical_candidate) =
+            resolve_asset_candidate(project_root, &project_candidate)?
+        {
             return Ok(Some((canonical_candidate, candidate)));
         }
     }
 
     Ok(None)
+}
+
+fn resolve_asset_candidate(
+    project_root: &Path,
+    candidate: &Path,
+) -> Result<Option<PathBuf>, &'static str> {
+    match fs::symlink_metadata(candidate) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("asset_path_traversal"),
+    }
+    let canonical_candidate = candidate
+        .canonicalize()
+        .map_err(|_| "asset_path_traversal")?;
+    if !canonical_candidate.starts_with(project_root) {
+        return Err("asset_path_traversal");
+    }
+    match fs::metadata(&canonical_candidate) {
+        Ok(metadata) if metadata.is_file() => Ok(Some(canonical_candidate)),
+        Ok(_) => Ok(None),
+        Err(_) => Err("asset_path_traversal"),
+    }
 }
 
 fn asset_resolution_candidates(normalized: &str) -> Vec<String> {

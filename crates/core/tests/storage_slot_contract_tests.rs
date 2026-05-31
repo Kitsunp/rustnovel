@@ -1,8 +1,9 @@
 use std::fs;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use visual_novel_engine::{
-    runtime::EngineState, SaveData, SaveError, SaveSlotStore, SaveStoreError,
+    runtime::EngineState, SaveData, SaveError, SaveSlotStore, SaveStoreError, AUTH_SAVE_KEY,
 };
 
 fn now_unix_ms() -> u64 {
@@ -17,6 +18,33 @@ fn sample_save(position: u32) -> SaveData {
     state.set_flag(2, true);
     state.set_var(1, 42);
     SaveData::new([1u8; 32], state)
+}
+
+fn create_file_symlink(link: &Path, target: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(target, link).is_ok()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = link;
+        let _ = target;
+        false
+    }
+}
+
+fn sibling_path(root: &Path, suffix: &str) -> std::path::PathBuf {
+    let name = root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("save_store");
+    root.with_file_name(format!("{name}_{suffix}"))
 }
 
 #[test]
@@ -162,6 +190,85 @@ fn quickload_reports_recovery_failure_when_no_backup() {
     ));
 
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn load_slot_rejects_symlink_primary_instead_of_external_save() {
+    let root = std::env::temp_dir().join(format!("vn_slot_symlink_load_{}", now_unix_ms()));
+    let store = SaveSlotStore::new(root.clone());
+    store.ensure_layout().expect("layout");
+
+    let outside_path = sibling_path(&root, "outside.vnsav");
+    fs::write(
+        &outside_path,
+        sample_save(44)
+            .to_authenticated_binary(AUTH_SAVE_KEY)
+            .expect("outside save"),
+    )
+    .expect("write outside save");
+    let slot_path = root.join("slots").join("slot_001.vnsav");
+    if !create_file_symlink(&slot_path, &outside_path) {
+        eprintln!("file symlink creation not supported on this platform");
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_file(outside_path);
+        return;
+    }
+
+    let err = store
+        .load_slot(1)
+        .expect_err("slot loader must not follow external save symlinks");
+
+    match err {
+        SaveStoreError::Io(io_err) => {
+            assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidInput);
+            assert!(
+                io_err.to_string().contains("not a regular file"),
+                "unexpected error: {io_err}"
+            );
+        }
+        other => panic!("expected invalid input for symlinked slot, got {other:?}"),
+    }
+    let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_file(outside_path);
+}
+
+#[test]
+fn save_slot_does_not_write_through_preexisting_tmp_symlink() {
+    let root = std::env::temp_dir().join(format!("vn_slot_tmp_symlink_{}", now_unix_ms()));
+    let store = SaveSlotStore::new(root.clone());
+    store.ensure_layout().expect("layout");
+
+    let outside_path = sibling_path(&root, "outside.tmp-target");
+    fs::write(&outside_path, b"sentinel").expect("write sentinel");
+    let tmp_link = root.join("slots").join("slot_001.tmp");
+    if !create_file_symlink(&tmp_link, &outside_path) {
+        eprintln!("file symlink creation not supported on this platform");
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_file(outside_path);
+        return;
+    }
+
+    let entry = store
+        .save_slot(1, &sample_save(77))
+        .expect("save should use an unpredictable temporary file");
+
+    assert_eq!(
+        fs::read(&outside_path).expect("read sentinel"),
+        b"sentinel",
+        "save writes must not follow a pre-existing tmp symlink"
+    );
+    assert!(
+        !fs::symlink_metadata(&entry.path)
+            .expect("slot metadata")
+            .file_type()
+            .is_symlink(),
+        "published slot must be a regular file, not the pre-existing symlink"
+    );
+    let loaded = store.load_slot(1).expect("load stored slot");
+    assert_eq!(loaded.state.position, 77);
+
+    let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_file(outside_path);
 }
 
 #[test]

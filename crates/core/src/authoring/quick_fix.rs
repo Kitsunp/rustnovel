@@ -1,4 +1,7 @@
 use super::{AuthoringPosition, LintCode, LintIssue, NodeGraph, StoryNode};
+use crate::event_behavior::{
+    node_quick_fixes_for_issue, BehaviorQuickFix, BehaviorQuickFixRisk, QuickFixCtx,
+};
 
 mod assets;
 mod audio;
@@ -41,6 +44,12 @@ pub struct QuickFixCandidate {
 
 pub fn suggest_fixes(issue: &LintIssue, graph: &NodeGraph) -> Vec<QuickFixCandidate> {
     let mut candidates = Vec::new();
+    let behavior_ctx = QuickFixCtx::new(graph);
+    candidates.extend(
+        node_quick_fixes_for_issue(&behavior_ctx, issue)
+            .into_iter()
+            .map(candidate_from_behavior),
+    );
     match issue.code {
         LintCode::MissingStart => candidates.push(candidate(
             "graph_add_start",
@@ -56,148 +65,15 @@ pub fn suggest_fixes(issue: &LintIssue, graph: &NodeGraph) -> Vec<QuickFixCandid
             QuickFixRisk::Review,
             true,
         )),
-        LintCode::ChoiceNoOptions => {
-            candidates.push(candidate(
-                "choice_add_default_option",
-                "Agregar opcion placeholder",
-                "Add placeholder option",
-                QuickFixRisk::Review,
-                false,
-            ));
-            candidates.push(candidate(
-                "choice_add_default_option_to_end",
-                "Agregar opcion y conectar a End",
-                "Add option and connect to End",
-                QuickFixRisk::Safe,
-                true,
-            ));
-        }
-        LintCode::ChoiceOptionUnlinked => candidates.push(candidate(
-            "choice_link_unlinked_to_end",
-            "Conectar opciones sin salida",
-            "Connect unlinked options",
-            QuickFixRisk::Review,
-            true,
-        )),
-        LintCode::ChoicePortOutOfRange => candidates.push(candidate(
-            "choice_expand_options_to_ports",
-            "Sincronizar opciones con puertos",
-            "Sync options with ports",
-            QuickFixRisk::Safe,
-            false,
-        )),
-        LintCode::EmptySpeakerName => candidates.push(candidate(
-            "dialogue_fill_speaker",
-            "Rellenar speaker",
-            "Fill speaker",
-            QuickFixRisk::Safe,
-            false,
-        )),
-        LintCode::EmptyJumpTarget if existing_jump_target(graph).is_some() => {
-            candidates.push(candidate(
-                "jump_set_existing_target",
-                "Usar destino existente",
-                "Use existing target",
-                QuickFixRisk::Review,
-                false,
-            ));
-        }
-        LintCode::InvalidTransitionKind => candidates.push(candidate(
-            "transition_set_fade",
-            "Usar fade",
-            "Use fade",
-            QuickFixRisk::Safe,
-            false,
-        )),
-        LintCode::InvalidTransitionDuration => candidates.push(candidate(
-            "transition_set_default_duration",
-            "Usar duracion por defecto",
-            "Use default duration",
-            QuickFixRisk::Safe,
-            false,
-        )),
-        LintCode::InvalidAudioChannel => candidates.push(candidate(
-            "audio_normalize_channel",
-            "Normalizar canal",
-            "Normalize channel",
-            QuickFixRisk::Safe,
-            false,
-        )),
-        LintCode::InvalidAudioAction => candidates.push(candidate(
-            "audio_normalize_action",
-            "Normalizar accion",
-            "Normalize action",
-            QuickFixRisk::Safe,
-            false,
-        )),
-        LintCode::InvalidAudioVolume => candidates.push(candidate(
-            "audio_clamp_volume",
-            "Ajustar volumen",
-            "Clamp volume",
-            QuickFixRisk::Safe,
-            false,
-        )),
-        LintCode::InvalidAudioFade => candidates.push(candidate(
-            "audio_set_default_fade",
-            "Usar fade por defecto",
-            "Use default fade",
-            QuickFixRisk::Safe,
-            false,
-        )),
-        LintCode::SceneBackgroundEmpty => candidates.push(candidate(
-            "scene_clear_empty_background",
-            "Limpiar background vacio",
-            "Clear empty background",
-            QuickFixRisk::Safe,
-            false,
-        )),
-        LintCode::AudioAssetEmpty => {
-            extend_optional(&mut candidates, assets::empty_asset_candidate(issue, graph))
-        }
-        LintCode::AudioAssetMissing => extend_optional(
-            &mut candidates,
-            assets::missing_audio_candidate(issue, graph),
-        ),
-        LintCode::AssetReferenceMissing => extend_optional(
-            &mut candidates,
-            assets::clear_asset_candidate(
-                issue,
-                graph,
-                "clear_missing_asset_reference",
-                "Limpiar asset inexistente",
-                "Clear missing asset",
-            ),
-        ),
-        LintCode::UnsafeAssetPath => extend_optional(
-            &mut candidates,
-            assets::clear_asset_candidate(
-                issue,
-                graph,
-                "clear_unsafe_asset_reference",
-                "Limpiar asset inseguro",
-                "Clear unsafe asset",
-            ),
-        ),
-        LintCode::EmptyCharacterName => candidates.push(candidate(
-            "character_prune_or_fill_invalid_names",
-            "Corregir nombres vacios",
-            "Fix empty names",
-            QuickFixRisk::Review,
-            false,
-        )),
-        LintCode::InvalidCharacterScale => candidates.push(candidate(
-            "character_set_default_scale",
-            "Usar escala por defecto",
-            "Use default scale",
-            QuickFixRisk::Safe,
-            false,
-        )),
         _ => {}
     }
     candidates
 }
 
 pub fn apply_fix(graph: &mut NodeGraph, issue: &LintIssue, fix_id: &str) -> Result<bool, String> {
+    if issue.node_id.is_none() && quick_fix_requires_node_id(fix_id) {
+        return Err(format!("quick-fix {fix_id} requires node_id"));
+    }
     if !suggest_fixes(issue, graph)
         .iter()
         .any(|candidate| candidate.fix_id == fix_id)
@@ -248,6 +124,33 @@ pub fn apply_fix(graph: &mut NodeGraph, issue: &LintIssue, fix_id: &str) -> Resu
     }
 }
 
+fn quick_fix_requires_node_id(fix_id: &str) -> bool {
+    matches!(
+        fix_id,
+        "node_connect_dead_end_to_end"
+            | "choice_add_default_option"
+            | "choice_add_default_option_to_end"
+            | "choice_link_unlinked_to_end"
+            | "choice_expand_options_to_ports"
+            | "dialogue_fill_speaker"
+            | "jump_set_existing_target"
+            | "transition_set_fade"
+            | "transition_set_default_duration"
+            | "audio_normalize_channel"
+            | "audio_normalize_action"
+            | "audio_clamp_volume"
+            | "audio_set_default_fade"
+            | "scene_clear_empty_background"
+            | "scene_clear_empty_music"
+            | "audio_clear_empty_asset"
+            | "audio_missing_asset_to_stop"
+            | "clear_missing_asset_reference"
+            | "clear_unsafe_asset_reference"
+            | "character_prune_or_fill_invalid_names"
+            | "character_set_default_scale"
+    )
+}
+
 fn candidate(
     fix_id: &'static str,
     title_es: &'static str,
@@ -268,10 +171,17 @@ fn candidate(
     }
 }
 
-fn extend_optional(candidates: &mut Vec<QuickFixCandidate>, candidate: Option<QuickFixCandidate>) {
-    if let Some(candidate) = candidate {
-        candidates.push(candidate);
-    }
+fn candidate_from_behavior(fix: BehaviorQuickFix) -> QuickFixCandidate {
+    candidate(
+        fix.fix_id,
+        fix.title_es,
+        fix.title_en,
+        match fix.risk {
+            BehaviorQuickFixRisk::Safe => QuickFixRisk::Safe,
+            BehaviorQuickFixRisk::Review => QuickFixRisk::Review,
+        },
+        fix.structural,
+    )
 }
 
 fn require_node(issue: &LintIssue) -> Result<u32, String> {

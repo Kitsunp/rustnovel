@@ -1,6 +1,5 @@
 use super::super::validation::is_unsafe_asset_ref;
 use super::super::{LintIssue, NodeGraph, StoryNode};
-use super::{candidate, QuickFixCandidate, QuickFixRisk};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AssetField {
@@ -9,77 +8,6 @@ enum AssetField {
     ScenePatchBackground,
     ScenePatchMusic,
     AudioAsset,
-}
-
-pub(super) fn empty_asset_candidate(
-    issue: &LintIssue,
-    graph: &NodeGraph,
-) -> Option<QuickFixCandidate> {
-    let node_id = issue.node_id?;
-    match graph.get_node(node_id) {
-        Some(StoryNode::Scene { music, .. })
-            if music
-                .as_deref()
-                .is_some_and(|value| value.trim().is_empty()) =>
-        {
-            Some(candidate(
-                "scene_clear_empty_music",
-                "Limpiar musica vacia",
-                "Clear empty music",
-                QuickFixRisk::Safe,
-                false,
-            ))
-        }
-        Some(StoryNode::AudioAction { asset, .. })
-            if asset
-                .as_deref()
-                .is_some_and(|value| value.trim().is_empty()) =>
-        {
-            Some(candidate(
-                "audio_clear_empty_asset",
-                "Limpiar asset de audio vacio",
-                "Clear empty audio asset",
-                QuickFixRisk::Safe,
-                false,
-            ))
-        }
-        _ => None,
-    }
-}
-
-pub(super) fn missing_audio_candidate(
-    issue: &LintIssue,
-    graph: &NodeGraph,
-) -> Option<QuickFixCandidate> {
-    let node_id = issue.node_id?;
-    let Some(StoryNode::AudioAction { action, asset, .. }) = graph.get_node(node_id) else {
-        return None;
-    };
-    if !action.trim().eq_ignore_ascii_case("play")
-        || asset
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-    {
-        return None;
-    }
-    Some(candidate(
-        "audio_missing_asset_to_stop",
-        "Normalizar play sin asset a stop",
-        "Normalize play without asset to stop",
-        QuickFixRisk::Review,
-        false,
-    ))
-}
-
-pub(super) fn clear_asset_candidate(
-    issue: &LintIssue,
-    graph: &NodeGraph,
-    fix_id: &'static str,
-    title_es: &'static str,
-    title_en: &'static str,
-) -> Option<QuickFixCandidate> {
-    clearable_asset_field(graph, issue)
-        .map(|_| candidate(fix_id, title_es, title_en, QuickFixRisk::Review, false))
 }
 
 pub(super) fn clear_empty_scene_background(

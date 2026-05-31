@@ -2,20 +2,23 @@ use std::collections::{BTreeSet, VecDeque};
 
 use crate::audio::AudioCommand;
 use crate::error::{VnError, VnResult};
-use crate::event::{CmpOp, CondCompiled, EventCompiled, SceneTransitionCompiled};
+use crate::event::{EventCompiled, SceneTransitionCompiled};
+use crate::event_behavior::{
+    event_behavior_for_compiled, EventBehavior, ExecutionCtx, PreviewCtx, SceneFrameCtx,
+};
 use crate::render::{RenderBackend, RenderOutput};
 use crate::resource::ResourceLimiter;
 use crate::route_tree::{
     build_route_tree_with_progress, resolve_visual_at_ip, ChoiceProgressSnapshot,
     ReadModelSnapshot, RouteProgressSnapshot, RouteTree, VisualResolveStrategy,
 };
-use crate::scene_frame::{ImageFit, InteractionSpec, LayoutRect, RenderCommand, SceneFrame};
+use crate::scene_frame::{ImageFit, LayoutRect, RenderCommand, SceneFrame};
 use crate::script::{ScriptCompiled, ScriptRaw};
 use crate::security::SecurityPolicy;
 use crate::state::EngineState;
 use crate::visual::VisualState;
 
-use super::audio::{append_music_delta, audio_command_from_action, initial_audio_commands};
+use super::audio::initial_audio_commands;
 
 const CHOICE_HISTORY_LIMIT: usize = 512;
 
@@ -29,12 +32,53 @@ pub struct ChoiceHistoryEntry {
     pub target_ip: u32,
 }
 
+/// External call request currently blocking the engine.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalCallRequest {
+    pub event_ip: u32,
+    pub command: String,
+    pub args: Vec<String>,
+}
+
+/// Host-reported result for a pending external call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalCallOutcome {
+    pub event_ip: u32,
+    pub command: String,
+    pub status: ExternalCallStatus,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExternalCallStatus {
+    Succeeded,
+    Failed(String),
+}
+
+impl ExternalCallOutcome {
+    pub fn succeeded(event_ip: u32, command: impl Into<String>) -> Self {
+        Self {
+            event_ip,
+            command: command.into(),
+            status: ExternalCallStatus::Succeeded,
+        }
+    }
+
+    pub fn failed(event_ip: u32, command: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            event_ip,
+            command: command.into(),
+            status: ExternalCallStatus::Failed(message.into()),
+        }
+    }
+}
+
 /// Execution engine for compiled scripts.
 #[derive(Clone, Debug)]
 pub struct Engine {
     script: ScriptCompiled,
     state: EngineState,
     policy: SecurityPolicy,
+    limits: ResourceLimiter,
     queued_audio: Vec<AudioCommand>,
     pending_transition: Option<SceneTransitionCompiled>,
     read_dialogue_ips: BTreeSet<u32>,
@@ -61,10 +105,14 @@ impl Engine {
         limits: ResourceLimiter,
     ) -> VnResult<Self> {
         policy.validate_compiled(&script, limits)?;
-        Ok(Self::from_validated_compiled(script, policy))
+        Ok(Self::from_validated_compiled(script, policy, limits))
     }
 
-    fn from_validated_compiled(script: ScriptCompiled, policy: SecurityPolicy) -> Self {
+    fn from_validated_compiled(
+        script: ScriptCompiled,
+        policy: SecurityPolicy,
+        limits: ResourceLimiter,
+    ) -> Self {
         let state = initialize_state(&script);
         let queued_audio = initial_audio_commands(&state);
         let mut route_visited_ips = BTreeSet::new();
@@ -73,6 +121,7 @@ impl Engine {
             script,
             state,
             policy,
+            limits,
             queued_audio,
             pending_transition: None,
             read_dialogue_ips: BTreeSet::new(),
@@ -151,90 +200,28 @@ impl Engine {
         event: &EventCompiled,
         audio_commands: &mut Vec<AudioCommand>,
     ) -> VnResult<()> {
-        let current_ip = self.state.position;
-        self.route_visited_ips.insert(current_ip);
-        self.pending_transition = None;
-        match event {
-            EventCompiled::Jump { target_ip } => {
-                self.jump_to_ip_with_audio(*target_ip, audio_commands)
-            }
-            EventCompiled::SetFlag { flag_id, value } => {
-                self.state.set_flag(*flag_id, *value);
-                self.advance_position()
-            }
-            EventCompiled::Scene(scene) => {
-                let before_music = self.state.visual.music.clone();
-                self.state.visual.apply_scene(scene);
-                append_music_delta(before_music, &self.state.visual.music, audio_commands);
-                self.advance_position()
-            }
-            EventCompiled::Choice(_) => Ok(()),
-            EventCompiled::Dialogue(dialogue) => {
-                self.state.record_dialogue(dialogue);
-                self.read_dialogue_ips.insert(current_ip);
-                self.advance_position()
-            }
-            EventCompiled::SetVar { var_id, value } => {
-                self.state.set_var(*var_id, *value);
-                self.advance_position()
-            }
-            EventCompiled::JumpIf { cond, target_ip } => {
-                if self.evaluate_cond(cond) {
-                    self.jump_to_ip_with_audio(*target_ip, audio_commands)
-                } else {
-                    self.advance_position()
-                }
-            }
-            EventCompiled::Patch(patch) => {
-                let before_music = self.state.visual.music.clone();
-                self.state.visual.apply_patch(patch);
-                append_music_delta(before_music, &self.state.visual.music, audio_commands);
-                self.advance_position()
-            }
-            EventCompiled::ExtCall { .. } => Ok(()),
-            EventCompiled::AudioAction(action) => {
-                if let Some(command) = audio_command_from_action(action) {
-                    audio_commands.push(command);
-                }
-                self.advance_position()
-            }
-            EventCompiled::SetCharacterPosition(pos) => {
-                self.state.visual.set_character_position(pos)?;
-                self.advance_position()
-            }
-            EventCompiled::Transition(transition) => {
-                self.pending_transition = Some(transition.clone());
-                self.advance_position()
-            }
-        }
-    }
-
-    fn evaluate_cond(&self, cond: &CondCompiled) -> bool {
-        match cond {
-            CondCompiled::Flag { flag_id, is_set } => self.state.get_flag(*flag_id) == *is_set,
-            CondCompiled::VarCmp { var_id, op, value } => {
-                let var_val = self.state.get_var(*var_id);
-                match op {
-                    CmpOp::Eq => var_val == *value,
-                    CmpOp::Ne => var_val != *value,
-                    CmpOp::Lt => var_val < *value,
-                    CmpOp::Le => var_val <= *value,
-                    CmpOp::Gt => var_val > *value,
-                    CmpOp::Ge => var_val >= *value,
-                }
-            }
-        }
+        let mut ctx = ExecutionCtx::new(
+            &mut self.state,
+            &self.script.events,
+            audio_commands,
+            &mut self.read_dialogue_ips,
+            &mut self.route_visited_ips,
+            &mut self.pending_transition,
+        );
+        event_behavior_for_compiled(event).execute(&mut ctx, event)
     }
 
     fn advance_position(&mut self) -> VnResult<()> {
-        let next = self.state.position.saturating_add(1);
-        if next as usize >= self.script.events.len() {
-            self.state.position = self.script.events.len() as u32;
-            return Ok(());
-        }
-        self.state.position = next;
-        self.route_visited_ips.insert(self.state.position);
-        Ok(())
+        let mut audio_commands = Vec::new();
+        let mut ctx = ExecutionCtx::new(
+            &mut self.state,
+            &self.script.events,
+            &mut audio_commands,
+            &mut self.read_dialogue_ips,
+            &mut self.route_visited_ips,
+            &mut self.pending_transition,
+        );
+        ctx.advance_position()
     }
 
     fn jump_to_ip(&mut self, target_ip: u32) -> VnResult<()> {
@@ -252,27 +239,15 @@ impl Engine {
         target_ip: u32,
         audio_commands: &mut Vec<AudioCommand>,
     ) -> VnResult<()> {
-        if target_ip as usize > self.script.events.len() {
-            return Err(VnError::InvalidScript(format!(
-                "jump target '{target_ip}' outside script"
-            )));
-        }
-        if target_ip as usize == self.script.events.len() {
-            self.state.position = target_ip;
-            return Ok(());
-        }
-        let scene = match self.script.events.get(target_ip as usize) {
-            Some(EventCompiled::Scene(scene)) => Some(scene.clone()),
-            _ => None,
-        };
-        self.state.position = target_ip;
-        self.route_visited_ips.insert(target_ip);
-        if let Some(scene) = scene {
-            let before_music = self.state.visual.music.clone();
-            self.state.visual.apply_scene(&scene);
-            append_music_delta(before_music, &self.state.visual.music, audio_commands);
-        }
-        Ok(())
+        let mut ctx = ExecutionCtx::new(
+            &mut self.state,
+            &self.script.events,
+            audio_commands,
+            &mut self.read_dialogue_ips,
+            &mut self.route_visited_ips,
+            &mut self.pending_transition,
+        );
+        ctx.jump_to_ip(target_ip)
     }
 
     /// Returns the full engine state.
@@ -283,6 +258,11 @@ impl Engine {
     /// Returns the security policy in use.
     pub fn policy(&self) -> &SecurityPolicy {
         &self.policy
+    }
+
+    /// Returns the resource limits used to validate this engine.
+    pub fn limits(&self) -> ResourceLimiter {
+        self.limits
     }
 
     /// Returns the current visual state.
@@ -333,14 +313,22 @@ impl Engine {
         let mut visual = self.state.visual.clone();
         let mut diagnostics = Vec::new();
         if let Some(event) = event {
-            if let Some(diagnostic) = apply_preview_visual_for_frame(&mut visual, event) {
-                diagnostics.push(diagnostic);
+            let mut preview_ctx = PreviewCtx::new(&mut visual);
+            match event_behavior_for_compiled(event).preview(&mut preview_ctx, event) {
+                Ok(Some(diagnostic)) => diagnostics.push(diagnostic),
+                Ok(None) => {}
+                Err(err) => diagnostics.push(format!("scene frame preview failed: {err}")),
             }
         }
         let mut commands = visual_render_commands(&visual);
         let mut interactions = Vec::new();
         if let Some(event) = event {
-            append_event_overlay_commands(event, &mut commands, &mut interactions);
+            let mut frame_ctx = SceneFrameCtx::new(&mut commands, &mut interactions);
+            if let Err(err) =
+                event_behavior_for_compiled(event).append_scene_frame(&mut frame_ctx, event)
+            {
+                diagnostics.push(format!("scene frame overlay failed: {err}"));
+            }
         }
         for diagnostic in diagnostics {
             commands.push(RenderCommand::Text {
@@ -382,13 +370,52 @@ impl Engine {
         self.queued_audio.push(command);
     }
 
-    pub fn resume(&mut self) -> VnResult<()> {
-        let event = self.current_event()?;
-        match event {
-            EventCompiled::ExtCall { .. } => {
+    /// Returns the external call currently waiting for host execution, if any.
+    pub fn pending_external_call(&self) -> VnResult<Option<ExternalCallRequest>> {
+        match self.current_event_ref() {
+            Ok(EventCompiled::ExtCall { command, args }) => Ok(Some(ExternalCallRequest {
+                event_ip: self.state.position,
+                command: command.clone(),
+                args: args.clone(),
+            })),
+            Ok(_) | Err(VnError::EndOfScript) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Completes the currently pending external call with an explicit host outcome.
+    ///
+    /// The engine advances only after a matching successful outcome. Failed or stale outcomes are
+    /// returned to the caller and leave the instruction pointer unchanged.
+    pub fn complete_external_call(&mut self, outcome: ExternalCallOutcome) -> VnResult<()> {
+        let request = self
+            .pending_external_call()?
+            .ok_or_else(|| VnError::InvalidScript("no external call is pending".to_string()))?;
+        if request.event_ip != outcome.event_ip || request.command != outcome.command {
+            return Err(VnError::InvalidScript(format!(
+                "external call outcome mismatch: pending ip {} command '{}', got ip {} command '{}'",
+                request.event_ip, request.command, outcome.event_ip, outcome.command
+            )));
+        }
+        match outcome.status {
+            ExternalCallStatus::Succeeded => {
                 self.advance_position()?;
                 self.sync_progress_snapshots();
                 Ok(())
+            }
+            ExternalCallStatus::Failed(message) => Err(VnError::external_call_failed(
+                request.event_ip,
+                request.command,
+                message,
+            )),
+        }
+    }
+
+    pub fn resume(&mut self) -> VnResult<()> {
+        let event = self.current_event()?;
+        match event {
+            EventCompiled::ExtCall { command, .. } => {
+                Err(VnError::external_call_pending(self.state.position, command))
             }
             _ => Ok(()),
         }
@@ -526,24 +553,6 @@ fn initialize_state(script: &ScriptCompiled) -> EngineState {
     state
 }
 
-fn apply_preview_visual_for_frame(
-    visual: &mut VisualState,
-    event: &EventCompiled,
-) -> Option<String> {
-    match event {
-        EventCompiled::Scene(scene) => visual.apply_scene(scene),
-        EventCompiled::Patch(patch) => visual.apply_patch(patch),
-        EventCompiled::SetCharacterPosition(position) => {
-            match visual.set_character_position(position) {
-                Ok(()) => {}
-                Err(err) => return Some(format!("scene frame visual update failed: {err}")),
-            }
-        }
-        _ => {}
-    }
-    None
-}
-
 fn visual_render_commands(visual: &VisualState) -> Vec<RenderCommand> {
     let mut commands = vec![RenderCommand::Clear {
         color: "stage.background".to_string(),
@@ -589,131 +598,6 @@ fn visual_render_commands(visual: &VisualState) -> Vec<RenderCommand> {
         });
     }
     commands
-}
-
-fn append_event_overlay_commands(
-    event: &EventCompiled,
-    commands: &mut Vec<RenderCommand>,
-    interactions: &mut Vec<InteractionSpec>,
-) {
-    match event {
-        EventCompiled::Dialogue(dialogue) => {
-            commands.push(RenderCommand::Panel {
-                style: "dialogue_box".to_string(),
-                rect: dialogue_panel_rect(),
-            });
-            if !dialogue.speaker.is_empty() {
-                commands.push(RenderCommand::Text {
-                    text: dialogue.speaker.to_string(),
-                    style: "dialogue.speaker".to_string(),
-                    rect: LayoutRect {
-                        x: 96.0,
-                        y: 512.0,
-                        width: 1088.0,
-                        height: 32.0,
-                    },
-                });
-            }
-            commands.push(RenderCommand::Text {
-                text: dialogue.text.to_string(),
-                style: "dialogue.text".to_string(),
-                rect: LayoutRect {
-                    x: 96.0,
-                    y: 552.0,
-                    width: 1088.0,
-                    height: 96.0,
-                },
-            });
-            commands.push(RenderCommand::Button {
-                id: "continue".to_string(),
-                label: "Continue".to_string(),
-                style: "button.primary".to_string(),
-                rect: LayoutRect {
-                    x: 1040.0,
-                    y: 656.0,
-                    width: 144.0,
-                    height: 40.0,
-                },
-            });
-            interactions.push(InteractionSpec {
-                id: "continue".to_string(),
-                label: "Continue".to_string(),
-                action: "advance".to_string(),
-            });
-        }
-        EventCompiled::Choice(choice) => {
-            commands.push(RenderCommand::Panel {
-                style: "choice_list".to_string(),
-                rect: LayoutRect {
-                    x: 336.0,
-                    y: 160.0,
-                    width: 608.0,
-                    height: (96.0 + choice.options.len() as f32 * 56.0).min(480.0),
-                },
-            });
-            commands.push(RenderCommand::Text {
-                text: choice.prompt.to_string(),
-                style: "choice.prompt".to_string(),
-                rect: LayoutRect {
-                    x: 368.0,
-                    y: 192.0,
-                    width: 544.0,
-                    height: 48.0,
-                },
-            });
-            for (index, option) in choice.options.iter().enumerate() {
-                let id = format!("choice:{index}");
-                let y = 256.0 + index as f32 * 56.0;
-                commands.push(RenderCommand::Button {
-                    id: id.clone(),
-                    label: option.text.to_string(),
-                    style: "button.choice".to_string(),
-                    rect: LayoutRect {
-                        x: 384.0,
-                        y,
-                        width: 512.0,
-                        height: 44.0,
-                    },
-                });
-                interactions.push(InteractionSpec {
-                    id,
-                    label: option.text.to_string(),
-                    action: format!("choose:{index}"),
-                });
-            }
-        }
-        EventCompiled::ExtCall { command, .. } => {
-            commands.push(RenderCommand::Panel {
-                style: "system_overlay".to_string(),
-                rect: dialogue_panel_rect(),
-            });
-            commands.push(RenderCommand::Text {
-                text: format!("External command: {command}"),
-                style: "system.text".to_string(),
-                rect: LayoutRect {
-                    x: 96.0,
-                    y: 552.0,
-                    width: 1088.0,
-                    height: 96.0,
-                },
-            });
-            interactions.push(InteractionSpec {
-                id: "resume".to_string(),
-                label: "Resume".to_string(),
-                action: "resume".to_string(),
-            });
-        }
-        _ => {}
-    }
-}
-
-fn dialogue_panel_rect() -> LayoutRect {
-    LayoutRect {
-        x: 64.0,
-        y: 496.0,
-        width: 1152.0,
-        height: 200.0,
-    }
 }
 
 fn character_slot_x(index: usize, count: usize) -> f32 {

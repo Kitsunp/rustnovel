@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use eframe::egui;
 use visual_novel_engine::authoring::AuthoringPosition;
@@ -11,7 +12,7 @@ use visual_novel_gui::editor::execution_contract::{
     contract_for_event_raw, contract_for_node, contract_matrix, is_preview_only_node, FidelityClass,
 };
 use visual_novel_gui::editor::image_asset_cache::{
-    scene_stage_cache_key, should_retry_missing_image_failure,
+    image_asset_version, scene_stage_cache_key, should_retry_missing_image_failure,
 };
 use visual_novel_gui::editor::inspector_panel::graph_summary_lines;
 use visual_novel_gui::editor::inspector_panel::node_editor::parse_generic_event_json;
@@ -24,6 +25,44 @@ use visual_novel_gui::{AssetManager, AssetStore, SecurityMode};
 fn write_png(path: &std::path::Path) {
     let image = image::RgbaImage::from_pixel(1, 1, image::Rgba([12, 34, 56, 255]));
     image.save(path).expect("write png");
+}
+
+fn create_dir_symlink(link: &Path, target: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target, link).is_ok()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = link;
+        let _ = target;
+        false
+    }
+}
+
+fn create_file_symlink(link: &Path, target: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(target, link).is_ok()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = link;
+        let _ = target;
+        false
+    }
 }
 
 #[test]
@@ -138,7 +177,7 @@ fn execution_contract_matrix_contains_all_fidelity_classes() {
         .any(|entry| entry.fidelity == FidelityClass::FallbackDegraded));
     assert!(contract_matrix()
         .iter()
-        .any(|entry| entry.fidelity == FidelityClass::HeadlessSimulated));
+        .any(|entry| entry.fidelity == FidelityClass::HostRequired));
 }
 
 #[test]
@@ -160,7 +199,7 @@ fn execution_contract_classifies_story_markers_and_extcall() {
     }));
     assert!(extcall.runtime_supported);
     assert!(!extcall.export_supported);
-    assert_eq!(extcall.fidelity, FidelityClass::HeadlessSimulated);
+    assert_eq!(extcall.fidelity, FidelityClass::HostRequired);
 }
 
 #[test]
@@ -204,6 +243,64 @@ fn image_cache_key_tracks_resolved_candidate_contents() {
 
     assert_ne!(before, after);
     assert!(!before.ends_with("::missing"));
+}
+
+#[test]
+fn image_cache_key_blocks_directory_symlink_escape_metadata() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("project");
+    let outside = temp.path().join("outside_pack");
+    std::fs::create_dir_all(&outside).expect("outside dir");
+    std::fs::write(outside.join("room.png"), b"outside image").expect("outside asset");
+    std::fs::create_dir_all(root.join("assets/backgrounds")).expect("mkdir assets");
+    let link = root.join("assets/backgrounds/external");
+    if !create_dir_symlink(&link, &outside) {
+        eprintln!("directory symlink creation not supported on this platform");
+        return;
+    }
+
+    assert_eq!(
+        image_asset_version(&root, "backgrounds/external/room"),
+        "unsafe"
+    );
+    assert!(
+        scene_stage_cache_key(&root, PreviewQuality::Draft, "backgrounds/external/room")
+            .ends_with("::unsafe")
+    );
+    assert!(!should_retry_missing_image_failure(
+        "missing image: image asset not found",
+        &root,
+        "backgrounds/external/room"
+    ));
+}
+
+#[test]
+fn image_cache_key_reports_dangling_symlink_metadata_error() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().join("project");
+    std::fs::create_dir_all(root.join("assets/backgrounds")).expect("mkdir assets");
+    let link = root.join("assets/backgrounds/ghost.png");
+    let missing_target = temp.path().join("missing.png");
+    if !create_file_symlink(&link, &missing_target) {
+        eprintln!("file symlink creation not supported on this platform");
+        return;
+    }
+
+    let version = image_asset_version(&root, "backgrounds/ghost");
+    assert!(
+        version.starts_with("io-error:"),
+        "dangling symlink must not be reported as a missing asset: {version}"
+    );
+    assert!(
+        scene_stage_cache_key(&root, PreviewQuality::Draft, "backgrounds/ghost")
+            .contains("::io-error:"),
+        "cache key must preserve metadata failure state"
+    );
+    assert!(!should_retry_missing_image_failure(
+        "missing image: image asset not found",
+        &root,
+        "backgrounds/ghost"
+    ));
 }
 
 #[test]

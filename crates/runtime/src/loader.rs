@@ -1,6 +1,6 @@
 use std::path::{Component, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::sync::Arc;
 use std::thread;
 
@@ -68,17 +68,27 @@ impl AsyncLoader {
         }
     }
 
-    pub fn enqueue(&self, id: AssetId, path: PathBuf) {
+    pub fn enqueue(&self, id: AssetId, path: PathBuf) -> Result<(), String> {
+        if !is_safe_path(&path) {
+            return Err("Security violation: path traversal or absolute path".to_string());
+        }
         self.inflight.fetch_add(1, Ordering::Release);
         // Blocks if too many requests are inflight (Backpressure)
         if let Err(err) = self.sender.send(LoadRequest { id, path }) {
             self.inflight.fetch_sub(1, Ordering::Release);
-            eprintln!("async loader enqueue failed: {err}");
+            return Err(format!("async loader enqueue failed: {err}"));
         }
+        Ok(())
     }
 
-    pub fn try_recv(&self) -> Option<LoadResult> {
-        self.receiver.try_recv().ok()
+    pub fn try_recv(&self) -> Result<Option<LoadResult>, String> {
+        match self.receiver.try_recv() {
+            Ok(result) => Ok(Some(result)),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => {
+                Err("async loader result channel disconnected".to_string())
+            }
+        }
     }
 
     pub fn is_loading(&self) -> bool {

@@ -18,6 +18,39 @@ fn write_png(path: &Path) {
     image.save(path).expect("write png");
 }
 
+#[cfg(unix)]
+fn create_file_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn create_file_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(target, link)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn create_file_symlink(_target: &Path, _link: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "file symlinks are not supported on this platform",
+    ))
+}
+
+fn create_file_symlink_if_supported(target: &Path, link: &Path) -> bool {
+    match create_file_symlink(target, link) {
+        Ok(()) => true,
+        Err(err) if symlink_unavailable(&err) => false,
+        Err(err) => panic!("create symlink from {link:?} to {target:?}: {err}"),
+    }
+}
+
+fn symlink_unavailable(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+    ) || matches!(err.raw_os_error(), Some(1314))
+}
+
 #[test]
 fn load_image_rejects_unsupported_extension_before_io() {
     let store = AssetStore::new(PathBuf::from("."), SecurityMode::Trusted, None, false)
@@ -50,6 +83,29 @@ fn load_image_resolves_assets_prefix_and_extensionless_path() {
     assert_eq!(image.name, "assets/bg/portrait.png");
     assert_eq!(image.size, [1, 1]);
     assert_eq!(image.pixels.len(), 4);
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn load_image_skips_directory_candidates_before_extension_fallback() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock must be after unix epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("vn_assets_image_dir_candidate_{unique}"));
+    std::fs::create_dir_all(root.join("bg/portrait")).expect("directory candidate");
+    std::fs::create_dir_all(root.join("assets/bg")).expect("asset dir");
+    write_png(&root.join("assets/bg/portrait.png"));
+
+    let store = AssetStore::new(root.clone(), SecurityMode::Trusted, None, false)
+        .expect("asset store should initialize");
+
+    let image = store
+        .load_image("bg/portrait")
+        .expect("directory candidates should not hide valid image fallbacks");
+    assert_eq!(image.name, "assets/bg/portrait.png");
+    assert_eq!(image.size, [1, 1]);
 
     let _ = std::fs::remove_dir_all(root);
 }
@@ -191,11 +247,64 @@ fn load_bytes_manifest_lookup_normalizes_separators() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-#[cfg(unix)]
+#[test]
+fn manifest_rejects_duplicate_normalized_asset_keys() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock must be after unix epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("vn_assets_manifest_duplicate_{unique}"));
+    std::fs::create_dir_all(root.join("audio")).expect("audio dir");
+    let payload = [4u8, 5, 6, 7];
+    std::fs::write(root.join("audio").join("theme.ogg"), payload).expect("write asset");
+
+    let mut manifest_assets = BTreeMap::new();
+    manifest_assets.insert(
+        "audio\\\\theme.ogg".to_string(),
+        AssetEntry {
+            sha256: sha256_hex(&payload),
+            size: payload.len() as u64,
+        },
+    );
+    manifest_assets.insert(
+        "audio/theme.ogg".to_string(),
+        AssetEntry {
+            sha256: sha256_hex(b"different"),
+            size: 9,
+        },
+    );
+    let manifest = AssetManifest {
+        manifest_version: 1,
+        assets: manifest_assets,
+    };
+    let manifest_path = root.join("assets_manifest.json");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).expect("serialize manifest"),
+    )
+    .expect("write manifest");
+
+    let err = AssetStore::new(
+        root.clone(),
+        SecurityMode::Untrusted,
+        Some(manifest_path),
+        true,
+    )
+    .expect_err("duplicate normalized manifest keys must be rejected");
+
+    assert!(
+        matches!(
+            err,
+            AssetError::ManifestDuplicateEntry(ref key) if key == "audio/theme.ogg"
+        ),
+        "unexpected error: {err:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn load_bytes_blocks_symlink_escape() {
-    use std::os::unix::fs::symlink;
-
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock must be after unix epoch")
@@ -204,13 +313,43 @@ fn load_bytes_blocks_symlink_escape() {
     let outside = std::env::temp_dir().join(format!("vn_assets_symlink_out_{unique}.ogg"));
     std::fs::create_dir_all(root.join("audio")).expect("audio dir");
     std::fs::write(&outside, [9u8, 9, 9]).expect("outside file");
-    symlink(&outside, root.join("audio").join("escape.ogg")).expect("create symlink");
+    let link = root.join("audio").join("escape.ogg");
+    if !create_file_symlink_if_supported(&outside, &link) {
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(outside);
+        return;
+    }
 
     let store =
         AssetStore::new(root.clone(), SecurityMode::Trusted, None, false).expect("asset store");
     let err = store
         .load_bytes("audio/escape.ogg")
         .expect_err("symlink escape must be blocked");
+    assert!(matches!(err, AssetError::Traversal));
+
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_file(outside);
+}
+
+#[test]
+fn fingerprint_catalog_blocks_symlink_escape() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock must be after unix epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("vn_assets_catalog_symlink_root_{unique}"));
+    let outside = std::env::temp_dir().join(format!("vn_assets_catalog_symlink_out_{unique}.ogg"));
+    std::fs::create_dir_all(root.join("audio")).expect("audio dir");
+    std::fs::write(&outside, [7u8, 7, 7]).expect("outside file");
+    let link = root.join("audio").join("escape.ogg");
+    if !create_file_symlink_if_supported(&outside, &link) {
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(outside);
+        return;
+    }
+
+    let err = AssetFingerprintCatalog::build(&root, &["ogg"])
+        .expect_err("catalog must not fingerprint assets reached through symlink escape");
     assert!(matches!(err, AssetError::Traversal));
 
     let _ = std::fs::remove_dir_all(root);

@@ -1,14 +1,16 @@
 use super::super::{NodeGraph, StoryNode};
+use crate::event_behavior::{normalized_audio_action, normalized_audio_channel};
 
 pub(super) fn normalize_channel(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
     let Some(StoryNode::AudioAction { channel, .. }) = graph.get_node_mut(node_id) else {
         return Err(format!("node_id {node_id} is not AudioAction"));
     };
-    let normalized = match channel.to_ascii_lowercase().as_str() {
-        "sfx" | "fx" => "sfx",
-        "voice" | "vo" => "voice",
-        _ => "bgm",
-    };
+    let normalized = normalized_audio_channel(channel).ok_or_else(|| {
+        format!(
+            "audio channel '{}' cannot be normalized without an explicit supported alias",
+            channel
+        )
+    })?;
     if channel == normalized {
         return Ok(false);
     }
@@ -18,21 +20,15 @@ pub(super) fn normalize_channel(graph: &mut NodeGraph, node_id: u32) -> Result<b
 }
 
 pub(super) fn normalize_action(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
-    let Some(StoryNode::AudioAction { action, asset, .. }) = graph.get_node_mut(node_id) else {
+    let Some(StoryNode::AudioAction { action, .. }) = graph.get_node_mut(node_id) else {
         return Err(format!("node_id {node_id} is not AudioAction"));
     };
-    let normalized = match action.to_ascii_lowercase().as_str() {
-        "play" | "start" => "play",
-        "fade" | "fadeout" | "fade_out" => "fade_out",
-        "stop" => "stop",
-        _ if asset
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty()) =>
-        {
-            "play"
-        }
-        _ => "stop",
-    };
+    let normalized = normalized_audio_action(action).ok_or_else(|| {
+        format!(
+            "audio action '{}' cannot be normalized without an explicit supported alias",
+            action
+        )
+    })?;
     if action == normalized {
         return Ok(false);
     }

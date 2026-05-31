@@ -91,6 +91,7 @@ impl EditorWorkbench {
                             "event_kind": step.event_kind,
                             "event_signature": step.event_signature,
                             "execution_fidelity": step.execution_fidelity,
+                            "execution_note": step.execution_note,
                             "simulation_note": step.simulation_note,
                             "visual_background": step.visual_background,
                             "visual_music": step.visual_music,
@@ -244,27 +245,24 @@ impl EditorWorkbench {
         let mut imported = Vec::with_capacity(issues_json.len());
         for (issue_index, issue_json) in issues_json.iter().enumerate() {
             let envelope = issue_json.get("envelope_v2").unwrap_or(issue_json);
-            let phase = parse_validation_phase(
-                issue_json
-                    .get("phase")
-                    .or_else(|| envelope.get("phase"))
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("GRAPH"),
-            )?;
-            let code = parse_lint_code(
-                issue_json
-                    .get("code")
-                    .or_else(|| envelope.get("code"))
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("CMP_SCRIPT_ERROR"),
-            )?;
-            let severity = parse_severity(
-                issue_json
-                    .get("severity")
-                    .or_else(|| envelope.get("severity"))
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("warning"),
-            )?;
+            let phase = parse_validation_phase(required_issue_str_field(
+                issue_json,
+                envelope,
+                "phase",
+                issue_index,
+            )?)?;
+            let code = parse_lint_code(required_issue_str_field(
+                issue_json,
+                envelope,
+                "code",
+                issue_index,
+            )?)?;
+            let severity = parse_severity(required_issue_str_field(
+                issue_json,
+                envelope,
+                "severity",
+                issue_index,
+            )?)?;
             let location = envelope.get("location").unwrap_or(issue_json);
             let node_id = parse_issue_u32_field(
                 issue_json
@@ -394,6 +392,21 @@ impl EditorWorkbench {
         self.show_validation = !self.validation_issues.is_empty();
         Ok(())
     }
+}
+
+fn required_issue_str_field<'a>(
+    issue_json: &'a serde_json::Value,
+    envelope: &'a serde_json::Value,
+    field: &str,
+    issue_index: usize,
+) -> Result<&'a str, String> {
+    let value = issue_json
+        .get(field)
+        .or_else(|| envelope.get(field))
+        .ok_or_else(|| format!("issue {issue_index} missing required field '{field}'"))?;
+    value
+        .as_str()
+        .ok_or_else(|| format!("issue {issue_index} field '{field}' must be a string"))
 }
 
 fn current_fingerprints_value(workbench: &EditorWorkbench) -> Result<serde_json::Value, String> {

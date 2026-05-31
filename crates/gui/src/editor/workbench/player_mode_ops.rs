@@ -93,7 +93,7 @@ impl EditorWorkbench {
             Engine::from_compiled(
                 engine.script().clone(),
                 engine.policy().clone(),
-                visual_novel_engine::ResourceLimiter::default(),
+                engine.limits(),
             )
             .unwrap_or_else(|_| engine.clone())
         } else {

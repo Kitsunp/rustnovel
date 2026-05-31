@@ -457,6 +457,36 @@ fn route_coverage_report_records_missing_choice_target_labels() {
 }
 
 #[test]
+fn raw_route_simulation_reports_missing_choice_target_labels() {
+    let script = ScriptRaw::new(
+        vec![EventRaw::Choice(ChoiceRaw {
+            prompt: "Route?".to_string(),
+            options: vec![ChoiceOptionRaw {
+                text: "Missing".to_string(),
+                target: "missing_label".to_string(),
+            }],
+        })],
+        BTreeMap::from([("start".to_string(), 0)]),
+    );
+
+    let report = compiler::simulate_raw_sequence(
+        &script,
+        100,
+        &compiler::ChoicePolicy::Strategy(compiler::ChoiceStrategy::First),
+    );
+
+    assert_eq!(
+        report.stop_reason,
+        compiler::RawSimulationStopReason::MissingChoiceTarget
+    );
+    assert_eq!(report.failing_event_ip, Some(0));
+    assert_eq!(report.steps.len(), 1);
+    assert!(report.errors.iter().any(
+        |error| error.contains("choice at ip 0 option 0 targets missing label 'missing_label'")
+    ));
+}
+
+#[test]
 fn dry_run_scripted_route_rejects_out_of_range_choice_index() {
     let script = ScriptRaw::new(
         vec![EventRaw::Choice(ChoiceRaw {

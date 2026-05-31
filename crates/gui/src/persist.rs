@@ -38,8 +38,18 @@ impl Default for UserPreferences {
 
 impl UserPreferences {
     pub fn load_from(path: &Path) -> std::io::Result<Self> {
-        if !path.exists() {
-            return Ok(Self::default());
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_dir() => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("preferences path is a directory: {}", path.display()),
+                ));
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(err) => return Err(err),
         }
         let raw = fs::read_to_string(path)?;
         let parsed = serde_json::from_str(&raw)

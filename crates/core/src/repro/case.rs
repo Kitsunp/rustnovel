@@ -60,7 +60,7 @@ impl ReproCase {
             operation_id: None,
             capabilities: vec![
                 "headless_repro_v1".to_string(),
-                "extcall_simulated".to_string(),
+                "extcall_host_required".to_string(),
             ],
             plugins: Vec::new(),
             asset_manifest_sha256: None,

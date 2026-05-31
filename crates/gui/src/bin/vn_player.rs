@@ -1,5 +1,6 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -175,14 +176,43 @@ fn run_smoke(
     smoke_report_path: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let bundle_root = launch_paths.bundle_root.as_deref();
-    let package_report_path = bundle_root
-        .map(|root| root.join("meta").join("package_report.json"))
-        .filter(|path| path.is_file());
-    let compat_report_path = bundle_root
-        .map(|root| root.join("meta").join("compat_report.json"))
-        .filter(|path| path.is_file());
-
     let fallback_target = std::env::consts::OS.to_string();
+    let failure_artifacts = |target_platform: String,
+                             package_report_path: Option<PathBuf>,
+                             compat_report_path: Option<PathBuf>| {
+        SmokeArtifactContext {
+            target_platform,
+            bundle_root: launch_paths.bundle_root.clone(),
+            script_path: launch_paths.script_path.clone(),
+            assets_root: launch_paths.assets_root.clone(),
+            manifest_path: launch_paths.manifest_path.clone(),
+            package_report_path,
+            compat_report_path,
+            smoke_report_path: smoke_report_path.clone(),
+        }
+    };
+
+    let package_report_path =
+        match optional_bundle_metadata_file(bundle_root, "package_report.json", "package_report") {
+            Ok(path) => path,
+            Err(failure) => {
+                let artifacts = failure_artifacts(fallback_target.clone(), None, None);
+                let err = smoke_report_read_error(&failure, &fallback_target);
+                persist_failed_smoke_artifacts(&artifacts, err.as_ref())?;
+                return Err(err);
+            }
+        };
+    let compat_report_path =
+        match optional_bundle_metadata_file(bundle_root, "compat_report.json", "compat_report") {
+            Ok(path) => path,
+            Err(failure) => {
+                let artifacts =
+                    failure_artifacts(fallback_target.clone(), package_report_path.clone(), None);
+                let err = smoke_report_read_error(&failure, &fallback_target);
+                persist_failed_smoke_artifacts(&artifacts, err.as_ref())?;
+                return Err(err);
+            }
+        };
     let package_report = read_json_value(
         package_report_path.as_deref(),
         "package_report",
@@ -193,17 +223,8 @@ fn run_smoke(
     let target_platform = package_report
         .as_ref()
         .ok()
-        .and_then(Option::as_ref)
-        .and_then(|value| value.get("target_platform"))
-        .and_then(Value::as_str)
-        .or_else(|| {
-            compat_report
-                .as_ref()
-                .ok()
-                .and_then(Option::as_ref)
-                .and_then(|value| value.get("target_platform"))
-                .and_then(Value::as_str)
-        })
+        .and_then(report_target_platform)
+        .or_else(|| compat_report.as_ref().ok().and_then(report_target_platform))
         .unwrap_or(&fallback_target)
         .to_string();
 
@@ -215,7 +236,7 @@ fn run_smoke(
         manifest_path: launch_paths.manifest_path.clone(),
         package_report_path,
         compat_report_path,
-        smoke_report_path,
+        smoke_report_path: smoke_report_path.clone(),
     };
     let _package_report = match package_report {
         Ok(value) => value,
@@ -439,11 +460,12 @@ fn write_smoke_artifacts(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let bundle_root = artifacts.bundle_root.as_deref();
     let mut metadata_checks = Vec::new();
-    let bundle_file_manifest_sha256 = match bundle_root
-        .map(|root| root.join("meta").join("bundle_file_manifest.json"))
-        .filter(|path| path.is_file())
-    {
-        Some(path) => match sha256_file(&path) {
+    let bundle_file_manifest_sha256 = match optional_bundle_metadata_file(
+        bundle_root,
+        "bundle_file_manifest.json",
+        "bundle_file_manifest_sha256",
+    ) {
+        Ok(Some(path)) => match sha256_file(&path) {
             Ok(value) => (!value.is_empty()).then_some(value),
             Err(err) if strict_metadata => {
                 return Err(format!(
@@ -463,13 +485,28 @@ fn write_smoke_artifacts(
                 None
             }
         },
-        None => None,
+        Ok(None) => None,
+        Err(failure) if strict_metadata => {
+            return Err(smoke_report_read_error(
+                &failure,
+                &artifacts.target_platform,
+            ));
+        }
+        Err(failure) => {
+            metadata_checks.push(smoke_metadata_failure_check(
+                &artifacts.target_platform,
+                &failure,
+                "bundle_file_manifest_sha256",
+            ));
+            None
+        }
     };
-    let bundle_hmac_sha256 = match bundle_root
-        .map(|root| root.join("meta").join("bundle.hmac_sha256"))
-        .filter(|path| path.is_file())
-    {
-        Some(path) => match std::fs::read_to_string(&path) {
+    let bundle_hmac_sha256 = match optional_bundle_metadata_file(
+        bundle_root,
+        "bundle.hmac_sha256",
+        "bundle_hmac_sha256",
+    ) {
+        Ok(Some(path)) => match std::fs::read_to_string(&path) {
             Ok(value) => {
                 let value = value.trim().to_string();
                 (!value.is_empty()).then_some(value)
@@ -492,7 +529,21 @@ fn write_smoke_artifacts(
                 None
             }
         },
-        None => None,
+        Ok(None) => None,
+        Err(failure) if strict_metadata => {
+            return Err(smoke_report_read_error(
+                &failure,
+                &artifacts.target_platform,
+            ));
+        }
+        Err(failure) => {
+            metadata_checks.push(smoke_metadata_failure_check(
+                &artifacts.target_platform,
+                &failure,
+                "bundle_hmac_sha256",
+            ));
+            None
+        }
     };
     let mut smoke_result_for_report = smoke_result.clone();
     smoke_result_for_report.checks.extend(metadata_checks);
@@ -692,6 +743,43 @@ fn read_json_value(
     Ok(Some(value))
 }
 
+fn optional_bundle_metadata_file(
+    bundle_root: Option<&Path>,
+    filename: &'static str,
+    label: &'static str,
+) -> Result<Option<PathBuf>, SmokeReportReadFailure> {
+    let Some(root) = bundle_root else {
+        return Ok(None);
+    };
+    let path = root.join("meta").join(filename);
+    let file = report_relative_path(&path, Some(root));
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(Some(path)),
+        Ok(_) => Err(SmokeReportReadFailure {
+            code: "export.runtime_smoke.report_read",
+            label,
+            path,
+            file,
+            detail: "metadata path is not a regular file".to_string(),
+        }),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(SmokeReportReadFailure {
+            code: "export.runtime_smoke.report_read",
+            label,
+            path,
+            file,
+            detail: format!("failed to inspect metadata path: {err}"),
+        }),
+    }
+}
+
+fn report_target_platform(report: &Option<Value>) -> Option<&str> {
+    report
+        .as_ref()
+        .and_then(|value| value.get("target_platform"))
+        .and_then(Value::as_str)
+}
+
 fn smoke_report_read_error(
     failure: &SmokeReportReadFailure,
     target: &str,
@@ -708,6 +796,24 @@ fn smoke_report_read_error(
         SmokeCheckScope {
             file: Some(&failure.file),
             field: Some(failure.label),
+            ..SmokeCheckScope::default()
+        },
+    )
+}
+
+fn smoke_metadata_failure_check(
+    target: &str,
+    failure: &SmokeReportReadFailure,
+    field: &'static str,
+) -> ExportRuntimeSmokeCheck {
+    smoke_check_with_scope(
+        "export.runtime_smoke.metadata_read",
+        "failed",
+        target,
+        &format!("{field} '{}': {}", failure.path.display(), failure.detail),
+        SmokeCheckScope {
+            file: Some(&failure.file),
+            field: Some(field),
             ..SmokeCheckScope::default()
         },
     )
@@ -1163,8 +1269,23 @@ fn load_packaged_project_manifest(
     bundle_root: &Path,
 ) -> Result<Option<ProjectManifest>, Box<dyn std::error::Error>> {
     let path = bundle_root.join("meta").join("project.vnm");
-    if !path.is_file() {
-        return Ok(None);
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_file() => {}
+        Ok(_) => {
+            return Err(format!(
+                "packaged project manifest '{}' is not a regular file",
+                path.display()
+            )
+            .into());
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(format!(
+                "failed to inspect packaged project manifest '{}': {err}",
+                path.display()
+            )
+            .into());
+        }
     }
     ProjectManifest::load(&path).map(Some).map_err(|err| {
         format!(
@@ -1178,6 +1299,25 @@ fn load_packaged_project_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn create_file_symlink(link: &Path, target: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, link).is_ok()
+        }
+
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = link;
+            let _ = target;
+            false
+        }
+    }
 
     #[test]
     fn standalone_launch_defaults_to_bundle_files_next_to_executable(
@@ -1247,6 +1387,97 @@ mod tests {
         let err = load_packaged_project_manifest(dir.path())
             .expect_err("existing packaged project manifest must not be silently ignored");
         assert!(err.to_string().contains("project.vnm"));
+        Ok(())
+    }
+
+    #[test]
+    fn packaged_project_manifest_symlink_is_rejected_instead_of_followed(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        std::fs::create_dir_all(dir.path().join("meta"))?;
+        let outside_manifest = outside.path().join("project.vnm");
+        std::fs::write(&outside_manifest, "[project]\nname = \"outside\"\n")?;
+        let link = dir.path().join("meta").join("project.vnm");
+        if !create_file_symlink(&link, &outside_manifest) {
+            eprintln!("file symlink creation not supported on this platform");
+            return Ok(());
+        }
+
+        let err = load_packaged_project_manifest(dir.path())
+            .expect_err("packaged project manifest symlink must not be followed");
+
+        assert!(err.to_string().contains("regular file"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn smoke_mode_rejects_package_report_symlink_without_touching_target(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let bundle = dir.path();
+        std::fs::create_dir_all(bundle.join("scripts"))?;
+        std::fs::create_dir_all(bundle.join("meta"))?;
+        std::fs::write(bundle.join("scripts/compiled.vnscript.json"), "{}")?;
+        std::fs::write(bundle.join("meta/assets_manifest.json"), "{}")?;
+
+        let outside_report = outside.path().join("package_report.json");
+        let outside_json = serde_json::json!({
+            "target_platform": "windows",
+            "smoke_result": {
+                "status": "not_run",
+                "backend": "software",
+                "details": "outside"
+            }
+        })
+        .to_string();
+        std::fs::write(&outside_report, &outside_json)?;
+        let link = bundle.join("meta/package_report.json");
+        if !create_file_symlink(&link, &outside_report) {
+            eprintln!("file symlink creation not supported on this platform");
+            return Ok(());
+        }
+
+        let smoke_report = bundle.join("meta/runtime_smoke_report.json");
+        let err = run_from_args(vec![
+            bundle
+                .join("scripts/compiled.vnscript.json")
+                .display()
+                .to_string(),
+            "--assets-root".to_string(),
+            bundle.display().to_string(),
+            "--manifest".to_string(),
+            bundle
+                .join("meta/assets_manifest.json")
+                .display()
+                .to_string(),
+            "--require-manifest".to_string(),
+            "--smoke".to_string(),
+            "--smoke-report".to_string(),
+            smoke_report.display().to_string(),
+        ])
+        .expect_err("package_report symlink must fail instead of reading outside bundle");
+
+        assert!(err.to_string().contains("regular file"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&outside_report)?,
+            outside_json,
+            "runtime smoke must not retropropagate results through the symlink"
+        );
+        let smoke: Value = serde_json::from_str(&std::fs::read_to_string(&smoke_report)?)?;
+        assert_eq!(smoke["status"], "failed");
+        let report_check = smoke["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .find(|check| check["code"] == "export.runtime_smoke.report_read")
+            .expect("report read failure check");
+        assert_eq!(report_check["field"], "package_report");
+        assert!(report_check["message"]
+            .as_str()
+            .unwrap()
+            .contains("regular file"));
         Ok(())
     }
 
@@ -1445,6 +1676,68 @@ mod tests {
             .expect("smoke result checks")
             .iter()
             .any(|check| check["code"] == "export.runtime_smoke.metadata_read"));
+        Ok(())
+    }
+
+    #[test]
+    fn smoke_artifacts_record_metadata_symlink_without_hashing_target(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let bundle = dir.path();
+        std::fs::create_dir_all(bundle.join("meta"))?;
+        let outside_manifest = outside.path().join("bundle_file_manifest.json");
+        std::fs::write(&outside_manifest, b"outside metadata")?;
+        let link = bundle.join("meta/bundle_file_manifest.json");
+        if !create_file_symlink(&link, &outside_manifest) {
+            eprintln!("file symlink creation not supported on this platform");
+            return Ok(());
+        }
+
+        let smoke_report = bundle.join("meta/runtime_smoke_report.json");
+        let artifacts = SmokeArtifactContext {
+            target_platform: "windows".to_string(),
+            bundle_root: Some(bundle.to_path_buf()),
+            script_path: bundle.join("scripts/compiled.vnscript.json"),
+            assets_root: bundle.to_path_buf(),
+            manifest_path: None,
+            package_report_path: None,
+            compat_report_path: None,
+            smoke_report_path: Some(smoke_report.clone()),
+        };
+        let primary_check = smoke_check(
+            "export.runtime_smoke.asset_load",
+            "failed",
+            "windows",
+            "primary asset failure",
+        );
+        let smoke_result = ExportRuntimeSmokeResult {
+            status: "failed".to_string(),
+            backend: "software".to_string(),
+            details: "primary asset failure".to_string(),
+            phase: "smoke".to_string(),
+            target: "windows".to_string(),
+            trace_id: primary_check.trace_id.clone(),
+            checks: vec![primary_check],
+        };
+
+        write_smoke_artifacts(&artifacts, &smoke_result, false)?;
+
+        let smoke: Value = serde_json::from_str(&std::fs::read_to_string(&smoke_report)?)?;
+        assert_eq!(smoke["bundle_file_manifest_sha256"], Value::Null);
+        let metadata_check = smoke["checks"]
+            .as_array()
+            .expect("checks")
+            .iter()
+            .find(|check| {
+                check["code"] == "export.runtime_smoke.metadata_read"
+                    && check["field"] == "bundle_file_manifest_sha256"
+            })
+            .expect("metadata symlink read check");
+        assert!(metadata_check["message"]
+            .as_str()
+            .unwrap()
+            .contains("regular file"));
         Ok(())
     }
 

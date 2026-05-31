@@ -22,6 +22,8 @@ impl EditorWorkbench {
                     .parent()
                     .map(std::path::Path::to_path_buf)
                     .unwrap_or(path.clone());
+                let localization_catalog =
+                    Self::load_localization_catalog(&project_root, &loaded_project.manifest)?;
                 self.project_root = Some(project_root.clone());
                 self.manifest_path = Some(path.clone());
                 self.composer_image_cache.clear();
@@ -32,8 +34,7 @@ impl EditorWorkbench {
                 self.rebuild_authoring_session_from_fields();
                 self.player_audio_backend = None;
                 self.player_audio_root = None;
-                self.localization_catalog =
-                    Self::load_localization_catalog(&project_root, &loaded_project.manifest);
+                self.localization_catalog = localization_catalog;
                 self.player_locale = loaded_project.manifest.settings.default_language.clone();
                 self.manifest = Some(loaded_project.manifest);
                 if let Some((script_path, loaded_script)) = loaded_project.entry_point_script {
@@ -75,11 +76,21 @@ impl EditorWorkbench {
                 self.project_root = path.parent().map(std::path::Path::to_path_buf);
                 self.manifest_path = None;
                 self.manifest = None;
+                let mut locale_warnings = Vec::new();
                 if let Some(root) = &self.project_root {
-                    self.localization_catalog = Self::discover_locales_without_manifest(root);
+                    let (catalog, warnings) = Self::discover_locales_without_manifest(root);
+                    self.localization_catalog = catalog;
                     self.player_locale = self.localization_catalog.default_locale.clone();
+                    locale_warnings = warnings;
                 }
                 self.apply_loaded_script(loaded_script, path, true);
+                if !locale_warnings.is_empty() {
+                    self.toast = Some(crate::editor::node_types::ToastState::warning(format!(
+                        "Locale discovery skipped {} file(s): {}",
+                        locale_warnings.len(),
+                        locale_warnings.join("; ")
+                    )));
+                }
             }
             Err(e) => {
                 self.toast = Some(crate::editor::node_types::ToastState::error(format!(
@@ -138,41 +149,140 @@ impl EditorWorkbench {
     fn load_localization_catalog(
         project_root: &std::path::Path,
         manifest: &visual_novel_engine::manifest::ProjectManifest,
-    ) -> LocalizationCatalog {
+    ) -> Result<LocalizationCatalog, String> {
         let mut catalog = LocalizationCatalog::new(manifest.settings.default_language.clone());
         let locale_root = project_root.join("locales");
+        match std::fs::symlink_metadata(&locale_root) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => {
+                return Err(format!(
+                    "locale root '{}' is not a regular directory",
+                    locale_root.display()
+                ));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(catalog),
+            Err(err) => {
+                return Err(format!(
+                    "inspect locale root '{}': {err}",
+                    locale_root.display()
+                ));
+            }
+        }
+        let canonical_project_root = project_root.canonicalize().map_err(|err| {
+            format!(
+                "canonicalize project root '{}': {err}",
+                project_root.display()
+            )
+        })?;
+        let canonical_locale_root = locale_root.canonicalize().map_err(|err| {
+            format!(
+                "canonicalize locale root '{}': {err}",
+                locale_root.display()
+            )
+        })?;
+        if !canonical_locale_root.starts_with(&canonical_project_root) {
+            return Err(format!(
+                "locale root '{}' escapes project root",
+                locale_root.display()
+            ));
+        }
         for locale in &manifest.settings.supported_languages {
             let requested = std::path::PathBuf::from(format!("{locale}.json"));
-            let Ok(Some(path)) =
-                crate::editor::project_io::resolve_existing_project_path(&locale_root, &requested)
-            else {
-                continue;
+            let path = match crate::editor::project_io::resolve_existing_project_path(
+                &locale_root,
+                &requested,
+            ) {
+                Ok(Some(path)) => path,
+                Ok(None) => continue,
+                Err(err) => {
+                    return Err(format!(
+                        "locale '{locale}' path '{}' is invalid: {err}",
+                        requested.display()
+                    ));
+                }
             };
-            let Ok(raw) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let Ok(parsed) =
-                serde_json::from_str::<std::collections::BTreeMap<String, String>>(&raw)
-            else {
-                continue;
-            };
+            let raw = std::fs::read_to_string(&path)
+                .map_err(|err| format!("read locale '{locale}' '{}': {err}", path.display()))?;
+            let parsed = serde_json::from_str::<std::collections::BTreeMap<String, String>>(&raw)
+                .map_err(|err| {
+                format!("parse locale '{locale}' '{}': {err}", path.display())
+            })?;
             catalog.insert_locale_table(locale.clone(), parsed);
         }
-        catalog
+        Ok(catalog)
     }
 
-    fn discover_locales_without_manifest(project_root: &std::path::Path) -> LocalizationCatalog {
+    fn discover_locales_without_manifest(
+        project_root: &std::path::Path,
+    ) -> (LocalizationCatalog, Vec<String>) {
         let mut catalog = LocalizationCatalog::default();
+        let mut warnings = Vec::new();
         let locale_dir = project_root.join("locales");
-        if !locale_dir.exists() {
-            return catalog;
+        match std::fs::symlink_metadata(&locale_dir) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => {
+                warnings.push(format!(
+                    "locale directory '{}' is not a regular directory",
+                    locale_dir.display()
+                ));
+                return (catalog, warnings);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return (catalog, warnings),
+            Err(err) => {
+                warnings.push(format!(
+                    "inspect locale directory '{}': {err}",
+                    locale_dir.display()
+                ));
+                return (catalog, warnings);
+            }
+        }
+        let canonical_project_root = match project_root.canonicalize() {
+            Ok(root) => root,
+            Err(err) => {
+                warnings.push(format!(
+                    "canonicalize project root '{}': {err}",
+                    project_root.display()
+                ));
+                return (catalog, warnings);
+            }
+        };
+        let canonical_locale_dir = match locale_dir.canonicalize() {
+            Ok(root) => root,
+            Err(err) => {
+                warnings.push(format!(
+                    "canonicalize locale directory '{}': {err}",
+                    locale_dir.display()
+                ));
+                return (catalog, warnings);
+            }
+        };
+        if !canonical_locale_dir.starts_with(&canonical_project_root) {
+            warnings.push(format!(
+                "locale directory '{}' escapes project root",
+                locale_dir.display()
+            ));
+            return (catalog, warnings);
         }
 
-        let Ok(entries) = std::fs::read_dir(&locale_dir) else {
-            return catalog;
+        let entries = match std::fs::read_dir(&locale_dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                warnings.push(format!(
+                    "read locale directory '{}': {err}",
+                    locale_dir.display()
+                ));
+                return (catalog, warnings);
+            }
         };
 
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    warnings.push(format!("read locale directory entry: {err}"));
+                    continue;
+                }
+            };
             let path = entry.path();
             if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
                 continue;
@@ -184,26 +294,51 @@ impl EditorWorkbench {
                 continue;
             };
             let requested = std::path::PathBuf::from(file_name);
-            let Ok(Some(path)) =
-                crate::editor::project_io::resolve_existing_project_path(&locale_dir, &requested)
-            else {
-                continue;
+            let path = match crate::editor::project_io::resolve_existing_project_path(
+                &locale_dir,
+                &requested,
+            ) {
+                Ok(Some(path)) => path,
+                Ok(None) => continue,
+                Err(err) => {
+                    warnings.push(format!(
+                        "locale '{}' path '{}' is invalid: {err}",
+                        stem,
+                        requested.display()
+                    ));
+                    continue;
+                }
             };
-            let Ok(raw) = std::fs::read_to_string(&path) else {
-                continue;
+            let raw = match std::fs::read_to_string(&path) {
+                Ok(raw) => raw,
+                Err(err) => {
+                    warnings.push(format!(
+                        "read locale '{}' '{}': {err}",
+                        stem,
+                        path.display()
+                    ));
+                    continue;
+                }
             };
-            let Ok(parsed) =
-                serde_json::from_str::<std::collections::BTreeMap<String, String>>(&raw)
-            else {
-                continue;
-            };
+            let parsed =
+                match serde_json::from_str::<std::collections::BTreeMap<String, String>>(&raw) {
+                    Ok(parsed) => parsed,
+                    Err(err) => {
+                        warnings.push(format!(
+                            "parse locale '{}' '{}': {err}",
+                            stem,
+                            path.display()
+                        ));
+                        continue;
+                    }
+                };
             catalog.insert_locale_table(stem.to_string(), parsed);
         }
 
         if let Some(first) = catalog.locale_codes().first() {
             catalog.default_locale = first.clone();
         }
-        catalog
+        (catalog, warnings)
     }
 
     pub fn execute_save(&mut self, path: &std::path::Path, _content_unused: &str) {

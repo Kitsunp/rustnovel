@@ -15,6 +15,16 @@ pub enum VnError {
     #[error("choice index out of range")]
     #[diagnostic(code("vn.invalid_choice"))]
     InvalidChoice,
+    #[error("external call pending at ip {event_ip}: '{command}' requires host completion")]
+    #[diagnostic(code("vn.external_call_pending"))]
+    ExternalCallPending { event_ip: u32, command: String },
+    #[error("external call failed at ip {event_ip}: '{command}': {message}")]
+    #[diagnostic(code("vn.external_call_failed"))]
+    ExternalCallFailed {
+        event_ip: u32,
+        command: String,
+        message: String,
+    },
     #[error("resource limit exceeded: {0}")]
     #[diagnostic(code("vn.resource_limit"))]
     ResourceLimit(String),
@@ -45,6 +55,27 @@ impl VnError {
     #[cold]
     pub fn resource_limit(message: impl Into<String>) -> Self {
         VnError::ResourceLimit(message.into())
+    }
+
+    #[cold]
+    pub fn external_call_pending(event_ip: u32, command: impl Into<String>) -> Self {
+        VnError::ExternalCallPending {
+            event_ip,
+            command: command.into(),
+        }
+    }
+
+    #[cold]
+    pub fn external_call_failed(
+        event_ip: u32,
+        command: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        VnError::ExternalCallFailed {
+            event_ip,
+            command: command.into(),
+            message: message.into(),
+        }
     }
 
     #[cold]

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use eframe::egui;
 use visual_novel_engine::{EntityId, PropertyType, Timeline};
 use visual_novel_gui::editor::timeline_panel::{
@@ -20,6 +22,25 @@ fn create_graph_with_nodes(count: usize) -> NodeGraph {
         graph.add_node(StoryNode::Start, egui::pos2(i as f32 * 50.0, 0.0));
     }
     graph
+}
+
+fn create_file_symlink(link: &Path, target: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(target, link).is_ok()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = link;
+        let _ = target;
+        false
+    }
 }
 
 #[test]
@@ -153,4 +174,25 @@ fn preview_store_loads_absolute_audio_without_project_root() {
         .expect("absolute path should load");
 
     assert_eq!(bytes, b"audio-bytes");
+}
+
+#[test]
+fn preview_store_does_not_bypass_asset_store_symlink_escape() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let project_root = temp.path().join("project");
+    let outside = temp.path().join("outside-theme.ogg");
+    std::fs::create_dir_all(project_root.join("audio")).expect("audio dir");
+    std::fs::write(&outside, b"outside-audio").expect("outside audio");
+    let link = project_root.join("audio/theme.ogg");
+    if !create_file_symlink(&link, &outside) {
+        eprintln!("file symlink creation not supported on this platform");
+        return;
+    }
+
+    let store = GuiAudioAssetStore::new(Some(project_root)).expect("store");
+    let err = store
+        .load_bytes("audio/theme.ogg")
+        .expect_err("relative audio symlink escape must be blocked");
+
+    assert!(err.contains("traversal"), "err={err}");
 }

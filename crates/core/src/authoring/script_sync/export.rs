@@ -1,10 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{VnError, VnResult};
-use crate::event::{
-    AudioActionRaw, ChoiceOptionRaw, ChoiceRaw, DialogueRaw, EventRaw, SceneTransitionRaw,
-    SceneUpdateRaw, SetCharacterPositionRaw,
-};
+use crate::event::{ChoiceOptionRaw, ChoiceRaw, EventRaw};
+use crate::event_behavior::{node_behavior_for_authoring_node, NodeBehavior};
 use crate::script::ScriptRaw;
 
 use super::export_helpers::targets_end_label;
@@ -107,10 +105,6 @@ fn event_from_node(
     label_context: ExportLabelContext<'_>,
 ) -> Option<EventRaw> {
     Some(match node {
-        StoryNode::Dialogue { speaker, text } => EventRaw::Dialogue(DialogueRaw {
-            speaker: speaker.clone(),
-            text: text.clone(),
-        }),
         StoryNode::Choice { prompt, options } => EventRaw::Choice(ChoiceRaw {
             prompt: prompt.clone(),
             options: options
@@ -122,67 +116,16 @@ fn event_from_node(
                 })
                 .collect(),
         }),
-        StoryNode::Scene {
-            background,
-            music,
-            characters,
-            ..
-        } => EventRaw::Scene(SceneUpdateRaw {
-            background: background.clone(),
-            music: music.clone(),
-            characters: characters.clone(),
-        }),
         StoryNode::Jump { target } => EventRaw::Jump {
             target: jump_target_label(id, target, node_lookup, choice_targets, label_context),
-        },
-        StoryNode::SetVariable { key, value } => EventRaw::SetVar {
-            key: key.clone(),
-            value: *value,
-        },
-        StoryNode::SetFlag { key, value } => EventRaw::SetFlag {
-            key: key.clone(),
-            value: *value,
         },
         StoryNode::JumpIf { cond, target } => EventRaw::JumpIf {
             cond: cond.clone(),
             target: jump_if_target_label(id, target, node_lookup, choice_targets, label_context),
         },
-        StoryNode::ScenePatch(patch) => EventRaw::Patch(patch.clone()),
-        StoryNode::AudioAction {
-            channel,
-            action,
-            asset,
-            volume,
-            fade_duration_ms,
-            loop_playback,
-        } => EventRaw::AudioAction(AudioActionRaw {
-            channel: channel.clone(),
-            action: action.clone(),
-            asset: asset.clone(),
-            volume: *volume,
-            fade_duration_ms: *fade_duration_ms,
-            loop_playback: *loop_playback,
-        }),
-        StoryNode::Transition {
-            kind,
-            duration_ms,
-            color,
-        } => EventRaw::Transition(SceneTransitionRaw {
-            kind: kind.clone(),
-            duration_ms: *duration_ms,
-            color: color.clone(),
-        }),
-        StoryNode::CharacterPlacement { name, x, y, scale } => {
-            EventRaw::SetCharacterPosition(SetCharacterPositionRaw {
-                name: name.clone(),
-                x: *x,
-                y: *y,
-                scale: *scale,
-            })
-        }
         StoryNode::SubgraphCall { .. } => return None,
-        StoryNode::Generic(event) => event.clone(),
         StoryNode::Start | StoryNode::End => return None,
+        _ => node_behavior_for_authoring_node(node).to_event(node).ok()?,
     })
 }
 

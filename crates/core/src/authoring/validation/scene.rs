@@ -3,7 +3,7 @@ use crate::event::{CharacterPlacementRaw, ScenePatchRaw};
 use super::assets::validate_asset_at;
 use super::{LintCode, LintIssue, NodeGraph, ValidationPhase};
 
-pub(super) fn validate_scene_profiles<F>(
+pub(crate) fn validate_scene_profiles<F>(
     graph: &NodeGraph,
     asset_exists: &F,
     issues: &mut Vec<LintIssue>,
@@ -113,7 +113,7 @@ fn validate_scene_profile_characters<F>(
     }
 }
 
-pub(super) fn validate_scene<F>(
+pub(crate) fn validate_scene<F>(
     id: u32,
     background: &Option<String>,
     music: &Option<String>,
@@ -163,7 +163,7 @@ pub(super) fn validate_scene<F>(
     }
 }
 
-pub(super) fn validate_scene_patch<F>(
+pub(crate) fn validate_scene_patch<F>(
     id: u32,
     patch: &ScenePatchRaw,
     asset_exists: &F,
@@ -234,7 +234,7 @@ pub(super) fn validate_scene_patch<F>(
     }
 }
 
-pub(super) fn validate_character_scale(
+pub(crate) fn validate_character_scale(
     node_id: Option<u32>,
     scale: &Option<f32>,
     issues: &mut Vec<LintIssue>,

@@ -55,17 +55,22 @@ pub fn resolve_existing_project_path(
         )));
     }
 
-    if !candidate.exists() {
-        return Ok(None);
-    }
-    if !candidate.is_file() {
-        return Ok(None);
+    match std::fs::symlink_metadata(&candidate) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(EditorError::IoError(err)),
     }
 
     let canonical_candidate = candidate.canonicalize().map_err(EditorError::IoError)?;
     if !canonical_candidate.starts_with(&canonical_root) {
         return Err(EditorError::CompileError(format!(
             "Path escapes project root after canonicalization: {}",
+            requested.display()
+        )));
+    }
+    if !canonical_candidate.is_file() {
+        return Err(EditorError::CompileError(format!(
+            "Path is not a regular file: {}",
             requested.display()
         )));
     }

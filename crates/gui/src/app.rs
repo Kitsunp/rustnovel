@@ -950,7 +950,9 @@ impl VnApp {
     }
 
     fn apply_audio_commands(&mut self, commands: Vec<visual_novel_engine::runtime::AudioCommand>) {
-        self.audio.apply_commands(commands);
+        if let Err(err) = self.audio.apply_commands(commands) {
+            self.last_error = Some(err);
+        }
     }
 
     fn audio_mix_from_preferences(&self) -> PlayerAudioMix {

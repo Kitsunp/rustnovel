@@ -85,6 +85,84 @@ fn audio_volume_fix_clamps_to_valid_range() {
 }
 
 #[test]
+fn audio_alias_fixes_only_apply_to_traceable_aliases() {
+    let mut graph = NodeGraph::new();
+    let node_id = graph.add_node(
+        StoryNode::AudioAction {
+            channel: "music".to_string(),
+            action: "start".to_string(),
+            asset: Some("audio/theme.ogg".to_string()),
+            volume: None,
+            fade_duration_ms: None,
+            loop_playback: None,
+        },
+        p(0.0, 0.0),
+    );
+
+    let channel_issue = LintIssue::error(
+        Some(node_id),
+        ValidationPhase::Graph,
+        LintCode::InvalidAudioChannel,
+        "Invalid audio channel",
+    );
+    let action_issue = LintIssue::error(
+        Some(node_id),
+        ValidationPhase::Graph,
+        LintCode::InvalidAudioAction,
+        "Invalid audio action",
+    );
+
+    assert!(apply_fix(&mut graph, &channel_issue, "audio_normalize_channel").unwrap());
+    assert!(apply_fix(&mut graph, &action_issue, "audio_normalize_action").unwrap());
+    let Some(StoryNode::AudioAction {
+        channel, action, ..
+    }) = graph.get_node(node_id)
+    else {
+        panic!("expected audio action node");
+    };
+    assert_eq!(channel, "bgm");
+    assert_eq!(action, "play");
+}
+
+#[test]
+fn audio_unknown_values_do_not_receive_fake_normalization_fixes() {
+    let mut graph = NodeGraph::new();
+    let node_id = graph.add_node(
+        StoryNode::AudioAction {
+            channel: "ambience".to_string(),
+            action: "launch".to_string(),
+            asset: Some("audio/theme.ogg".to_string()),
+            volume: None,
+            fade_duration_ms: None,
+            loop_playback: None,
+        },
+        p(0.0, 0.0),
+    );
+
+    let channel_issue = LintIssue::error(
+        Some(node_id),
+        ValidationPhase::Graph,
+        LintCode::InvalidAudioChannel,
+        "Invalid audio channel",
+    );
+    let action_issue = LintIssue::error(
+        Some(node_id),
+        ValidationPhase::Graph,
+        LintCode::InvalidAudioAction,
+        "Invalid audio action",
+    );
+
+    assert!(suggest_fixes(&channel_issue, &graph)
+        .iter()
+        .all(|fix| fix.fix_id != "audio_normalize_channel"));
+    assert!(suggest_fixes(&action_issue, &graph)
+        .iter()
+        .all(|fix| fix.fix_id != "audio_normalize_action"));
+    assert!(apply_fix(&mut graph, &channel_issue, "audio_normalize_channel").is_err());
+    assert!(apply_fix(&mut graph, &action_issue, "audio_normalize_action").is_err());
+}
+
+#[test]
 fn audio_asset_empty_on_scene_uses_scene_music_fix() {
     let mut graph = NodeGraph::new();
     let node_id = graph.add_node(

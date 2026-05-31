@@ -36,6 +36,25 @@ fn create_escape_symlink(link: &Path, target: &Path) -> bool {
     }
 }
 
+fn create_escape_dir_symlink(link: &Path, target: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target, link).is_ok()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = link;
+        let _ = target;
+        false
+    }
+}
+
 fn build_project_fixture() -> (TempDir, std::path::PathBuf) {
     let tmp = TempDir::new().expect("temp dir");
     let root = tmp.path().join("project");
@@ -420,6 +439,51 @@ fn export_bundle_builds_expected_layout_and_manifest() {
 }
 
 #[test]
+fn export_bundle_manifest_matches_runtime_asset_path_for_root_relative_assets() {
+    let tmp = TempDir::new().expect("temp dir");
+    let root = tmp.path().join("project");
+    fs::create_dir_all(root.join("bg")).expect("bg dir");
+    ProjectManifest::new("root-relative-asset-fixture", "qa")
+        .save(&root.join("project.vnm"))
+        .expect("manifest save");
+    let script = ScriptRaw::new(
+        vec![EventRaw::Scene(SceneUpdateRaw {
+            background: Some("bg/room.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        })],
+        BTreeMap::from([("start".to_string(), 0)]),
+    );
+    fs::write(root.join("main.json"), script.to_json().expect("script")).expect("script");
+    fs::write(root.join("bg/room.png"), [1u8, 2, 3, 4]).expect("asset");
+
+    let out = root.join("dist_root_relative_asset");
+    export_bundle(ExportBundleSpec {
+        project_root: root.clone(),
+        output_root: out.clone(),
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: None,
+        integrity: BundleIntegrity::None,
+        output_layout_version: 1,
+        hmac_key: None,
+    })
+    .expect("bundle export");
+
+    assert!(out.join("assets/bg/room.png").is_file());
+    let manifest = read_json(&out.join("meta/assets_manifest.json"));
+    let assets = manifest["assets"].as_object().expect("assets manifest");
+    assert!(
+        assets.contains_key("assets/bg/room.png"),
+        "manifest must use the runtime-visible bundle path: {assets:?}"
+    );
+    assert!(
+        !assets.contains_key("bg/room.png"),
+        "manifest must not keep the source-only project path"
+    );
+}
+
+#[test]
 fn export_bundle_rejects_case_sensitive_asset_collisions() {
     let tmp = TempDir::new().expect("temp dir");
     let root = tmp.path().join("project");
@@ -472,6 +536,60 @@ fn export_bundle_rejects_case_sensitive_asset_collisions() {
         !out.exists(),
         "failed export must not publish a partial final bundle"
     );
+}
+
+#[test]
+fn export_plan_and_bundle_reject_exact_asset_destination_collisions() {
+    let tmp = TempDir::new().expect("temp dir");
+    let root = tmp.path().join("project");
+    fs::create_dir_all(root.join("assets/bg")).expect("assets dir");
+    fs::create_dir_all(root.join("bg")).expect("root bg dir");
+    ProjectManifest::new("destination-collision-fixture", "qa")
+        .save(&root.join("project.vnm"))
+        .expect("manifest save");
+    fs::write(root.join("bg/room.png"), [1u8, 2, 3]).expect("root-relative asset");
+    fs::write(root.join("assets/bg/room.png"), [4u8, 5, 6]).expect("assets asset");
+    let script = ScriptRaw::new(
+        vec![EventRaw::Scene(SceneUpdateRaw {
+            background: Some("bg/room.png".to_string()),
+            music: None,
+            characters: vec![CharacterPlacementRaw {
+                name: "Ava".to_string(),
+                expression: Some("assets/bg/room.png".to_string()),
+                position: None,
+                x: None,
+                y: None,
+                scale: None,
+            }],
+        })],
+        BTreeMap::from([("start".to_string(), 0)]),
+    );
+    fs::write(
+        root.join("main.json"),
+        script.to_json().expect("script json"),
+    )
+    .expect("script");
+    let spec = ExportBundleSpec {
+        project_root: root.clone(),
+        output_root: root.join("dist_destination_collision"),
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: None,
+        integrity: BundleIntegrity::None,
+        output_layout_version: 1,
+        hmac_key: None,
+    };
+
+    let plan = build_export_plan(&spec).expect("plan");
+    assert!(
+        has_diagnostic_code(&plan.diagnostics, "export.asset.destination_collision"),
+        "plan must surface exact destination collisions: {:?}",
+        plan.diagnostics
+    );
+
+    let err = export_bundle(spec).expect_err("destination collision must fail");
+    let message = err.to_string();
+    assert!(message.contains("asset destination collision"), "{message}");
 }
 
 #[test]
@@ -839,6 +957,96 @@ fn export_bundle_rejects_entry_script_symlink_escape() {
     .expect_err("entry symlink escape must fail");
 
     assert!(format!("{err}").contains("escapes project root"));
+}
+
+#[test]
+fn export_plan_and_bundle_reject_project_manifest_symlink_escape() {
+    let (tmp, project_root) = build_project_fixture();
+    let escaped_manifest = tmp.path().join("outside_project.vnm");
+    fs::write(
+        &escaped_manifest,
+        r#"
+manifest_schema_version = 1
+
+[project]
+name = "outside"
+
+[settings]
+entry_point = "main.json"
+default_language = "en"
+"#,
+    )
+    .expect("write escaped manifest");
+    let manifest_path = project_root.join("project.vnm");
+    fs::remove_file(&manifest_path).expect("remove normal manifest");
+    if !create_escape_symlink(&manifest_path, &escaped_manifest) {
+        eprintln!("symlink creation not supported on this platform");
+        return;
+    }
+
+    let spec = ExportBundleSpec {
+        project_root: project_root.clone(),
+        output_root: project_root.join("dist"),
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: None,
+        integrity: BundleIntegrity::None,
+        output_layout_version: 1,
+        hmac_key: None,
+    };
+
+    let plan_err = build_export_plan(&spec).expect_err("plan must reject manifest symlink escape");
+    assert!(format!("{plan_err}").contains("regular file"));
+
+    let export_err =
+        export_bundle(spec).expect_err("bundle export must reject manifest symlink escape");
+    assert!(format!("{export_err}").contains("regular file"));
+}
+
+#[test]
+fn export_plan_and_bundle_reject_output_root_directory_symlink_escape() {
+    let (tmp, project_root) = build_project_fixture();
+    let outside_output = tmp.path().join("outside_dist");
+    fs::create_dir_all(&outside_output).expect("outside output");
+    fs::write(outside_output.join("sentinel.txt"), b"keep").expect("sentinel");
+    let output_link = project_root.join("dist_link");
+    if !create_escape_dir_symlink(&output_link, &outside_output) {
+        eprintln!("directory symlink creation not supported on this platform");
+        return;
+    }
+
+    let spec = ExportBundleSpec {
+        project_root: project_root.clone(),
+        output_root: output_link.clone(),
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: None,
+        integrity: BundleIntegrity::None,
+        output_layout_version: 1,
+        hmac_key: None,
+    };
+
+    let plan_err = build_export_plan(&spec).expect_err("plan must reject output symlink");
+    assert!(format!("{plan_err}").contains("output_root is not a directory"));
+
+    let export_err = export_bundle(spec).expect_err("bundle export must reject output symlink");
+    assert!(format!("{export_err}").contains("output_root is not a directory"));
+    assert_eq!(
+        fs::read(outside_output.join("sentinel.txt")).expect("sentinel untouched"),
+        b"keep",
+        "export must not publish into the symlink target"
+    );
+    assert!(
+        !outside_output.join("scripts").exists(),
+        "export must not materialize bundle files in the symlink target"
+    );
+    assert!(
+        fs::symlink_metadata(&output_link)
+            .expect("output link")
+            .file_type()
+            .is_symlink(),
+        "rejected output link should remain a symlink"
+    );
 }
 
 #[test]

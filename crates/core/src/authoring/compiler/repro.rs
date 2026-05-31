@@ -13,8 +13,24 @@ pub fn check_preview_runtime_parity(
 ) -> Vec<LintIssue> {
     let mut issues = Vec::new();
     let runtime_steps = &report.steps;
-    let raw_steps = simulate_raw_sequence(script, report.max_steps, policy);
+    let raw_report = simulate_raw_sequence(script, report.max_steps, policy);
+    let raw_steps = &raw_report.steps;
     let route_label = policy.label();
+    for error in &raw_report.errors {
+        issues.push(
+            LintIssue::error(
+                None,
+                ValidationPhase::DryRun,
+                LintCode::DryRunParityMismatch,
+                format!(
+                    "Parity raw simulation failed [route={}]: {}",
+                    route_label.as_str(),
+                    error
+                ),
+            )
+            .with_event_ip(raw_report.failing_event_ip),
+        );
+    }
     let overlap = runtime_steps.len().min(raw_steps.len());
 
     for idx in 0..overlap {

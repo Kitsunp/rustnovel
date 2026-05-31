@@ -54,7 +54,7 @@ fn diagnostic_catalog_is_specific_and_docs_refs_exist() {
 }
 
 #[test]
-fn dry_run_reports_extcall_as_simulated_capability() {
+fn dry_run_reports_extcall_as_host_required_blocker() {
     let mut graph = NodeGraph::new();
     let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
     let ext = graph.add_node(
@@ -71,19 +71,24 @@ fn dry_run_reports_extcall_as_simulated_capability() {
     let result = compiler::compile_authoring_graph(&graph, None);
 
     assert!(result.issues.iter().any(|issue| {
-        issue.code == LintCode::DryRunExtCallSimulated
+        issue.code == LintCode::DryRunExtCallBlocked
             && issue.severity == LintSeverity::Warning
             && issue.event_ip == Some(0)
     }));
     let report = result.dry_run_report.expect("dry-run report");
+    assert_eq!(
+        report.stop_reason,
+        visual_novel_engine::authoring::compiler::DryRunStopReason::ExternalCallBlocked
+    );
     assert!(report.steps.iter().any(|step| {
         step.event_kind == "ext_call"
-            && step.simulation_note.as_deref() == Some("external_call_simulated")
+            && step.execution_note.as_deref() == Some("external_call_requires_host:plugin.fade")
+            && step.simulation_note.is_none()
     }));
 }
 
 #[test]
-fn extcall_simulation_fidelity_contract() {
+fn extcall_host_required_fidelity_contract() {
     let mut graph = NodeGraph::new();
     let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
     let ext_node = StoryNode::Generic(EventRaw::ExtCall {
@@ -98,7 +103,7 @@ fn extcall_simulation_fidelity_contract() {
     let runtime_contract = crate::runtime::contract_for_authoring_node(&ext_node);
     assert_eq!(
         runtime_contract.fidelity,
-        crate::runtime::FidelityClass::HeadlessSimulated
+        crate::runtime::FidelityClass::HostRequired
     );
     assert!(runtime_contract.runtime_supported);
     assert!(!runtime_contract.export_supported);
@@ -112,12 +117,13 @@ fn extcall_simulation_fidelity_contract() {
         .expect("extcall step");
     assert_eq!(
         dry_step.execution_fidelity,
-        crate::runtime::FidelityClass::HeadlessSimulated
+        crate::runtime::FidelityClass::HostRequired
     );
     assert_eq!(
-        dry_step.simulation_note.as_deref(),
-        Some("external_call_simulated")
+        dry_step.execution_note.as_deref(),
+        Some("external_call_requires_host:plugin.fade")
     );
+    assert!(dry_step.simulation_note.is_none());
 
     let repro = crate::ReproCase::new("extcall fidelity", result.script);
     let repro_report = crate::run_repro_case(&repro);
@@ -128,12 +134,13 @@ fn extcall_simulation_fidelity_contract() {
         .expect("repro extcall step");
     assert_eq!(
         repro_step.execution_fidelity,
-        crate::runtime::FidelityClass::HeadlessSimulated
+        crate::runtime::FidelityClass::HostRequired
     );
     assert_eq!(
-        repro_step.simulation_note.as_deref(),
-        Some("external_call_simulated")
+        repro_step.execution_note.as_deref(),
+        Some("external_call_requires_host:plugin.fade")
     );
+    assert!(repro_step.simulation_note.is_none());
 }
 
 #[test]
@@ -158,8 +165,8 @@ fn verification_run_tracks_resolved_and_introduced_diagnostics() {
     let after = vec![LintIssue::warning(
         Some(3),
         ValidationPhase::DryRun,
-        LintCode::DryRunExtCallSimulated,
-        "simulated extcall",
+        LintCode::DryRunExtCallBlocked,
+        "host-required extcall",
     )];
 
     let run = VerificationRun::from_diagnostics("op-1", "contract", &fingerprint, &before, &after);

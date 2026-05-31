@@ -1,7 +1,14 @@
-//! Execution contract matrix shared by editor preview, runtime, and export.
+//! Execution contract adapter shared by editor preview, runtime, and export.
+//!
+//! The source of truth for event/node behavior metadata lives in
+//! `event_behavior`. This module preserves the existing public execution
+//! contract API while projecting that broader contract into the legacy shape.
 
 use crate::authoring::StoryNode;
 use crate::event::EventRaw;
+use crate::event_behavior::{
+    event_spec_for_raw, node_spec_for_authoring_node, EventSpec, NodeKind, NodeSpec,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -9,6 +16,7 @@ use serde::{Deserialize, Serialize};
 pub enum FidelityClass {
     RuntimeReal,
     HeadlessSimulated,
+    HostRequired,
     PreviewOnly,
     FallbackDegraded,
 }
@@ -18,6 +26,7 @@ impl FidelityClass {
         match self {
             Self::RuntimeReal => "runtime_real",
             Self::HeadlessSimulated => "headless_simulated",
+            Self::HostRequired => "host_required",
             Self::PreviewOnly => "preview_only",
             Self::FallbackDegraded => "fallback_degraded",
         }
@@ -34,89 +43,23 @@ pub struct EventExecutionContract {
     pub fidelity: FidelityClass,
 }
 
-const fn runtime_real(event_name: &'static str) -> EventExecutionContract {
-    EventExecutionContract {
-        event_name,
-        editor_supported: true,
-        preview_supported: true,
-        runtime_supported: true,
-        export_supported: true,
-        fidelity: FidelityClass::RuntimeReal,
-    }
-}
-
-const START_MARKER: EventExecutionContract = EventExecutionContract {
-    event_name: "Start",
-    editor_supported: true,
-    preview_supported: true,
-    runtime_supported: false,
-    export_supported: false,
-    fidelity: FidelityClass::PreviewOnly,
-};
-
-const END_MARKER: EventExecutionContract = EventExecutionContract {
-    event_name: "End",
-    editor_supported: true,
-    preview_supported: true,
-    runtime_supported: false,
-    export_supported: false,
-    fidelity: FidelityClass::PreviewOnly,
-};
-
-const DIALOGUE: EventExecutionContract = runtime_real("Dialogue");
-const CHOICE: EventExecutionContract = runtime_real("Choice");
-const SCENE: EventExecutionContract = runtime_real("Scene");
-const JUMP: EventExecutionContract = runtime_real("Jump");
-const SET_VAR: EventExecutionContract = runtime_real("SetVariable");
-const SET_FLAG: EventExecutionContract = runtime_real("SetFlag");
-const SCENE_PATCH: EventExecutionContract = runtime_real("ScenePatch");
-const JUMP_IF: EventExecutionContract = runtime_real("JumpIf");
-const AUDIO_ACTION: EventExecutionContract = runtime_real("AudioAction");
-const TRANSITION: EventExecutionContract = runtime_real("Transition");
-const CHARACTER_PLACEMENT: EventExecutionContract = runtime_real("SetCharacterPosition");
-const EXT_CALL: EventExecutionContract = EventExecutionContract {
-    event_name: "ExtCall",
-    editor_supported: true,
-    preview_supported: true,
-    runtime_supported: true,
-    export_supported: false,
-    fidelity: FidelityClass::HeadlessSimulated,
-};
-const SUBGRAPH_CALL: EventExecutionContract = EventExecutionContract {
-    event_name: "SubgraphCall",
-    editor_supported: true,
-    preview_supported: true,
-    runtime_supported: false,
-    export_supported: true,
-    fidelity: FidelityClass::PreviewOnly,
-};
-
-const GENERIC_EVENT: EventExecutionContract = EventExecutionContract {
-    event_name: "Generic/EventRaw",
-    editor_supported: true,
-    preview_supported: true,
-    runtime_supported: false,
-    export_supported: false,
-    fidelity: FidelityClass::FallbackDegraded,
-};
-
 const CONTRACT_MATRIX: [EventExecutionContract; 16] = [
-    DIALOGUE,
-    CHOICE,
-    SCENE,
-    JUMP,
-    SET_VAR,
-    SET_FLAG,
-    SCENE_PATCH,
-    JUMP_IF,
-    AUDIO_ACTION,
-    TRANSITION,
-    CHARACTER_PLACEMENT,
-    EXT_CALL,
-    SUBGRAPH_CALL,
-    GENERIC_EVENT,
-    START_MARKER,
-    END_MARKER,
+    contract_from_node_spec(NodeKind::Dialogue.spec()),
+    contract_from_node_spec(NodeKind::Choice.spec()),
+    contract_from_node_spec(NodeKind::Scene.spec()),
+    contract_from_node_spec(NodeKind::Jump.spec()),
+    contract_from_node_spec(NodeKind::SetVariable.spec()),
+    contract_from_node_spec(NodeKind::SetFlag.spec()),
+    contract_from_node_spec(NodeKind::ScenePatch.spec()),
+    contract_from_node_spec(NodeKind::JumpIf.spec()),
+    contract_from_node_spec(NodeKind::AudioAction.spec()),
+    contract_from_node_spec(NodeKind::Transition.spec()),
+    contract_from_node_spec(NodeKind::CharacterPlacement.spec()),
+    contract_from_node_spec(NodeKind::ExtCall.spec()),
+    contract_from_node_spec(NodeKind::SubgraphCall.spec()),
+    contract_from_node_spec(NodeKind::GenericEvent.spec()),
+    contract_from_node_spec(NodeKind::Start.spec()),
+    contract_from_node_spec(NodeKind::End.spec()),
 ];
 
 pub fn contract_matrix() -> &'static [EventExecutionContract] {
@@ -124,49 +67,15 @@ pub fn contract_matrix() -> &'static [EventExecutionContract] {
 }
 
 pub fn contract_for_authoring_node(node: &StoryNode) -> EventExecutionContract {
-    match node {
-        StoryNode::Dialogue { .. } => DIALOGUE,
-        StoryNode::Choice { .. } => CHOICE,
-        StoryNode::Scene { .. } => SCENE,
-        StoryNode::Jump { .. } => JUMP,
-        StoryNode::SetVariable { .. } => SET_VAR,
-        StoryNode::SetFlag { .. } => SET_FLAG,
-        StoryNode::ScenePatch(_) => SCENE_PATCH,
-        StoryNode::JumpIf { .. } => JUMP_IF,
-        StoryNode::Start => START_MARKER,
-        StoryNode::End => END_MARKER,
-        StoryNode::AudioAction { .. } => AUDIO_ACTION,
-        StoryNode::Transition { .. } => TRANSITION,
-        StoryNode::CharacterPlacement { .. } => CHARACTER_PLACEMENT,
-        StoryNode::SubgraphCall { .. } => SUBGRAPH_CALL,
-        StoryNode::Generic(EventRaw::ExtCall { .. }) => EXT_CALL,
-        StoryNode::Generic(EventRaw::SetFlag { .. }) => SET_FLAG,
-        StoryNode::Generic(_) => GENERIC_EVENT,
-    }
+    contract_from_node_spec(*node_spec_for_authoring_node(node))
 }
 
 pub fn contract_for_event_raw(event: &EventRaw) -> EventExecutionContract {
-    match event {
-        EventRaw::Dialogue(_) => DIALOGUE,
-        EventRaw::Choice(_) => CHOICE,
-        EventRaw::Scene(_) => SCENE,
-        EventRaw::Jump { .. } => JUMP,
-        EventRaw::SetFlag { .. } => SET_FLAG,
-        EventRaw::SetVar { .. } => SET_VAR,
-        EventRaw::JumpIf { .. } => JUMP_IF,
-        EventRaw::Patch(_) => SCENE_PATCH,
-        EventRaw::ExtCall { .. } => EXT_CALL,
-        EventRaw::AudioAction(_) => AUDIO_ACTION,
-        EventRaw::Transition(_) => TRANSITION,
-        EventRaw::SetCharacterPosition(_) => CHARACTER_PLACEMENT,
-    }
+    contract_from_event_spec(*event_spec_for_raw(event))
 }
 
 pub fn headless_fidelity_for_event_raw(event: &EventRaw) -> FidelityClass {
-    match event {
-        EventRaw::ExtCall { .. } => FidelityClass::HeadlessSimulated,
-        _ => contract_for_event_raw(event).fidelity,
-    }
+    event_spec_for_raw(event).capabilities.fidelity
 }
 
 pub fn is_preview_only_authoring_node(node: &StoryNode) -> bool {
@@ -174,4 +83,26 @@ pub fn is_preview_only_authoring_node(node: &StoryNode) -> bool {
         contract_for_authoring_node(node).fidelity,
         FidelityClass::PreviewOnly
     )
+}
+
+const fn contract_from_event_spec(spec: EventSpec) -> EventExecutionContract {
+    EventExecutionContract {
+        event_name: spec.contract_name,
+        editor_supported: spec.capabilities.editor_supported,
+        preview_supported: spec.capabilities.preview_supported,
+        runtime_supported: spec.capabilities.runtime_supported,
+        export_supported: spec.capabilities.export_supported,
+        fidelity: spec.capabilities.fidelity,
+    }
+}
+
+const fn contract_from_node_spec(spec: NodeSpec) -> EventExecutionContract {
+    EventExecutionContract {
+        event_name: spec.contract_name,
+        editor_supported: spec.capabilities.editor_supported,
+        preview_supported: spec.capabilities.preview_supported,
+        runtime_supported: spec.capabilities.runtime_supported,
+        export_supported: spec.capabilities.export_supported,
+        fidelity: spec.capabilities.fidelity,
+    }
 }

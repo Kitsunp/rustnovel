@@ -12,6 +12,7 @@ create_exception!(visual_novel_engine, VnValidationError, VnError);
 create_exception!(visual_novel_engine, VnSecurityPolicyError, VnError);
 create_exception!(visual_novel_engine, VnResourceLimitError, VnError);
 create_exception!(visual_novel_engine, VnEndOfScriptError, VnError);
+create_exception!(visual_novel_engine, VnExternalCallError, VnError);
 
 pub fn register_error_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = m.py();
@@ -26,6 +27,7 @@ pub fn register_error_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
         py.get_type::<VnResourceLimitError>(),
     )?;
     m.add("VnEndOfScriptError", py.get_type::<VnEndOfScriptError>())?;
+    m.add("VnExternalCallError", py.get_type::<VnExternalCallError>())?;
     Ok(())
 }
 
@@ -38,6 +40,9 @@ pub fn vn_error_to_py(err: CoreVnError) -> PyErr {
         CoreVnError::SecurityPolicy(_) => VnErrorKind::SecurityPolicy,
         CoreVnError::ResourceLimit(_) => VnErrorKind::ResourceLimit,
         CoreVnError::EndOfScript => VnErrorKind::EndOfScript,
+        CoreVnError::ExternalCallPending { .. } | CoreVnError::ExternalCallFailed { .. } => {
+            VnErrorKind::ExternalCall
+        }
     };
     let report = miette::Report::new(err);
     let message = report.to_string();
@@ -46,6 +51,7 @@ pub fn vn_error_to_py(err: CoreVnError) -> PyErr {
         VnErrorKind::SecurityPolicy => VnSecurityPolicyError::new_err(message),
         VnErrorKind::ResourceLimit => VnResourceLimitError::new_err(message),
         VnErrorKind::EndOfScript => VnEndOfScriptError::new_err(message),
+        VnErrorKind::ExternalCall => VnExternalCallError::new_err(message),
     }
 }
 
@@ -55,6 +61,7 @@ enum VnErrorKind {
     SecurityPolicy,
     ResourceLimit,
     EndOfScript,
+    ExternalCall,
 }
 
 #[pyclass(name = "ResourceConfig")]

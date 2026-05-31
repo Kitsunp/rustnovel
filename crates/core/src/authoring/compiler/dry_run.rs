@@ -65,15 +65,46 @@ pub fn run_dry_run(mut engine: Engine, policy: &ChoicePolicy, max_steps: usize) 
                 break (DryRunStopReason::RuntimeError, stop_message);
             }
         };
-        if matches!(event, EventCompiled::ExtCall { .. }) {
+        if let EventCompiled::ExtCall { command, .. } = &event {
+            let execution_note = format!("external_call_requires_host:{command}");
             issues.push(
                 LintIssue::warning(
                     Some(ip),
                     ValidationPhase::DryRun,
-                    LintCode::DryRunExtCallSimulated,
-                    format!("Dry Run simulated external call at ip {ip}"),
+                    LintCode::DryRunExtCallBlocked,
+                    format!("Dry Run blocked at external call '{command}' at ip {ip}"),
                 )
                 .with_event_ip(Some(ip)),
+            );
+            traces.push(DryRunStepTrace {
+                step: steps,
+                event_ip: ip,
+                event_kind: event_kind_compiled(&event).to_string(),
+                event_signature: compiled_event_signature(&event),
+                execution_fidelity: FidelityClass::HostRequired,
+                execution_note: Some(execution_note),
+                simulation_note: None,
+                visual_background: engine
+                    .state()
+                    .visual
+                    .background
+                    .as_ref()
+                    .map(|value| value.as_ref().to_string()),
+                visual_music: engine
+                    .state()
+                    .visual
+                    .music
+                    .as_ref()
+                    .map(|value| value.as_ref().to_string()),
+                character_count: engine.state().visual.characters.len(),
+            });
+            failing_event_ip = Some(ip);
+            steps += 1;
+            break (
+                DryRunStopReason::ExternalCallBlocked,
+                format!(
+                    "Dry Run blocked at external call '{command}' at ip {ip}; host completion is required"
+                ),
             );
         }
 
@@ -82,13 +113,9 @@ pub fn run_dry_run(mut engine: Engine, policy: &ChoicePolicy, max_steps: usize) 
             event_ip: ip,
             event_kind: event_kind_compiled(&event).to_string(),
             event_signature: compiled_event_signature(&event),
-            execution_fidelity: if matches!(event, EventCompiled::ExtCall { .. }) {
-                FidelityClass::HeadlessSimulated
-            } else {
-                FidelityClass::RuntimeReal
-            },
-            simulation_note: matches!(event, EventCompiled::ExtCall { .. })
-                .then(|| "external_call_simulated".to_string()),
+            execution_fidelity: FidelityClass::RuntimeReal,
+            execution_note: None,
+            simulation_note: None,
             visual_background: engine
                 .state()
                 .visual
@@ -118,7 +145,6 @@ pub fn run_dry_run(mut engine: Engine, policy: &ChoicePolicy, max_steps: usize) 
                     }
                 }
             }
-            EventCompiled::ExtCall { .. } => engine.resume(),
             _ => engine.step().map(|_| ()),
         };
 

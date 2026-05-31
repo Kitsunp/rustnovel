@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-use crate::event::{CharacterPatchRaw, CharacterPlacementRaw, EventRaw, ScenePatchRaw};
+use crate::authoring::StoryNode;
+use crate::event::{CharacterPlacementRaw, EventRaw};
+use crate::event_behavior::{event_asset_refs_for_raw, node_asset_refs_for_authoring_node};
 use crate::script::ScriptRaw;
 
 #[derive(Default)]
@@ -40,35 +42,21 @@ pub(crate) fn collect_script_asset_refs(script: &ScriptRaw) -> Vec<String> {
 }
 
 pub(crate) fn collect_event_asset_refs(event: &EventRaw, refs: &mut AssetRefSet) {
-    match event {
-        EventRaw::Scene(scene) => {
-            refs.push_optional(&scene.background);
-            refs.push_optional(&scene.music);
-            collect_character_assets(&scene.characters, refs);
-        }
-        EventRaw::Patch(patch) => collect_scene_patch_asset_refs(patch, refs),
-        EventRaw::AudioAction(action) => refs.push_optional(&action.asset),
-        _ => {}
+    for asset_ref in event_asset_refs_for_raw(event) {
+        refs.push(&asset_ref);
     }
 }
 
-pub(crate) fn collect_scene_patch_asset_refs(patch: &ScenePatchRaw, refs: &mut AssetRefSet) {
-    refs.push_optional(&patch.background);
-    refs.push_optional(&patch.music);
-    collect_character_assets(&patch.add, refs);
-    collect_character_patch_assets(&patch.update, refs);
+pub(crate) fn collect_node_asset_refs(node: &StoryNode, refs: &mut AssetRefSet) {
+    for asset_ref in node_asset_refs_for_authoring_node(node) {
+        refs.push(&asset_ref);
+    }
 }
 
 pub(crate) fn collect_character_assets(
     characters: &[CharacterPlacementRaw],
     refs: &mut AssetRefSet,
 ) {
-    for character in characters {
-        refs.push_optional(&character.expression);
-    }
-}
-
-fn collect_character_patch_assets(characters: &[CharacterPatchRaw], refs: &mut AssetRefSet) {
     for character in characters {
         refs.push_optional(&character.expression);
     }

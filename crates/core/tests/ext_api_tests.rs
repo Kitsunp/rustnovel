@@ -3,13 +3,14 @@ use std::collections::BTreeMap;
 use visual_novel_engine::{
     runtime::{
         AudioActionRaw, CharacterPatchRaw, CharacterPlacementRaw, ChoiceOptionRaw, ChoiceRaw,
-        Engine, EventRaw, PrefetchMode, ScenePatchRaw, SceneUpdateRaw, ScriptRaw,
+        Engine, EventRaw, ExternalCallOutcome, PrefetchMode, ScenePatchRaw, SceneUpdateRaw,
+        ScriptRaw,
     },
     AssetId, SecurityPolicy,
 };
 
 #[test]
-fn ext_call_requires_resume_to_advance() {
+fn ext_call_requires_explicit_host_completion_to_advance() {
     let events = vec![
         EventRaw::ExtCall {
             command: "minigame_start".to_string(),
@@ -41,7 +42,24 @@ fn ext_call_requires_resume_to_advance() {
         visual_novel_engine::runtime::EventCompiled::ExtCall { .. }
     ));
 
-    engine.resume().unwrap();
+    let err = engine
+        .resume()
+        .expect_err("resume must not silently complete external calls");
+    assert!(err.to_string().contains("requires host completion"));
+
+    let pending = engine
+        .pending_external_call()
+        .unwrap()
+        .expect("external call should be pending");
+    assert_eq!(pending.event_ip, 0);
+    assert_eq!(pending.command, "minigame_start");
+    assert_eq!(pending.args, vec!["poker".to_string()]);
+    engine
+        .complete_external_call(ExternalCallOutcome::succeeded(
+            pending.event_ip,
+            pending.command,
+        ))
+        .unwrap();
     let event = engine.current_event().unwrap();
     assert!(matches!(
         event,

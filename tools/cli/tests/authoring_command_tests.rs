@@ -364,6 +364,38 @@ fn compile_and_trace_accept_authoring_document() {
 }
 
 #[test]
+fn compile_json_reports_actual_bytes_written() {
+    let (_tmp, path) = write_authoring_document();
+    let compiled_path = path.with_extension("vnc");
+
+    let compile = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("--json")
+        .arg("compile")
+        .arg(path.as_os_str())
+        .arg("--output")
+        .arg(compiled_path.as_os_str())
+        .output()
+        .expect("run compile");
+    assert!(
+        compile.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&compile.stdout),
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&compile.stdout).expect("compile envelope");
+    let bytes_written = envelope["data"]["bytes_written"]
+        .as_u64()
+        .expect("bytes_written must be numeric");
+    let actual_len = fs::metadata(&compiled_path)
+        .expect("compiled output metadata")
+        .len();
+    assert!(actual_len > 0, "compiled output should not be empty");
+    assert_eq!(bytes_written, actual_len);
+}
+
+#[test]
 fn corrupt_authoring_document_does_not_fall_back_to_legacy_loader() {
     let tmp = TempDir::new().expect("temp dir");
     let path = tmp.path().join("broken.vnauthoring");
@@ -633,6 +665,34 @@ fn cli_global_json_route_theme_and_layout_contracts() {
     let layout_json: serde_json::Value =
         serde_json::from_slice(&layout.stdout).expect("layout envelope");
     assert_eq!(layout_json["data"]["breakpoint"], "normal");
+}
+
+#[test]
+fn read_model_reports_save_parse_failure_when_script_fallback_also_fails() {
+    let tmp = TempDir::new().expect("temp dir");
+    let input = tmp.path().join("corrupt_save.bin");
+    fs::write(&input, [0xff, 0xfe, 0xfd]).expect("corrupt save");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .arg("--json")
+        .arg("read-model")
+        .arg(input.as_os_str())
+        .output()
+        .expect("read-model corrupt save");
+
+    assert!(!output.status.success());
+    assert!(
+        output.stderr.is_empty(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("error envelope");
+    let error = envelope["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("load script or save") && error.contains("save attempt failed"),
+        "read-model must report the failed save parse before the script fallback: {error}"
+    );
 }
 
 #[test]

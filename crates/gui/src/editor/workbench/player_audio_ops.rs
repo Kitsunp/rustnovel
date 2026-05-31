@@ -70,20 +70,26 @@ impl EditorWorkbench {
                         "play_bgm path={} loop={} volume={:?}",
                         playback_path, r#loop, output_volume
                     ));
-                    if let Some(audio_backend) = self.player_audio_backend.as_mut() {
+                    let result = if let Some(audio_backend) = self.player_audio_backend.as_mut() {
                         audio_backend.play_music_with_options(
                             playback_path.as_str(),
                             r#loop,
                             output_volume,
-                        );
-                    }
+                        )
+                    } else {
+                        Ok(())
+                    };
+                    self.record_player_audio_result(result);
                 }
                 visual_novel_engine::runtime::AudioCommand::StopBgm { fade_out } => {
                     self.player_state.last_audio_event =
                         Some(format!("stop_bgm fade_out_ms={}", fade_out.as_millis()));
-                    if let Some(audio_backend) = self.player_audio_backend.as_mut() {
-                        audio_backend.stop_music_with_fade(Some(fade_out));
-                    }
+                    let result = if let Some(audio_backend) = self.player_audio_backend.as_mut() {
+                        audio_backend.stop_music_with_fade(Some(fade_out))
+                    } else {
+                        Ok(())
+                    };
+                    self.record_player_audio_result(result);
                 }
                 visual_novel_engine::runtime::AudioCommand::PlaySfx { path, volume, .. } => {
                     let playback_path = self.resolve_preview_audio_path("SFX", path.as_ref());
@@ -92,15 +98,21 @@ impl EditorWorkbench {
                         "play_sfx path={} volume={:?}",
                         playback_path, output_volume
                     ));
-                    if let Some(audio_backend) = self.player_audio_backend.as_mut() {
-                        audio_backend.play_sfx_with_volume(playback_path.as_str(), output_volume);
-                    }
+                    let result = if let Some(audio_backend) = self.player_audio_backend.as_mut() {
+                        audio_backend.play_sfx_with_volume(playback_path.as_str(), output_volume)
+                    } else {
+                        Ok(())
+                    };
+                    self.record_player_audio_result(result);
                 }
                 visual_novel_engine::runtime::AudioCommand::StopSfx => {
                     self.player_state.last_audio_event = Some("stop_sfx".to_string());
-                    if let Some(audio_backend) = self.player_audio_backend.as_mut() {
-                        audio_backend.stop_sfx();
-                    }
+                    let result = if let Some(audio_backend) = self.player_audio_backend.as_mut() {
+                        audio_backend.stop_sfx()
+                    } else {
+                        Ok(())
+                    };
+                    self.record_player_audio_result(result);
                 }
                 visual_novel_engine::runtime::AudioCommand::PlayVoice { path, volume, .. } => {
                     let playback_path = self.resolve_preview_audio_path("Voice", path.as_ref());
@@ -109,15 +121,21 @@ impl EditorWorkbench {
                         "play_voice path={} volume={:?}",
                         playback_path, output_volume
                     ));
-                    if let Some(audio_backend) = self.player_audio_backend.as_mut() {
-                        audio_backend.play_voice_with_volume(playback_path.as_str(), output_volume);
-                    }
+                    let result = if let Some(audio_backend) = self.player_audio_backend.as_mut() {
+                        audio_backend.play_voice_with_volume(playback_path.as_str(), output_volume)
+                    } else {
+                        Ok(())
+                    };
+                    self.record_player_audio_result(result);
                 }
                 visual_novel_engine::runtime::AudioCommand::StopVoice => {
                     self.player_state.last_audio_event = Some("stop_voice".to_string());
-                    if let Some(audio_backend) = self.player_audio_backend.as_mut() {
-                        audio_backend.stop_voice();
-                    }
+                    let result = if let Some(audio_backend) = self.player_audio_backend.as_mut() {
+                        audio_backend.stop_voice()
+                    } else {
+                        Ok(())
+                    };
+                    self.record_player_audio_result(result);
                 }
             }
         }
@@ -207,14 +225,17 @@ impl EditorWorkbench {
             output_volume,
             start_at.as_millis()
         ));
-        if let Some(audio_backend) = self.player_audio_backend.as_mut() {
+        let result = if let Some(audio_backend) = self.player_audio_backend.as_mut() {
             audio_backend.play_music_with_options_at(
                 playback_path.as_str(),
                 loop_playback,
                 output_volume,
                 start_at,
-            );
-        }
+            )
+        } else {
+            Ok(())
+        };
+        self.record_player_audio_result(result);
     }
 
     pub fn stop_editor_audio_preview(&mut self, channel: &str) {
@@ -229,6 +250,13 @@ impl EditorWorkbench {
             },
         };
         self.apply_player_audio_commands(vec![command]);
+    }
+
+    fn record_player_audio_result(&mut self, result: Result<(), String>) {
+        if let Err(err) = result {
+            self.player_state.last_audio_error =
+                Some(format!("Audio preview command failed: {err}"));
+        }
     }
 
     fn mix_volume(&self, command_volume: Option<f32>, channel: AudioPreviewChannel) -> Option<f32> {

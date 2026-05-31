@@ -47,6 +47,58 @@ pub struct RawStepTrace {
     pub character_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawSimulationStopReason {
+    Finished,
+    StepLimit,
+    LoopDetected,
+    StartError,
+    MissingJumpTarget,
+    MissingChoiceTarget,
+    InvalidChoice,
+}
+
+impl RawSimulationStopReason {
+    pub fn is_error(self) -> bool {
+        !matches!(self, Self::Finished | Self::StepLimit | Self::LoopDetected)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RawSimulationReport {
+    pub steps: Vec<RawStepTrace>,
+    pub stop_reason: RawSimulationStopReason,
+    pub stop_message: String,
+    pub failing_event_ip: Option<u32>,
+    pub errors: Vec<String>,
+}
+
+impl RawSimulationReport {
+    fn new() -> Self {
+        Self {
+            steps: Vec::new(),
+            stop_reason: RawSimulationStopReason::Finished,
+            stop_message: "Raw simulation finished".to_string(),
+            failing_event_ip: None,
+            errors: Vec::new(),
+        }
+    }
+
+    fn stop(
+        &mut self,
+        stop_reason: RawSimulationStopReason,
+        failing_event_ip: Option<u32>,
+        message: String,
+    ) {
+        self.stop_reason = stop_reason;
+        self.stop_message = message.clone();
+        self.failing_event_ip = failing_event_ip;
+        if stop_reason.is_error() {
+            self.errors.push(message);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RouteEnumerationReport {
     pub routes: Vec<Vec<usize>>,
@@ -225,24 +277,63 @@ pub fn simulate_raw_sequence(
     script: &ScriptRaw,
     max_steps: usize,
     policy: &ChoicePolicy,
-) -> Vec<RawStepTrace> {
-    let mut out = Vec::new();
+) -> RawSimulationReport {
+    let mut report = RawSimulationReport::new();
     let mut state = RawSimulationState::default();
     let mut steps = 0usize;
     let mut choice_cursor = 0usize;
     let mut visited = HashSet::new();
     let mut ip = match script.start_index() {
         Ok(idx) => idx,
-        Err(_) => return out,
+        Err(err) => {
+            report.stop(
+                RawSimulationStopReason::StartError,
+                None,
+                format!("raw simulation start error: {err}"),
+            );
+            return report;
+        }
     };
+    if ip >= script.events.len() {
+        report.stop(
+            RawSimulationStopReason::StartError,
+            Some(ip as u32),
+            format!(
+                "raw simulation start label points outside executable events: start={ip}, events={}",
+                script.events.len()
+            ),
+        );
+        return report;
+    }
     bootstrap_initial_state(script, ip, &mut state);
 
-    while ip < script.events.len() && steps < max_steps {
+    loop {
+        if steps >= max_steps {
+            report.stop(
+                RawSimulationStopReason::StepLimit,
+                Some(ip as u32),
+                format!("Raw simulation reached {max_steps} steps; possible loop or blocking flow"),
+            );
+            return report;
+        }
+        if ip >= script.events.len() {
+            report.stop(
+                RawSimulationStopReason::Finished,
+                None,
+                format!("Raw simulation finished in {steps} step(s)"),
+            );
+            return report;
+        }
         if !visited.insert(raw_state_signature(ip, &state)) {
-            break;
+            report.stop(
+                RawSimulationStopReason::LoopDetected,
+                Some(ip as u32),
+                format!("Raw simulation detected a repeated state at ip {ip}"),
+            );
+            return report;
         }
         let event = &script.events[ip];
-        out.push(RawStepTrace {
+        report.steps.push(RawStepTrace {
             event_ip: ip as u32,
             event_kind: event_kind_raw(event).to_string(),
             event_signature: raw_event_signature(event),
@@ -256,7 +347,12 @@ pub fn simulate_raw_sequence(
         match event {
             EventRaw::Jump { target } => {
                 let Some(target_ip) = script.labels.get(target).copied() else {
-                    break;
+                    report.stop(
+                        RawSimulationStopReason::MissingJumpTarget,
+                        Some(ip as u32),
+                        format!("jump at ip {ip} targets missing label '{target}'"),
+                    );
+                    return report;
                 };
                 next_ip = target_ip;
             }
@@ -264,7 +360,15 @@ pub fn simulate_raw_sequence(
                 let Some(choice_idx) =
                     select_choice_index(policy, steps, choice.options.len(), choice_cursor)
                 else {
-                    break;
+                    report.stop(
+                        RawSimulationStopReason::InvalidChoice,
+                        Some(ip as u32),
+                        format!(
+                            "choice at ip {ip} could not select a valid option for policy {}",
+                            policy.label().as_str()
+                        ),
+                    );
+                    return report;
                 };
                 choice_cursor = choice_cursor.saturating_add(1);
                 let Some(target_label) = choice
@@ -272,16 +376,33 @@ pub fn simulate_raw_sequence(
                     .get(choice_idx)
                     .map(|option| option.target.as_str())
                 else {
-                    break;
+                    report.stop(
+                        RawSimulationStopReason::InvalidChoice,
+                        Some(ip as u32),
+                        format!("choice at ip {ip} selected missing option index {choice_idx}"),
+                    );
+                    return report;
                 };
                 let Some(target_ip) = script.labels.get(target_label).copied() else {
-                    break;
+                    report.stop(
+                        RawSimulationStopReason::MissingChoiceTarget,
+                        Some(ip as u32),
+                        format!(
+                            "choice at ip {ip} option {choice_idx} targets missing label '{target_label}'"
+                        ),
+                    );
+                    return report;
                 };
                 next_ip = target_ip;
             }
             EventRaw::JumpIf { cond, target } if eval_cond_raw(cond, &state) => {
                 let Some(target_ip) = script.labels.get(target).copied() else {
-                    break;
+                    report.stop(
+                        RawSimulationStopReason::MissingJumpTarget,
+                        Some(ip as u32),
+                        format!("conditional jump at ip {ip} targets missing label '{target}'"),
+                    );
+                    return report;
                 };
                 next_ip = target_ip;
             }
@@ -291,8 +412,6 @@ pub fn simulate_raw_sequence(
         ip = next_ip;
         steps += 1;
     }
-
-    out
 }
 
 fn route_frame_signature(frame: &RawRouteFrame) -> String {

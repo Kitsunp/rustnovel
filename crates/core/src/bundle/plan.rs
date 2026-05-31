@@ -6,11 +6,11 @@ use crate::error::VnResult;
 use crate::load_runtime_script_from_entry;
 use crate::manifest::ProjectManifest;
 
-use super::assets::detect_asset_case_collisions;
+use super::assets::{detect_asset_path_collisions, AssetPathCollision};
 use super::capabilities::{build_capability_report, ExportCapabilityReport};
 use super::helpers::{
-    canonicalize_within_root, invalid_bundle, normalize_path_display, sanitize_relative_path,
-    to_hex,
+    canonicalize_within_root, ensure_regular_file, invalid_bundle, normalize_path_display,
+    planned_output_root, sanitize_relative_path, to_hex,
 };
 use super::materialize::{has_extension, runtime_artifact_matches_target};
 use super::{
@@ -22,21 +22,10 @@ pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
         .project_root
         .canonicalize()
         .map_err(|e| invalid_bundle(format!("canonicalize project_root: {e}")))?;
-    let output_root = if spec.output_root.exists() {
-        spec.output_root
-            .canonicalize()
-            .map_err(|e| invalid_bundle(format!("canonicalize output_root: {e}")))?
-    } else {
-        spec.output_root.clone()
-    };
+    let output_root = planned_output_root(&spec.output_root)?;
 
     let manifest_path = project_root.join("project.vnm");
-    if !manifest_path.is_file() {
-        return Err(invalid_bundle(format!(
-            "missing manifest '{}'",
-            manifest_path.display()
-        )));
-    }
+    ensure_regular_file(&manifest_path, "manifest")?;
     let manifest = ProjectManifest::load(&manifest_path)
         .map_err(|e| invalid_bundle(format!("load manifest '{}': {e}", manifest_path.display())))?;
 
@@ -62,24 +51,44 @@ pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
     let capabilities = build_capability_report(&script, spec.runtime_artifact.is_some());
 
     let mut diagnostics = capability_diagnostics(&capabilities, spec.target_platform);
-    for (asset, existing) in detect_asset_case_collisions(&project_root, &script)? {
-        let message =
-            format!("case-sensitive asset collision: '{asset}' conflicts with '{existing}'.");
-        let probable_cause = format!(
-            "The script references '{asset}' and '{existing}', which differ only by letter case."
-        );
+    for collision in detect_asset_path_collisions(&project_root, &script)? {
+        let message = collision.message();
+        let (code, probable_cause, suggested_action, consequence, asset) = match &collision {
+            AssetPathCollision::Case { asset, existing } => (
+                "export.asset.case_collision",
+                format!(
+                    "The script references '{asset}' and '{existing}', which differ only by letter case."
+                ),
+                "Rename one asset or update the script so every packaged asset path is unique ignoring case.",
+                "The export is blocked because Windows and Linux would disagree about which asset is packaged.",
+                asset.as_str(),
+            ),
+            AssetPathCollision::Destination {
+                destination,
+                first_source,
+                second_source,
+            } => (
+                "export.asset.destination_collision",
+                format!(
+                    "Both '{first_source}' and '{second_source}' resolve to packaged asset '{destination}'."
+                ),
+                "Rename one source asset or update references so each packaged asset destination has exactly one source.",
+                "The export is blocked because one referenced asset would overwrite another in the bundle.",
+                destination.as_str(),
+            ),
+        };
         diagnostics.push(export_diagnostic(ExportDiagnosticInput {
-            code: "export.asset.case_collision",
+            code,
             severity: "error",
             phase: "plan",
             target: spec.target_platform,
             message: &message,
             probable_cause: &probable_cause,
-            suggested_action: "Rename one asset or update the script so every packaged asset path is unique ignoring case.",
-            consequence: "The export is blocked because Windows and Linux would disagree about which asset is packaged.",
+            suggested_action,
+            consequence,
             blocking_release: true,
-            file: Some(&asset),
-            asset: Some(&asset),
+            file: Some(asset),
+            asset: Some(asset),
             node: None,
             field: Some("asset_ref"),
         }));

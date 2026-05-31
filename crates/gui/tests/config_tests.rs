@@ -4,6 +4,25 @@ use tempfile::tempdir;
 use visual_novel_engine::{runtime::EngineState, SaveData};
 use visual_novel_gui::{load_state_from, save_state_to, DisplayInfo, UserPreferences, VnConfig};
 
+fn create_file_symlink(link: &std::path::Path, target: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(target, link).is_ok()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = link;
+        let _ = target;
+        false
+    }
+}
+
 #[test]
 fn resolves_defaults_for_small_display() {
     let config = VnConfig::default();
@@ -70,6 +89,22 @@ fn loads_legacy_preferences_with_audio_defaults() {
     assert_eq!(loaded.sfx_volume, 1.0);
     assert_eq!(loaded.voice_volume, 1.0);
     assert_eq!(loaded.advance_on_text_panel_click, None);
+}
+
+#[test]
+fn loading_preferences_reports_dangling_symlink_instead_of_defaults() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("prefs.json");
+    let missing_target = dir.path().join("missing-target.json");
+    if !create_file_symlink(&path, &missing_target) {
+        eprintln!("file symlink creation not supported on this platform");
+        return;
+    }
+
+    let err = UserPreferences::load_from(&path)
+        .expect_err("dangling preference symlink must not silently load defaults");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 }
 
 #[test]

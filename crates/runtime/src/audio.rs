@@ -8,6 +8,8 @@ use visual_novel_engine::LruCache;
 
 use crate::AssetStore;
 
+pub type AudioResult<T = ()> = Result<T, String>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AudioCapabilities {
     pub bgm_fade: bool,
@@ -37,9 +39,14 @@ pub trait Audio {
     fn capabilities(&self) -> AudioCapabilities {
         AudioCapabilities::SILENT
     }
-    fn play_music(&mut self, id: &str);
-    fn play_music_with_options(&mut self, id: &str, _loop_playback: bool, _volume: Option<f32>) {
-        self.play_music(id);
+    fn play_music(&mut self, id: &str) -> AudioResult;
+    fn play_music_with_options(
+        &mut self,
+        id: &str,
+        _loop_playback: bool,
+        _volume: Option<f32>,
+    ) -> AudioResult {
+        self.play_music(id)
     }
     fn play_music_with_options_at(
         &mut self,
@@ -47,8 +54,8 @@ pub trait Audio {
         loop_playback: bool,
         volume: Option<f32>,
         _start_at: Duration,
-    ) {
-        self.play_music_with_options(id, loop_playback, volume);
+    ) -> AudioResult {
+        self.play_music_with_options(id, loop_playback, volume)
     }
     fn play_music_with_transition(
         &mut self,
@@ -56,36 +63,51 @@ pub trait Audio {
         loop_playback: bool,
         volume: Option<f32>,
         _fade_in: Option<Duration>,
-    ) {
-        self.play_music_with_options(id, loop_playback, volume);
+    ) -> AudioResult {
+        self.play_music_with_options(id, loop_playback, volume)
     }
-    fn stop_music(&mut self);
-    fn stop_music_with_fade(&mut self, _fade_out: Option<Duration>) {
-        self.stop_music();
+    fn stop_music(&mut self) -> AudioResult;
+    fn stop_music_with_fade(&mut self, _fade_out: Option<Duration>) -> AudioResult {
+        self.stop_music()
     }
-    fn set_music_volume(&mut self, _volume: f32) {}
-    fn play_sfx(&mut self, id: &str);
-    fn play_sfx_with_volume(&mut self, id: &str, _volume: Option<f32>) {
-        self.play_sfx(id);
+    fn set_music_volume(&mut self, _volume: f32) -> AudioResult {
+        Ok(())
     }
-    fn set_sfx_volume(&mut self, _volume: f32) {}
-    fn stop_sfx(&mut self) {}
-    fn play_voice_with_volume(&mut self, id: &str, volume: Option<f32>) {
-        self.play_sfx_with_volume(id, volume);
+    fn play_sfx(&mut self, id: &str) -> AudioResult;
+    fn play_sfx_with_volume(&mut self, id: &str, _volume: Option<f32>) -> AudioResult {
+        self.play_sfx(id)
     }
-    fn set_voice_volume(&mut self, _volume: f32) {}
-    fn stop_voice(&mut self) {}
+    fn set_sfx_volume(&mut self, _volume: f32) -> AudioResult {
+        Ok(())
+    }
+    fn stop_sfx(&mut self) -> AudioResult {
+        Ok(())
+    }
+    fn play_voice_with_volume(&mut self, id: &str, volume: Option<f32>) -> AudioResult {
+        self.play_sfx_with_volume(id, volume)
+    }
+    fn set_voice_volume(&mut self, _volume: f32) -> AudioResult {
+        Ok(())
+    }
+    fn stop_voice(&mut self) -> AudioResult {
+        Ok(())
+    }
 }
 
 impl<T: Audio + ?Sized> Audio for Box<T> {
     fn capabilities(&self) -> AudioCapabilities {
         (**self).capabilities()
     }
-    fn play_music(&mut self, id: &str) {
-        (**self).play_music(id);
+    fn play_music(&mut self, id: &str) -> AudioResult {
+        (**self).play_music(id)
     }
-    fn play_music_with_options(&mut self, id: &str, loop_playback: bool, volume: Option<f32>) {
-        (**self).play_music_with_options(id, loop_playback, volume);
+    fn play_music_with_options(
+        &mut self,
+        id: &str,
+        loop_playback: bool,
+        volume: Option<f32>,
+    ) -> AudioResult {
+        (**self).play_music_with_options(id, loop_playback, volume)
     }
     fn play_music_with_options_at(
         &mut self,
@@ -93,8 +115,8 @@ impl<T: Audio + ?Sized> Audio for Box<T> {
         loop_playback: bool,
         volume: Option<f32>,
         start_at: Duration,
-    ) {
-        (**self).play_music_with_options_at(id, loop_playback, volume, start_at);
+    ) -> AudioResult {
+        (**self).play_music_with_options_at(id, loop_playback, volume, start_at)
     }
     fn play_music_with_transition(
         &mut self,
@@ -102,38 +124,38 @@ impl<T: Audio + ?Sized> Audio for Box<T> {
         loop_playback: bool,
         volume: Option<f32>,
         fade_in: Option<Duration>,
-    ) {
-        (**self).play_music_with_transition(id, loop_playback, volume, fade_in);
+    ) -> AudioResult {
+        (**self).play_music_with_transition(id, loop_playback, volume, fade_in)
     }
-    fn stop_music(&mut self) {
-        (**self).stop_music();
+    fn stop_music(&mut self) -> AudioResult {
+        (**self).stop_music()
     }
-    fn stop_music_with_fade(&mut self, fade_out: Option<Duration>) {
-        (**self).stop_music_with_fade(fade_out);
+    fn stop_music_with_fade(&mut self, fade_out: Option<Duration>) -> AudioResult {
+        (**self).stop_music_with_fade(fade_out)
     }
-    fn set_music_volume(&mut self, volume: f32) {
-        (**self).set_music_volume(volume);
+    fn set_music_volume(&mut self, volume: f32) -> AudioResult {
+        (**self).set_music_volume(volume)
     }
-    fn play_sfx(&mut self, id: &str) {
-        (**self).play_sfx(id);
+    fn play_sfx(&mut self, id: &str) -> AudioResult {
+        (**self).play_sfx(id)
     }
-    fn play_sfx_with_volume(&mut self, id: &str, volume: Option<f32>) {
-        (**self).play_sfx_with_volume(id, volume);
+    fn play_sfx_with_volume(&mut self, id: &str, volume: Option<f32>) -> AudioResult {
+        (**self).play_sfx_with_volume(id, volume)
     }
-    fn set_sfx_volume(&mut self, volume: f32) {
-        (**self).set_sfx_volume(volume);
+    fn set_sfx_volume(&mut self, volume: f32) -> AudioResult {
+        (**self).set_sfx_volume(volume)
     }
-    fn stop_sfx(&mut self) {
-        (**self).stop_sfx();
+    fn stop_sfx(&mut self) -> AudioResult {
+        (**self).stop_sfx()
     }
-    fn play_voice_with_volume(&mut self, id: &str, volume: Option<f32>) {
-        (**self).play_voice_with_volume(id, volume);
+    fn play_voice_with_volume(&mut self, id: &str, volume: Option<f32>) -> AudioResult {
+        (**self).play_voice_with_volume(id, volume)
     }
-    fn set_voice_volume(&mut self, volume: f32) {
-        (**self).set_voice_volume(volume);
+    fn set_voice_volume(&mut self, volume: f32) -> AudioResult {
+        (**self).set_voice_volume(volume)
     }
-    fn stop_voice(&mut self) {
-        (**self).stop_voice();
+    fn stop_voice(&mut self) -> AudioResult {
+        (**self).stop_voice()
     }
 }
 
@@ -195,17 +217,14 @@ impl RodioBackend {
         loop_playback: bool,
         volume: Option<f32>,
         fade_in: Option<Duration>,
-    ) {
+    ) -> AudioResult {
         if is_bgm {
             if !self.bgm_sink.empty() {
                 fade_sink_to_stop(self.bgm_sink.clone(), fade_in);
             }
             self.bgm_sink = match Sink::try_new(&self.stream_handle) {
                 Ok(sink) => Arc::new(sink),
-                Err(e) => {
-                    eprintln!("Failed to create BGM sink: {}", e);
-                    return;
-                }
+                Err(e) => return Err(format!("failed to create BGM sink: {e}")),
             };
             let target_volume = volume.unwrap_or(1.0).clamp(0.0, 1.0);
             self.bgm_sink.set_volume(if fade_in.is_some() {
@@ -220,14 +239,11 @@ impl RodioBackend {
             }
             self.bgm_sink.play();
             fade_sink_to_volume(self.bgm_sink.clone(), target_volume, fade_in);
+            Ok(())
         } else {
-            // SFX - fire and forget, fail-soft on sink creation errors.
             let sink = match Sink::try_new(&self.stream_handle) {
                 Ok(sink) => Arc::new(sink),
-                Err(e) => {
-                    eprintln!("Failed to create SFX sink: {}", e);
-                    return;
-                }
+                Err(e) => return Err(format!("failed to create SFX sink: {e}")),
             };
             if let Some(level) = volume {
                 sink.set_volume(level.clamp(0.0, 1.0));
@@ -236,6 +252,7 @@ impl RodioBackend {
             sink.play();
             self.sfx_sinks.retain(|sink| !sink.empty());
             self.sfx_sinks.push(sink);
+            Ok(())
         }
     }
 
@@ -260,17 +277,14 @@ impl RodioBackend {
         &mut self,
         source: Box<dyn Source<Item = f32> + Send>,
         volume: Option<f32>,
-    ) {
+    ) -> AudioResult {
         if let Some(existing) = self.voice_sink.take() {
             existing.stop();
         }
 
         let sink = match Sink::try_new(&self.stream_handle) {
             Ok(sink) => Arc::new(sink),
-            Err(e) => {
-                eprintln!("Failed to create Voice sink: {}", e);
-                return;
-            }
+            Err(e) => return Err(format!("failed to create Voice sink: {e}")),
         };
         if let Some(level) = volume {
             sink.set_volume(level.clamp(0.0, 1.0));
@@ -278,6 +292,7 @@ impl RodioBackend {
         sink.append(source);
         sink.play();
         self.voice_sink = Some(sink);
+        Ok(())
     }
 }
 
@@ -286,12 +301,17 @@ impl Audio for RodioBackend {
         AudioCapabilities::RODIO
     }
 
-    fn play_music(&mut self, id: &str) {
-        self.play_music_with_options(id, true, None);
+    fn play_music(&mut self, id: &str) -> AudioResult {
+        self.play_music_with_options(id, true, None)
     }
 
-    fn play_music_with_options(&mut self, id: &str, loop_playback: bool, volume: Option<f32>) {
-        self.play_music_with_transition(id, loop_playback, volume, None);
+    fn play_music_with_options(
+        &mut self,
+        id: &str,
+        loop_playback: bool,
+        volume: Option<f32>,
+    ) -> AudioResult {
+        self.play_music_with_transition(id, loop_playback, volume, None)
     }
 
     fn play_music_with_options_at(
@@ -300,18 +320,15 @@ impl Audio for RodioBackend {
         loop_playback: bool,
         volume: Option<f32>,
         start_at: Duration,
-    ) {
+    ) -> AudioResult {
         if self.current_bgm.as_deref() == Some(id) && !self.bgm_sink.empty() && start_at.is_zero() {
-            return;
+            return Ok(());
         }
 
-        match self.decode_audio_source(id, start_at) {
-            Ok(source) => {
-                self.play_source(source, true, loop_playback, volume, None);
-                self.current_bgm = Some(id.to_string());
-            }
-            Err(e) => eprintln!("Audio Error: {}", e),
-        }
+        let source = self.decode_audio_source(id, start_at)?;
+        self.play_source(source, true, loop_playback, volume, None)?;
+        self.current_bgm = Some(id.to_string());
+        Ok(())
     }
 
     fn play_music_with_transition(
@@ -320,76 +337,76 @@ impl Audio for RodioBackend {
         loop_playback: bool,
         volume: Option<f32>,
         fade_in: Option<Duration>,
-    ) {
+    ) -> AudioResult {
         if self.current_bgm.as_deref() == Some(id) && !self.bgm_sink.empty() {
-            return;
+            return Ok(());
         }
 
-        match self.decode_audio_source(id, Duration::ZERO) {
-            Ok(source) => {
-                self.play_source(source, true, loop_playback, volume, fade_in);
-                self.current_bgm = Some(id.to_string());
-            }
-            Err(e) => eprintln!("Audio Error: {}", e),
-        }
+        let source = self.decode_audio_source(id, Duration::ZERO)?;
+        self.play_source(source, true, loop_playback, volume, fade_in)?;
+        self.current_bgm = Some(id.to_string());
+        Ok(())
     }
 
-    fn stop_music(&mut self) {
+    fn stop_music(&mut self) -> AudioResult {
         self.bgm_sink.stop();
         self.current_bgm = None;
+        Ok(())
     }
 
-    fn stop_music_with_fade(&mut self, fade_out: Option<Duration>) {
+    fn stop_music_with_fade(&mut self, fade_out: Option<Duration>) -> AudioResult {
         fade_sink_to_stop(self.bgm_sink.clone(), fade_out);
         self.current_bgm = None;
+        Ok(())
     }
 
-    fn set_music_volume(&mut self, volume: f32) {
+    fn set_music_volume(&mut self, volume: f32) -> AudioResult {
         self.bgm_sink.set_volume(volume.clamp(0.0, 1.0));
+        Ok(())
     }
 
-    fn play_sfx(&mut self, id: &str) {
-        self.play_sfx_with_volume(id, None);
+    fn play_sfx(&mut self, id: &str) -> AudioResult {
+        self.play_sfx_with_volume(id, None)
     }
 
-    fn play_sfx_with_volume(&mut self, id: &str, volume: Option<f32>) {
-        match self.decode_audio_source(id, Duration::ZERO) {
-            Ok(source) => self.play_source(source, false, false, volume, None),
-            Err(e) => eprintln!("Audio Error: {}", e),
-        }
+    fn play_sfx_with_volume(&mut self, id: &str, volume: Option<f32>) -> AudioResult {
+        let source = self.decode_audio_source(id, Duration::ZERO)?;
+        self.play_source(source, false, false, volume, None)
     }
 
-    fn set_sfx_volume(&mut self, volume: f32) {
+    fn set_sfx_volume(&mut self, volume: f32) -> AudioResult {
         let volume = volume.clamp(0.0, 1.0);
         self.sfx_sinks.retain(|sink| !sink.empty());
         for sink in &self.sfx_sinks {
             sink.set_volume(volume);
         }
+        Ok(())
     }
 
-    fn play_voice_with_volume(&mut self, id: &str, volume: Option<f32>) {
-        match self.decode_audio_source(id, Duration::ZERO) {
-            Ok(source) => self.play_voice_internal(source, volume),
-            Err(e) => eprintln!("Audio Error: {}", e),
-        }
+    fn play_voice_with_volume(&mut self, id: &str, volume: Option<f32>) -> AudioResult {
+        let source = self.decode_audio_source(id, Duration::ZERO)?;
+        self.play_voice_internal(source, volume)
     }
 
-    fn set_voice_volume(&mut self, volume: f32) {
+    fn set_voice_volume(&mut self, volume: f32) -> AudioResult {
         if let Some(sink) = &self.voice_sink {
             sink.set_volume(volume.clamp(0.0, 1.0));
         }
+        Ok(())
     }
 
-    fn stop_voice(&mut self) {
+    fn stop_voice(&mut self) -> AudioResult {
         if let Some(sink) = self.voice_sink.take() {
             sink.stop();
         }
+        Ok(())
     }
 
-    fn stop_sfx(&mut self) {
+    fn stop_sfx(&mut self) -> AudioResult {
         for sink in self.sfx_sinks.drain(..) {
             sink.stop();
         }
+        Ok(())
     }
 }
 
@@ -427,7 +444,7 @@ fn fade_sink_to_stop(sink: Arc<Sink>, fade: Option<Duration>) {
     });
 }
 
-/// No-op audio backend for environments where sound output is disabled/unavailable.
+/// Explicitly unavailable audio backend for environments where sound output is disabled/unavailable.
 #[derive(Default)]
 pub struct SilentAudio;
 
@@ -436,11 +453,19 @@ impl Audio for SilentAudio {
         AudioCapabilities::SILENT
     }
 
-    fn play_music(&mut self, _id: &str) {}
+    fn play_music(&mut self, id: &str) -> AudioResult {
+        Err(format!(
+            "audio backend unavailable; cannot play music '{id}'"
+        ))
+    }
 
-    fn stop_music(&mut self) {}
+    fn stop_music(&mut self) -> AudioResult {
+        Ok(())
+    }
 
-    fn play_sfx(&mut self, _id: &str) {}
+    fn play_sfx(&mut self, id: &str) -> AudioResult {
+        Err(format!("audio backend unavailable; cannot play sfx '{id}'"))
+    }
 }
 
 pub fn audio_duration(assets: &dyn AssetStore, id: &str) -> Result<Option<Duration>, String> {

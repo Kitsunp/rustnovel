@@ -97,6 +97,26 @@ class Engine:
 
         return call_native_method(self._engine, "last_ext_call_error", "error tracking")
 
+    def pending_external_call(self) -> Optional[Dict[str, Any]]:
+        """Return the pending external call request, if the native binding exposes it."""
+
+        return call_native_method(
+            self._engine, "pending_external_call", "pending ext-call access"
+        )
+
+    def complete_external_call(
+        self, success: bool = True, message: Optional[str] = None
+    ) -> None:
+        """Complete the pending external call with an explicit host outcome."""
+
+        call_native_method(
+            self._engine,
+            "complete_external_call",
+            "ext-call completion",
+            success,
+            message,
+        )
+
     def current_event_json(self) -> str:
         """Return the current event in stable JSON form."""
 

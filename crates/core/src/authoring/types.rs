@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::event::{CharacterPlacementRaw, CondRaw, EventRaw, ScenePatchRaw};
-use crate::execution_contract::contract_for_authoring_node;
+use crate::event_behavior::{node_spec_for_authoring_node, PortOutput};
 
 pub const NODE_VERTICAL_SPACING: f32 = 90.0;
 
@@ -89,24 +89,7 @@ impl Default for StoryNode {
 
 impl StoryNode {
     pub fn type_name(&self) -> &'static str {
-        match self {
-            StoryNode::Dialogue { .. } => "Dialogue",
-            StoryNode::Choice { .. } => "Choice",
-            StoryNode::Scene { .. } => "Scene",
-            StoryNode::Jump { .. } => "Jump",
-            StoryNode::SetVariable { .. } => "Set Var",
-            StoryNode::SetFlag { .. } => "Set Flag",
-            StoryNode::ScenePatch(_) => "Scene Patch",
-            StoryNode::JumpIf { .. } => "Branch (If)",
-            StoryNode::Start => "Start",
-            StoryNode::End => "End",
-            StoryNode::AudioAction { .. } => "Audio",
-            StoryNode::Transition { .. } => "Transition",
-            StoryNode::CharacterPlacement { .. } => "Placement",
-            StoryNode::SubgraphCall { .. } => "Subgraph Call",
-            StoryNode::Generic(EventRaw::ExtCall { .. }) => "ExtCall",
-            StoryNode::Generic(_) => "Generic Event",
-        }
+        node_spec_for_authoring_node(self).display_name
     }
 
     pub fn is_marker(&self) -> bool {
@@ -114,14 +97,16 @@ impl StoryNode {
     }
 
     pub fn can_connect_from(&self) -> bool {
-        !matches!(self, StoryNode::End)
+        node_spec_for_authoring_node(self).ports.output != PortOutput::None
     }
 
     pub fn can_connect_to(&self) -> bool {
-        !matches!(self, StoryNode::Start)
+        node_spec_for_authoring_node(self).ports.accepts_incoming
     }
 
     pub fn export_supported(&self) -> bool {
-        contract_for_authoring_node(self).export_supported
+        node_spec_for_authoring_node(self)
+            .capabilities
+            .export_supported
     }
 }

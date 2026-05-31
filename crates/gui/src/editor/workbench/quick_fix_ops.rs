@@ -103,9 +103,18 @@ impl EditorWorkbench {
 
         let mut result = AutoFixBatchResult::default();
         for op in pending.operations {
+            let diagnostic_id = op.issue.diagnostic_id();
+            let fix_id = op.fix_id.clone();
             match self.apply_issue_fix_for_issue(&op.issue, &op.fix_id) {
                 Ok(()) => result.applied += 1,
-                Err(_) => result.skipped += 1,
+                Err(reason) => {
+                    result.skipped += 1;
+                    result.skipped_details.push(AutoFixBatchSkip {
+                        diagnostic_id,
+                        fix_id,
+                        reason,
+                    });
+                }
             }
         }
 

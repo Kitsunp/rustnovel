@@ -129,6 +129,36 @@ fn report_v2_import_preserves_target_field_path_and_stale_state() {
 }
 
 #[test]
+fn report_v2_import_rejects_issues_missing_required_classification_fields() {
+    for missing_field in ["phase", "code", "severity"] {
+        let mut issue = serde_json::json!({
+            "phase": "GRAPH",
+            "code": "VAL_SPEAKER_EMPTY",
+            "severity": "warning",
+            "message_en": "Broken imported issue"
+        });
+        issue
+            .as_object_mut()
+            .expect("issue object")
+            .remove(missing_field);
+        let payload = serde_json::json!({
+            "schema": "vnengine.authoring_validation_report.v2",
+            "issues": [issue]
+        })
+        .to_string();
+
+        let mut workbench = EditorWorkbench::new(VnConfig::default());
+        let err = workbench
+            .apply_diagnostic_report_json(&payload)
+            .expect_err("incomplete imported issue must be rejected");
+        assert!(
+            err.contains(&format!("missing required field '{missing_field}'")),
+            "missing_field={missing_field} err={err}"
+        );
+    }
+}
+
+#[test]
 fn report_v2_import_focuses_selected_issue_from_granular_target() {
     let config = VnConfig::default();
     let mut source = EditorWorkbench::new(config.clone());

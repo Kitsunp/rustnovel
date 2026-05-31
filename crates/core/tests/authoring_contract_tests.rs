@@ -409,7 +409,44 @@ fn validation_covers_empty_keys_layout_and_scene_profile_assets() {
 }
 
 #[test]
-fn repro_and_dry_run_simulate_extcall_without_hitting_step_limit() {
+fn asset_validation_reports_unavailable_project_root_without_fake_missing_assets() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let missing_root = dir.path().join("missing_project_root");
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let scene = graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("assets/backgrounds/room.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        },
+        pos(0.0, 90.0),
+    );
+    let end = graph.add_node(StoryNode::End, pos(0.0, 180.0));
+    graph.connect(start, scene);
+    graph.connect(scene, end);
+
+    let issues = validate_authoring_graph_with_project_root(&graph, &missing_root);
+    let root_issues = issues
+        .iter()
+        .filter(|issue| {
+            issue.code == LintCode::AssetReferenceMissing
+                && issue.node_id.is_none()
+                && issue.message.contains("Project root unavailable")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(root_issues.len(), 1, "issues={issues:#?}");
+    assert!(
+        !issues.iter().any(|issue| {
+            issue.code == LintCode::AssetReferenceMissing && issue.node_id == Some(scene)
+        }),
+        "missing project root must not be reported as a fake missing asset: {issues:#?}"
+    );
+}
+
+#[test]
+fn repro_and_dry_run_block_extcall_without_simulating_success() {
     let script = ScriptRaw::new(
         vec![
             EventRaw::ExtCall {
@@ -428,20 +465,25 @@ fn repro_and_dry_run_simulate_extcall_without_hitting_step_limit() {
     let report = visual_novel_engine::run_repro_case(&case);
     assert_eq!(
         report.stop_reason,
-        visual_novel_engine::ReproStopReason::Finished
+        visual_novel_engine::ReproStopReason::ExternalCallBlocked
     );
     assert_eq!(
-        report.steps[0].simulation_note.as_deref(),
-        Some("external_call_simulated")
+        report.steps[0].execution_note.as_deref(),
+        Some("external_call_requires_host:analytics")
     );
+    assert!(report.steps[0].simulation_note.is_none());
 
     let graph = NodeGraph::from_script(&script);
     let result = visual_novel_engine::authoring::compiler::compile_authoring_graph(&graph, None);
     let dry = result.dry_run_report.expect("dry-run report");
-    assert!(dry
-        .steps
-        .iter()
-        .any(|step| step.simulation_note.as_deref() == Some("external_call_simulated")));
+    assert_eq!(
+        dry.stop_reason,
+        visual_novel_engine::authoring::compiler::DryRunStopReason::ExternalCallBlocked
+    );
+    assert!(dry.steps.iter().any(|step| {
+        step.execution_note.as_deref() == Some("external_call_requires_host:analytics")
+            && step.simulation_note.is_none()
+    }));
 }
 
 #[test]

@@ -62,6 +62,8 @@ pub enum AssetError {
     ManifestVersion(u16),
     #[error("manifest entry missing for asset '{0}'")]
     ManifestEntryMissing(String),
+    #[error("manifest contains duplicate normalized asset key '{0}'")]
+    ManifestDuplicateEntry(String),
     #[error("manifest hash mismatch for asset '{0}'")]
     ManifestHashMismatch(String),
     #[error("manifest size mismatch for asset '{0}'")]

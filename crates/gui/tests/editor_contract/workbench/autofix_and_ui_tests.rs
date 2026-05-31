@@ -47,6 +47,52 @@ fn workbench_autofix_batch_can_prepare_and_apply_complete_mode() {
 }
 
 #[test]
+fn autofix_batch_reports_skipped_fix_reason() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+
+    let start = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+    let dialogue = workbench.node_graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "".to_string(),
+            text: "Hola".to_string(),
+        },
+        egui::pos2(0.0, 100.0),
+    );
+    let end = workbench
+        .node_graph
+        .add_node(StoryNode::End, egui::pos2(0.0, 200.0));
+    workbench.node_graph.connect(start, dialogue);
+    workbench.node_graph.connect(dialogue, end);
+
+    let _ = workbench.run_dry_validation();
+    let planned = workbench
+        .prepare_autofix_batch_confirmation(false)
+        .expect("safe autofix batch should be planned");
+    assert_eq!(planned, 1);
+
+    workbench.node_graph.remove_node(dialogue);
+    let result = workbench
+        .apply_pending_autofix_batch()
+        .expect("stale autofix batch should report skipped fixes");
+
+    assert_eq!(result.applied, 0);
+    assert_eq!(result.skipped, 1);
+    assert_eq!(result.skipped_details.len(), 1);
+    let skipped = &result.skipped_details[0];
+    assert_eq!(skipped.fix_id, "dialogue_fill_speaker");
+    assert!(skipped.reason.contains("stale quick-fix dialogue_fill_speaker"));
+    assert!(
+        skipped.reason.contains(&skipped.diagnostic_id),
+        "skip reason should carry the diagnostic id: {}",
+        skipped.reason
+    );
+    assert!(!skipped.diagnostic_id.is_empty());
+}
+
+#[test]
 fn autofix_rollback() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);

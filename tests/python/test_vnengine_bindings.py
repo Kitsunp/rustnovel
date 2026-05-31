@@ -148,7 +148,6 @@ class NativeBindingsTests(unittest.TestCase):
         if hasattr(engine, "last_ext_call_error"):
             self.assertIsNone(engine.last_ext_call_error())
 
-        engine.resume()
         next_result = engine.step()
         next_event = next_result.event
         self.assertEqual(next_event["type"], "dialogue")
@@ -166,8 +165,8 @@ class NativeBindingsTests(unittest.TestCase):
             calls.append((command, args))
 
         engine.register_handler(handler)
-        result = engine.step()
-        self.assertEqual(result.event["type"], "ext_call")
+        with self.assertRaises(RuntimeError):
+            engine.step()
         self.assertEqual(calls, [])
         if hasattr(engine, "last_ext_call_error"):
             self.assertIn("denied", engine.last_ext_call_error())
