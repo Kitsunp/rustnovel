@@ -40,7 +40,8 @@ impl AssetStore {
                 }
                 let mut normalized_assets = BTreeMap::new();
                 for (raw_key, entry) in manifest.assets {
-                    let rel = sanitize_rel_path(Path::new(&raw_key))?;
+                    let normalized = normalize_asset_request(&raw_key);
+                    let rel = sanitize_rel_path(Path::new(&normalized))?;
                     let key = normalize_asset_key(&rel);
                     if normalized_assets.insert(key.clone(), entry).is_some() {
                         return Err(AssetError::ManifestDuplicateEntry(key));

@@ -15,6 +15,8 @@ pub mod drop_target;
 pub mod layers;
 pub mod overlay_editor;
 pub mod overlays;
+#[path = "visual_composer/panel_controls.rs"]
+mod panel_controls;
 pub mod preview_badge;
 pub mod viewport;
 pub use drop_target::{assignment_for_dropped_asset, character_drop_target_node, DraggedAsset};
@@ -163,6 +165,72 @@ pub fn visual_composer_heading_label(available_width: f32) -> &'static str {
     }
 }
 
+pub fn composer_stage_available_height(
+    visible_remaining: f32,
+    selected_node: Option<&StoryNode>,
+) -> f32 {
+    if visible_remaining <= 0.0 {
+        return 0.0;
+    }
+    let footer = composer_status_row_reserved_height(visible_remaining)
+        + composer_overlay_editor_available_height(visible_remaining, selected_node);
+    let minimum_stage = composer_minimum_stage_height(visible_remaining);
+    (visible_remaining - footer)
+        .max(minimum_stage)
+        .min(visible_remaining)
+}
+
+pub fn composer_overlay_editor_available_height(
+    visible_remaining: f32,
+    selected_node: Option<&StoryNode>,
+) -> f32 {
+    let desired = overlay_editor::overlay_editor_reserved_height(selected_node);
+    if desired <= 0.0 || visible_remaining <= 0.0 {
+        return 0.0;
+    }
+
+    let header_height = 28.0_f32.min(visible_remaining);
+    let status_height = composer_status_row_reserved_height(visible_remaining);
+    let max_without_collapsing_stage =
+        (visible_remaining - status_height - composer_minimum_stage_height(visible_remaining))
+            .max(0.0);
+    if visible_remaining < 360.0 {
+        return header_height.min(max_without_collapsing_stage);
+    }
+    let max_editor = (visible_remaining * 0.26)
+        .clamp(header_height, 140.0)
+        .min(max_without_collapsing_stage)
+        .min(visible_remaining);
+    desired.min(max_editor)
+}
+
+pub fn composer_status_row_reserved_height(visible_remaining: f32) -> f32 {
+    if visible_remaining < 32.0 {
+        0.0
+    } else if visible_remaining < 360.0 {
+        20.0
+    } else {
+        26.0
+    }
+}
+
+fn composer_minimum_stage_height(visible_remaining: f32) -> f32 {
+    (visible_remaining * 0.62).max(96.0).min(visible_remaining)
+}
+
+pub fn composer_layer_list_height(available_height: f32) -> f32 {
+    if available_height < 36.0 {
+        return 0.0;
+    }
+    let header_budget = 28.0;
+    let compact = available_height < 420.0;
+    let fraction = if compact { 0.12 } else { 0.18 };
+    let max_height = if compact { 48.0 } else { 96.0 };
+    (available_height * fraction)
+        .clamp(24.0, max_height)
+        .min((available_height - header_budget).max(0.0))
+}
+
 fn preview_quality_label(quality: PreviewQuality, mode: ComposerChromeMode) -> &'static str {
     if mode == ComposerChromeMode::Full {
         return quality.label();
@@ -282,15 +350,17 @@ impl<'a> VisualComposerPanel<'a> {
                 )
             });
         let layer_remaining = (panel_clip.bottom() - ui.cursor().min.y).max(0.0);
-        if layer_remaining >= 36.0 {
-            let layer_list_height = (layer_remaining - 28.0).clamp(24.0, 120.0);
+        let layer_list_height = composer_layer_list_height(layer_remaining);
+        if layer_list_height > 0.0 {
             if let Some(layer_action) = self.render_layer_panel(ui, &objects, layer_list_height) {
                 action = Some(layer_action);
             }
         }
         let visible_remaining = (panel_clip.bottom() - ui.cursor().min.y).max(0.0);
+        let viewport_available_height =
+            composer_stage_available_height(visible_remaining, self.selected_authoring_node);
         let viewport_size = viewport::composer_viewport_size(
-            egui::vec2(ui.available_width(), visible_remaining),
+            egui::vec2(ui.available_width(), viewport_available_height),
             self.stage_size(),
         );
         let viewport_rect = egui::Rect::from_min_size(ui.cursor().min, viewport_size);
@@ -429,17 +499,6 @@ impl<'a> VisualComposerPanel<'a> {
             );
         }
 
-        if ui.cursor().min.y < panel_clip.bottom() - 24.0 {
-            ui.add_space(4.0);
-            if let Some(edit_action) = overlay_editor::render_overlay_editor(
-                ui,
-                self.selected_authoring_node_id,
-                self.selected_authoring_node,
-            ) {
-                action = Some(edit_action);
-            }
-        }
-
         if ui.cursor().min.y < panel_clip.bottom() - 12.0 {
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
@@ -463,217 +522,30 @@ impl<'a> VisualComposerPanel<'a> {
             });
         }
 
+        let overlay_editor_remaining = (panel_clip.bottom() - ui.cursor().min.y).max(0.0);
+        let overlay_editor_available = composer_overlay_editor_available_height(
+            overlay_editor_remaining,
+            self.selected_authoring_node,
+        );
+        if overlay_editor_available >= 24.0 && ui.cursor().min.y < panel_clip.bottom() - 24.0 {
+            ui.add_space(4.0);
+            let editor_max_height = (panel_clip.bottom() - ui.cursor().min.y).max(0.0);
+            egui::ScrollArea::vertical()
+                .id_source("visual_composer_overlay_editor_scroll")
+                .auto_shrink([false, false])
+                .max_height(editor_max_height.min(overlay_editor_available))
+                .show(ui, |ui| {
+                    if let Some(edit_action) = overlay_editor::render_overlay_editor(
+                        ui,
+                        self.selected_authoring_node_id,
+                        self.selected_authoring_node,
+                    ) {
+                        action = Some(edit_action);
+                    }
+                });
+        }
+
         ui.set_clip_rect(previous_clip);
-        action
-    }
-
-    fn render_metadata_row(
-        &self,
-        ui: &mut egui::Ui,
-        entity_owners: &HashMap<u32, u32>,
-        chrome: ComposerChromeLayout,
-    ) {
-        ui.horizontal_wrapped(|ui| {
-            let (w, h) = self.stage_size();
-            let stage_label = if chrome.show_full_labels {
-                format!("Stage: {}x{}", w as u32, h as u32)
-            } else {
-                format!("{}x{}", w as u32, h as u32)
-            };
-            ui.label(stage_label);
-            ui.separator();
-            ui.label(format!("Entities: {}", self.scene.len()));
-            ui.separator();
-            let source = preview_source_label(
-                self.scene,
-                self.engine,
-                *self.preview_mode,
-                self.selected_authoring_node_id,
-                self.selected_authoring_node,
-                entity_owners,
-            );
-            ui.add(
-                egui::Label::new(crate::player_overlay::soft_wrap_long_tokens(
-                    source,
-                    chrome.source_wrap_chars,
-                ))
-                .wrap(true),
-            );
-        });
-    }
-
-    fn render_control_rows(
-        &mut self,
-        ui: &mut egui::Ui,
-        chrome: ComposerChromeLayout,
-        action: &mut Option<VisualComposerAction>,
-    ) {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 5.0;
-            self.render_quality_view_background_controls(ui, chrome, action);
-            if chrome.mode == ComposerChromeMode::Full {
-                ui.separator();
-                self.render_preview_run_controls(ui, chrome, action);
-            }
-        });
-        if chrome.mode != ComposerChromeMode::Full {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 5.0;
-                self.render_preview_run_controls(ui, chrome, action);
-            });
-        }
-    }
-
-    fn render_quality_view_background_controls(
-        &mut self,
-        ui: &mut egui::Ui,
-        chrome: ComposerChromeLayout,
-        action: &mut Option<VisualComposerAction>,
-    ) {
-        ui.label(if chrome.show_full_labels {
-            "Pixels:"
-        } else {
-            "Px"
-        });
-        egui::ComboBox::from_id_source("composer_preview_quality")
-            .width(chrome.quality_width)
-            .selected_text(preview_quality_label(*self.preview_quality, chrome.mode))
-            .show_ui(ui, |ui| {
-                for quality in PreviewQuality::ALL {
-                    ui.selectable_value(self.preview_quality, *quality, quality.label());
-                }
-            });
-        ui.label(if chrome.show_full_labels {
-            "View:"
-        } else {
-            "View"
-        });
-        egui::ComboBox::from_id_source("composer_stage_fit")
-            .width(chrome.fit_width)
-            .selected_text(self.stage_fit.label())
-            .show_ui(ui, |ui| {
-                for fit in StageFit::ALL {
-                    ui.selectable_value(self.stage_fit, *fit, fit.label());
-                }
-            });
-        let old_background_fit = *self.background_fit;
-        ui.label("BG");
-        egui::ComboBox::from_id_source("composer_background_fit")
-            .width(chrome.fit_width)
-            .selected_text(self.background_fit.label())
-            .show_ui(ui, |ui| {
-                for fit in BackgroundFit::ALL {
-                    ui.selectable_value(self.background_fit, *fit, fit.label());
-                }
-            });
-        if old_background_fit != *self.background_fit {
-            *action = Some(VisualComposerAction::BackgroundFitChanged {
-                node_id: self.selected_authoring_node_id,
-                fit: *self.background_fit,
-            });
-        }
-    }
-
-    fn render_preview_run_controls(
-        &mut self,
-        ui: &mut egui::Ui,
-        chrome: ComposerChromeLayout,
-        action: &mut Option<VisualComposerAction>,
-    ) {
-        ui.label(if chrome.show_full_labels {
-            "Preview:"
-        } else {
-            "Preview"
-        });
-        let old_preview_mode = *self.preview_mode;
-        egui::ComboBox::from_id_source("composer_preview_mode")
-            .width(chrome.preview_width)
-            .selected_text(preview_mode_label(*self.preview_mode, chrome.mode))
-            .show_ui(ui, |ui| {
-                for mode in ComposerPreviewMode::ALL {
-                    ui.selectable_value(self.preview_mode, *mode, mode.label());
-                }
-            });
-        if old_preview_mode != *self.preview_mode {
-            *action = Some(VisualComposerAction::PreviewModeChanged(*self.preview_mode));
-        }
-        if ui.small_button("Test here").clicked() {
-            *action = Some(VisualComposerAction::TestFromSelection);
-        }
-        if ui.small_button("Restart").clicked() {
-            *action = Some(VisualComposerAction::TestRestart);
-        }
-        overlays::render_runtime_controls(ui, self.engine, action);
-    }
-
-    fn render_layer_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        objects: &[LayeredSceneObject],
-        max_height: f32,
-    ) -> Option<VisualComposerAction> {
-        let mut action = None;
-        egui::CollapsingHeader::new("Layers")
-            .default_open(true)
-            .show(ui, |ui| {
-                if objects.is_empty() {
-                    ui.label("No layers");
-                    return;
-                }
-                egui::ScrollArea::vertical()
-                    .id_source("visual_composer_layers_scroll")
-                    .max_height(max_height)
-                    .show(ui, |ui| {
-                        ui.set_max_width(ui.available_width().max(1.0));
-                        for object in objects.iter().rev() {
-                            let entry = self
-                                .layer_overrides
-                                .get(&object.object_id)
-                                .copied()
-                                .unwrap_or(LayerOverride {
-                                    visible: object.visible,
-                                    locked: object.locked,
-                                });
-                            ui.horizontal_wrapped(|ui| {
-                                let mut visible = entry.visible;
-                                if ui.checkbox(&mut visible, "").changed() {
-                                    action = Some(VisualComposerAction::LayerVisibilityChanged {
-                                        object_id: object.object_id.clone(),
-                                        visible,
-                                    });
-                                }
-                                let mut locked = entry.locked;
-                                if ui.checkbox(&mut locked, "Lock").changed() {
-                                    action = Some(VisualComposerAction::LayerLockChanged {
-                                        object_id: object.object_id.clone(),
-                                        locked,
-                                    });
-                                }
-                                if object.source_node_id == self.active_event_node_id {
-                                    ui.label(
-                                        egui::RichText::new("active")
-                                            .color(egui::Color32::from_rgb(120, 220, 255)),
-                                    );
-                                }
-                                let source_label = format!(
-                                    "{} | z={} | {}",
-                                    object.kind.label(),
-                                    object.z_index,
-                                    object.source_field_path
-                                );
-                                let label_width = ui.available_width().max(1.0);
-                                ui.add_sized(
-                                    [label_width, ui.spacing().interact_size.y],
-                                    egui::Label::new(crate::player_overlay::soft_wrap_long_tokens(
-                                        &source_label,
-                                        28,
-                                    ))
-                                    .wrap(true),
-                                );
-                            });
-                        }
-                    });
-            });
         action
     }
 

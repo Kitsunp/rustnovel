@@ -1,11 +1,13 @@
 use visual_novel_engine::{
+    format_theme_color_code, parse_theme_color_code, preview_theme_color, preview_typography_token,
     resolve_layout,
     runtime::{
         CharacterPlacementRaw, ChoiceOptionRaw, ChoiceRaw, DialogueRaw, Engine, EventRaw,
         SceneUpdateRaw, ScriptRaw,
     },
     validate_ui_theme, ComponentRegistry, DisplayOrientation, DisplayProfile, LayoutPolicy,
-    RenderCommand, SafeAreaInsets, SecurityPolicy, StageProfile, UiTheme, WindowMode,
+    RenderCommand, SafeAreaInsets, SecurityPolicy, StageProfile, ThemeColorRgba, TypographyToken,
+    UiTheme, WindowMode,
 };
 
 use std::collections::BTreeMap;
@@ -61,6 +63,54 @@ fn default_theme_validates_as_tokenized_theme() {
             "default component registry missing {id}"
         );
     }
+}
+
+#[test]
+fn theme_color_preview_round_trips_visual_and_code_forms() {
+    let parsed = parse_theme_color_code("#3366CC80").expect("valid rgba color");
+    assert_eq!(
+        parsed,
+        ThemeColorRgba {
+            r: 0x33,
+            g: 0x66,
+            b: 0xCC,
+            a: 0x80,
+        }
+    );
+    assert_eq!(format_theme_color_code(parsed), "#3366CC80");
+
+    let preview = preview_theme_color("#3366CC");
+    assert!(preview.valid);
+    assert_eq!(preview.rgba.expect("rgba").a, 255);
+    assert_eq!(preview.code, "#3366CC");
+}
+
+#[test]
+fn theme_validation_rejects_non_hex_color_tokens() {
+    let mut theme = UiTheme::default();
+    theme
+        .colors
+        .insert("dialogue.text".to_string(), "#FFFFGG".to_string());
+
+    let report = validate_ui_theme(&theme);
+    assert!(!report.valid);
+    assert!(report.errors.iter().any(|error| error.contains("non-hex")));
+}
+
+#[test]
+fn typography_preview_uses_user_sample_and_size_contract() {
+    let token = TypographyToken {
+        font_family: "serif".to_string(),
+        size: 20.0,
+        weight: 700,
+        line_height: 1.4,
+    };
+
+    let preview = preview_typography_token(&token, "Custom line");
+    assert_eq!(preview.font_family, "serif");
+    assert_eq!(preview.sample, "Custom line");
+    assert_eq!(preview.line_height_px, 28.0);
+    assert!(preview.estimated_width > 0.0);
 }
 
 #[test]

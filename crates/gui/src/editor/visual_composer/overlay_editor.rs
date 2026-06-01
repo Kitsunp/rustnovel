@@ -3,6 +3,17 @@ use eframe::egui;
 use super::{ComposerNodeMutation, VisualComposerAction};
 use crate::editor::StoryNode;
 
+pub fn overlay_editor_reserved_height(selected_node: Option<&StoryNode>) -> f32 {
+    match selected_node {
+        Some(StoryNode::Dialogue { .. }) => 132.0,
+        Some(StoryNode::Choice { options, .. }) => {
+            let option_rows = options.len().min(3) as f32;
+            118.0 + option_rows * 24.0
+        }
+        _ => 0.0,
+    }
+}
+
 pub fn render_overlay_editor(
     ui: &mut egui::Ui,
     selected_node_id: Option<u32>,
@@ -28,7 +39,7 @@ fn render_dialogue_editor(
 ) -> Option<VisualComposerAction> {
     let mut action = None;
     egui::CollapsingHeader::new("Overlay edit")
-        .default_open(true)
+        .default_open(false)
         .show(ui, |ui| {
             let mut next_speaker = speaker.to_string();
             let mut next_text = text.to_string();
@@ -74,7 +85,7 @@ fn render_choice_editor(
 ) -> Option<VisualComposerAction> {
     let mut action = None;
     egui::CollapsingHeader::new("Overlay edit")
-        .default_open(true)
+        .default_open(false)
         .show(ui, |ui| {
             let mut next_prompt = prompt.to_string();
             ui.label("Prompt");

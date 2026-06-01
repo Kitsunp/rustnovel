@@ -46,6 +46,8 @@ fn visual_novel_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(export_bundle_json, m)?)?;
     m.add_function(wrap_pyfunction!(plan_export, m)?)?;
     m.add_function(wrap_pyfunction!(validate_ui_theme, m)?)?;
+    m.add_function(wrap_pyfunction!(preview_theme_color, m)?)?;
+    m.add_function(wrap_pyfunction!(preview_typography_token, m)?)?;
     m.add_function(wrap_pyfunction!(resolve_layout, m)?)?;
     m.add_function(wrap_pyfunction!(default_player_menu_config, m)?)?;
     m.add_function(wrap_pyfunction!(validate_player_menu_config, m)?)?;
@@ -191,6 +193,24 @@ fn validate_ui_theme(theme_json: String) -> PyResult<PyUiThemeValidationReport> 
     let theme: ::visual_novel_engine::UiTheme = serde_json::from_str(&theme_json)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     Ok(::visual_novel_engine::validate_ui_theme(&theme).into())
+}
+
+#[pyfunction]
+fn preview_theme_color(color_code: String) -> PyResult<String> {
+    serde_json::to_string_pretty(&::visual_novel_engine::preview_theme_color(&color_code))
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
+}
+
+#[pyfunction]
+#[pyo3(signature = (typography_json, sample=None))]
+fn preview_typography_token(typography_json: String, sample: Option<String>) -> PyResult<String> {
+    let token: ::visual_novel_engine::TypographyToken = serde_json::from_str(&typography_json)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+    serde_json::to_string_pretty(&::visual_novel_engine::preview_typography_token(
+        &token,
+        sample.as_deref().unwrap_or(""),
+    ))
+    .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
 }
 
 #[pyfunction]

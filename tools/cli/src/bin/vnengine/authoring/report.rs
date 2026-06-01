@@ -1,4 +1,29 @@
+use serde::Serialize;
 use visual_novel_engine::authoring::AuthoringValidationReport;
+
+pub(super) fn print_report(report: &AuthoringValidationReport) {
+    println!(
+        "authoring validation => issues={} errors={} warnings={} infos={}",
+        report.issue_count, report.error_count, report.warning_count, report.info_count
+    );
+    for issue in &report.issues {
+        println!(
+            "{} [{}:{}] {}",
+            issue.diagnostic_id, issue.severity, issue.code, issue.text_en.actual
+        );
+    }
+}
+
+#[derive(Serialize)]
+pub(super) struct ReportCompareSummary {
+    pub(super) before_issue_count: usize,
+    pub(super) after_issue_count: usize,
+    pub(super) before_error_count: usize,
+    pub(super) after_error_count: usize,
+    pub(super) semantic_changed: bool,
+    pub(super) layout_changed: bool,
+    pub(super) assets_changed: bool,
+}
 
 pub(super) fn sarif_from_report(report: &AuthoringValidationReport) -> serde_json::Value {
     let results = report

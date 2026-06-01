@@ -62,6 +62,47 @@ fn choice_layout_handles_tiny_stage_and_unbroken_text_without_invalid_geometry()
 }
 
 #[test]
+fn choice_layout_scales_chrome_with_stage_size() {
+    let compact_stage = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(180.0, 102.0));
+    let large_stage = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 540.0));
+    let options = vec![
+        "Visit the courtyard".to_string(),
+        "Find the music room".to_string(),
+    ];
+
+    let compact = choice_overlay_layout(
+        compact_stage,
+        "Where should Sakura take you first?",
+        &options,
+    );
+    let large = choice_overlay_layout(large_stage, "Where should Sakura take you first?", &options);
+
+    assert!(compact.scale < large.scale);
+    assert!(compact.prompt_font_size < large.prompt_font_size);
+    assert!(compact.option_font_size < large.option_font_size);
+    assert!(compact.content_padding.x < large.content_padding.x);
+    assert!(compact.options_viewport_height > 0.0);
+    assert!(compact_stage.contains_rect(compact.panel));
+    assert!(large_stage.contains_rect(large.panel));
+}
+
+#[test]
+fn dialogue_layout_scales_chrome_with_stage_size() {
+    let compact_stage = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(180.0, 102.0));
+    let large_stage = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 540.0));
+
+    let compact = visual_novel_gui::player_overlay::dialogue_overlay_layout(compact_stage);
+    let large = visual_novel_gui::player_overlay::dialogue_overlay_layout(large_stage);
+
+    assert!(compact.scale < large.scale);
+    assert!(compact.speaker_font_size < large.speaker_font_size);
+    assert!(compact.text_font_size < large.text_font_size);
+    assert!(compact.content_padding.x < large.content_padding.x);
+    assert!(compact_stage.contains_rect(compact.panel));
+    assert!(large_stage.contains_rect(large.panel));
+}
+
+#[test]
 fn dialogue_overlay_rect_stays_inside_stage_across_stage_sizes() {
     for size in [egui::vec2(1280.0, 720.0), egui::vec2(320.0, 180.0), egui::vec2(120.0, 72.0)] {
         let stage = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
@@ -252,6 +293,69 @@ fn runtime_preview_mode_uses_engine_overlay_instead_of_selected_authoring_node()
         OverlaySource::Choice {
             prompt: "Runtime choice".to_string(),
             options: vec!["Runtime route".to_string()],
+        }
+    );
+}
+
+#[test]
+fn runtime_and_authoring_choice_options_are_never_merged() {
+    let script = visual_novel_engine::runtime::ScriptRaw::new(
+        vec![visual_novel_engine::runtime::EventRaw::Choice(
+            visual_novel_engine::runtime::ChoiceRaw {
+                prompt: "Runtime choice".to_string(),
+                options: vec![visual_novel_engine::runtime::ChoiceOptionRaw {
+                    text: "Runtime route".to_string(),
+                    target: "__end".to_string(),
+                }],
+            },
+        )],
+        std::collections::BTreeMap::from([
+            ("start".to_string(), 0usize),
+            ("__end".to_string(), 1usize),
+        ]),
+    );
+    let engine = visual_novel_engine::runtime::Engine::new(
+        script,
+        visual_novel_engine::SecurityPolicy::default(),
+        visual_novel_engine::ResourceLimiter::default(),
+    )
+    .expect("engine");
+    let selected = StoryNode::Choice {
+        prompt: "Selected choice".to_string(),
+        options: vec!["Selected A".to_string(), "Selected B".to_string()],
+    };
+
+    let runtime_source = selected_overlay_source(
+        Some(&engine),
+        Some(&selected),
+        ComposerPreviewMode::RuntimeInherited,
+        &HashMap::new(),
+    )
+    .expect("overlay selection should not hide runtime errors")
+    .expect("runtime choice overlay");
+
+    assert_eq!(
+        runtime_source,
+        OverlaySource::Choice {
+            prompt: "Runtime choice".to_string(),
+            options: vec!["Runtime route".to_string()],
+        }
+    );
+
+    let isolated_source = selected_overlay_source(
+        Some(&engine),
+        Some(&selected),
+        ComposerPreviewMode::IsolatedNode,
+        &HashMap::new(),
+    )
+    .expect("overlay selection should not hide runtime errors")
+    .expect("selected choice overlay");
+
+    assert_eq!(
+        isolated_source,
+        OverlaySource::Choice {
+            prompt: "Selected choice".to_string(),
+            options: vec!["Selected A".to_string(), "Selected B".to_string()],
         }
     );
 }

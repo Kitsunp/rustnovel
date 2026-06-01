@@ -190,6 +190,75 @@ fn visual_composer_heading_shrinks_for_narrow_docks() {
     );
 }
 
+#[test]
+fn composer_stage_reserves_footer_without_collapsing_preview() {
+    let unselected_stage = super::composer_stage_available_height(240.0, None);
+    assert!(unselected_stage < 240.0);
+    assert!(
+        unselected_stage + super::composer_status_row_reserved_height(240.0) <= 240.0,
+        "unselected composer frames should reserve the status row outside the stage"
+    );
+
+    let dialogue = StoryNode::Dialogue {
+        speaker: "Sakura".to_string(),
+        text: "Where should we go first?".to_string(),
+    };
+    let choice = StoryNode::Choice {
+        prompt: "Where should Sakura take you first?".to_string(),
+        options: vec![
+            "Visit the courtyard".to_string(),
+            "Find the music room".to_string(),
+        ],
+    };
+
+    for selected_node in [&dialogue, &choice] {
+        for visible_remaining in [180.0, 320.0, 540.0] {
+            let stage_height =
+                super::composer_stage_available_height(visible_remaining, Some(selected_node));
+            let editor_height = super::composer_overlay_editor_available_height(
+                visible_remaining,
+                Some(selected_node),
+            );
+            let status_height = super::composer_status_row_reserved_height(visible_remaining);
+
+            assert!(
+                stage_height + status_height + editor_height <= visible_remaining + 0.001,
+                "stage, status row and overlay editor must not overlap"
+            );
+            assert!(stage_height >= visible_remaining * 0.62);
+            assert!(editor_height > 0.0);
+            assert!(
+                editor_height
+                    <= crate::editor::visual_composer::overlay_editor::overlay_editor_reserved_height(
+                        Some(selected_node),
+                    ),
+                "overlay editor should be bounded by the selected node content"
+            );
+        }
+    }
+}
+
+#[test]
+fn composer_viewport_uses_reserved_stage_height_without_double_status_deduction() {
+    let viewport = super::viewport::composer_viewport_size(eframe::egui::vec2(560.0, 160.0), (1280.0, 720.0));
+
+    assert!(
+        viewport.y >= 159.0,
+        "stage viewport should consume the reserved stage band instead of subtracting footer/status rows twice: {viewport:?}"
+    );
+}
+
+#[test]
+fn layer_panel_cedes_height_to_stage_and_overlay_editor_in_compact_composer() {
+    let compact = super::composer_layer_list_height(260.0);
+    let tall = super::composer_layer_list_height(720.0);
+
+    assert!(compact > 0.0);
+    assert!(compact < 60.0);
+    assert!(tall > compact);
+    assert!(tall <= 96.0);
+}
+
 fn inherited_background_scene() -> (
     visual_novel_engine::SceneState,
     std::collections::HashMap<u32, u32>,

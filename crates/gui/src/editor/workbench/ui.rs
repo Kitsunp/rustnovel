@@ -1,3 +1,9 @@
+#[path = "ui/layout_helpers.rs"]
+mod layout_helpers;
+use layout_helpers::{dock_rect, resize_width_override, vertical_splitter};
+#[path = "ui/validation_panel.rs"]
+mod validation_panel;
+
 use super::*;
 
 impl EditorWorkbench {
@@ -371,8 +377,20 @@ impl EditorWorkbench {
             self.node_graph.zoom_to_fit_viewport(viewport_size);
             self.pending_graph_fit = false;
             self.pending_graph_focus = None;
+            self.last_graph_viewport_size = Some(viewport_size);
             return;
         }
+        if crate::editor::workbench::graph_viewport_resize_requires_fit(
+            self.last_graph_viewport_size,
+            viewport_size,
+        ) && !self.node_graph.is_empty()
+        {
+            self.node_graph.zoom_to_fit_viewport(viewport_size);
+            self.last_graph_viewport_size = Some(viewport_size);
+            self.pending_graph_focus = None;
+            return;
+        }
+        self.last_graph_viewport_size = Some(viewport_size);
         let Some(node_id) = self.pending_graph_focus.take() else {
             return;
         };
@@ -381,213 +399,4 @@ impl EditorWorkbench {
                 .pan_node_into_viewport(node_id, viewport_size);
         }
     }
-
-    fn render_validation_report_panel(&mut self, ui: &mut egui::Ui) {
-        let error_count = self
-            .validation_issues
-            .iter()
-            .filter(|issue| issue.severity == LintSeverity::Error)
-            .count();
-        let warning_count = self
-            .validation_issues
-            .iter()
-            .filter(|issue| issue.severity == LintSeverity::Warning)
-            .count();
-        let info_count = self
-            .validation_issues
-            .iter()
-            .filter(|issue| issue.severity == LintSeverity::Info)
-            .count();
-        let report_body_height = super::layout::validation_report_body_height(
-            ui.available_height(),
-            self.validation_issues.len(),
-        );
-
-        let mut close_validation = false;
-        let mut toggle_validation_collapse = false;
-        ui.group(|ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Validation Report | E:{} W:{} I:{}",
-                        error_count, warning_count, info_count
-                    ))
-                    .strong(),
-                );
-                ui.separator();
-                let collapse_label = if self.validation_collapsed {
-                    "Expandir"
-                } else {
-                    "Minimizar"
-                };
-                if ui.small_button(collapse_label).clicked() {
-                    toggle_validation_collapse = true;
-                }
-                if ui.small_button("Cerrar").clicked() {
-                    close_validation = true;
-                }
-            });
-
-            if self.validation_collapsed {
-                return;
-            }
-
-            ui.add_space(2.0);
-            if self.validation_issues.is_empty() {
-                ui.colored_label(egui::Color32::GREEN, "No issues found.");
-                return;
-            }
-
-            egui::ScrollArea::vertical()
-                .id_source("validation_report_embedded_scroll")
-                .max_height(report_body_height)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    let lint_response = LintPanel::new(
-                        &self.validation_issues,
-                        &mut self.selected_node,
-                        &mut self.selected_issue,
-                        &mut self.diagnostic_language,
-                        &self.node_graph,
-                        self.last_fix_snapshot.is_some(),
-                    )
-                    .ui(ui);
-                    self.handle_lint_panel_actions(lint_response.actions);
-                });
-        });
-
-        if toggle_validation_collapse {
-            self.validation_collapsed = !self.validation_collapsed;
-        }
-        if close_validation {
-            self.show_validation = false;
-            self.validation_collapsed = false;
-        }
-    }
-
-    fn handle_lint_panel_actions(
-        &mut self,
-        actions: Vec<crate::editor::lint_panel::LintPanelAction>,
-    ) {
-        for action in actions {
-            match action {
-                crate::editor::lint_panel::LintPanelAction::ApplyFix {
-                    issue_index,
-                    fix_id,
-                    structural,
-                } => {
-                    if structural {
-                        match self.prepare_structural_fix_confirmation(issue_index, &fix_id) {
-                            Ok(()) => {
-                                self.toast = Some(ToastState::warning(format!(
-                                    "Review diff and confirm structural fix '{fix_id}'"
-                                )));
-                            }
-                            Err(err) => {
-                                self.toast = Some(ToastState::error(format!(
-                                    "Fix '{fix_id}' preview failed: {err}"
-                                )));
-                            }
-                        }
-                    } else {
-                        match self.apply_issue_fix(issue_index, &fix_id) {
-                            Ok(()) => {
-                                self.toast =
-                                    Some(ToastState::success(format!("Applied fix '{fix_id}'")));
-                            }
-                            Err(err) => {
-                                self.toast = Some(ToastState::error(format!(
-                                    "Fix '{fix_id}' failed: {err}"
-                                )));
-                            }
-                        }
-                    }
-                }
-                crate::editor::lint_panel::LintPanelAction::ApplyAllSafeFixes => {
-                    let applied = self.apply_all_safe_fixes();
-                    if applied > 0 {
-                        self.toast = Some(ToastState::success(format!(
-                            "Applied {applied} safe fix(es)"
-                        )));
-                    } else {
-                        self.toast = Some(ToastState::warning(
-                            "No safe fixes available for current diagnostics",
-                        ));
-                    }
-                }
-                crate::editor::lint_panel::LintPanelAction::PrepareAutoFixBatch {
-                    include_review,
-                } => match self.prepare_autofix_batch_confirmation(include_review) {
-                    Ok(planned) => {
-                        self.toast = Some(ToastState::warning(format!(
-                            "Review horizontal diff and confirm auto-fix batch ({planned} planned)"
-                        )));
-                    }
-                    Err(err) => {
-                        self.toast = Some(ToastState::warning(format!(
-                            "Auto-fix batch not prepared: {err}"
-                        )));
-                    }
-                },
-                crate::editor::lint_panel::LintPanelAction::AutoFixIssue {
-                    issue_index,
-                    include_review,
-                } => match self.apply_best_fix_for_issue(issue_index, include_review) {
-                    Ok(outcome) => {
-                        self.toast = Some(ToastState::success(outcome));
-                    }
-                    Err(err) => {
-                        self.toast =
-                            Some(ToastState::error(format!("Issue auto-fix failed: {err}")));
-                    }
-                },
-                crate::editor::lint_panel::LintPanelAction::RevertLastFix => {
-                    if self.revert_last_fix() {
-                        self.toast = Some(ToastState::success("Last fix reverted successfully"));
-                    } else {
-                        self.toast = Some(ToastState::warning("No fix to revert"));
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn dock_rect(origin: egui::Pos2, rect: super::layout::WorkspacePanelRect) -> egui::Rect {
-    egui::Rect::from_min_size(
-        egui::pos2(origin.x + rect.x, origin.y + rect.y),
-        egui::vec2(rect.w.max(1.0), rect.h.max(1.0)),
-    )
-}
-
-fn vertical_splitter(ui: &mut egui::Ui, rect: egui::Rect) -> egui::Response {
-    let response = ui
-        .allocate_rect(rect, egui::Sense::click_and_drag())
-        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-    let color = if response.dragged() || response.hovered() {
-        egui::Color32::from_gray(90)
-    } else {
-        egui::Color32::from_gray(46)
-    };
-    ui.painter()
-        .rect_filled(rect.shrink2(egui::vec2(3.0, 0.0)), 0.0, color);
-    response
-}
-
-fn resize_width_override(
-    target: &mut Option<f32>,
-    reference_width: &mut Option<f32>,
-    current: f32,
-    delta: f32,
-    min: f32,
-    max: f32,
-    available_width: f32,
-) {
-    if !delta.is_finite() || delta.abs() < 0.1 {
-        return;
-    }
-    if available_width.is_finite() && available_width >= 360.0 {
-        *reference_width = Some(available_width);
-    }
-    *target = Some((current + delta).clamp(min, max));
 }

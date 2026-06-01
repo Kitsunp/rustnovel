@@ -26,144 +26,24 @@ use crate::editor::{
 };
 use crate::VnConfig;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct LayoutOverrides {
-    #[serde(default)]
-    pub dock_reference_width: Option<f32>,
-    pub asset_width: Option<f32>,
-    pub graph_width: Option<f32>,
-    pub inspector_width: Option<f32>,
-    pub validation_height: Option<f32>,
-    pub timeline_height: Option<f32>,
-}
+#[path = "workbench/types.rs"]
+mod types;
+pub use types::*;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct LayoutPreferences {
-    pub show_graph: bool,
-    pub show_inspector: bool,
-    pub show_timeline: bool,
-    pub show_asset_browser: bool,
-    pub node_editor_window_open: bool,
-    #[serde(default)]
-    pub layout_overrides: LayoutOverrides,
-    #[serde(default)]
-    pub composer_preview_quality: crate::editor::PreviewQuality,
-    #[serde(default)]
-    pub composer_stage_fit: crate::editor::StageFit,
-    #[serde(default)]
-    pub composer_preview_mode: crate::editor::ComposerPreviewMode,
-    #[serde(default)]
-    pub composer_default_background_fit: crate::editor::BackgroundFit,
-    #[serde(default)]
-    pub workspace_layout: layout::WorkspaceLayout,
-}
-
-#[derive(Clone, Debug)]
-pub struct QuickFixAuditEntry {
-    pub operation_id: String,
-    pub diagnostic_id: String,
-    pub fix_id: String,
-    pub node_id: Option<u32>,
-    pub event_ip: Option<u32>,
-    pub before_sha256: String,
-    pub after_sha256: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct PendingStructuralFix {
-    pub issue_index: usize,
-    pub fix_id: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct PendingAutoFixOperation {
-    pub issue: LintIssue,
-    pub fix_id: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct PendingAutoFixBatch {
-    pub include_review: bool,
-    pub operations: Vec<PendingAutoFixOperation>,
-}
-
-#[derive(Clone, Debug)]
-pub struct PendingEditorOperation {
-    pub kind: String,
-    pub details: String,
-    pub field_path: Option<String>,
-    pub before_value: Option<String>,
-    pub after_value: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AutoFixBatchSkip {
-    pub diagnostic_id: String,
-    pub fix_id: String,
-    pub reason: String,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct AutoFixBatchResult {
-    pub applied: usize,
-    pub skipped: usize,
-    pub skipped_details: Vec<AutoFixBatchSkip>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ThemeEditorDraft {
-    pub original: visual_novel_engine::UiTheme,
-    pub draft: visual_novel_engine::UiTheme,
-    pub preview_applied: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ExportWizardKind {
-    ExecutableGame,
-    CompiledScriptBundle,
-}
-
-#[derive(Clone, Debug)]
-pub struct ExportWizardState {
-    pub export_kind: ExportWizardKind,
-    pub target: visual_novel_engine::ExportTargetPlatform,
-    pub output_root: String,
-    pub runtime_artifact: String,
-    pub entry_script: String,
-    pub require_executable: bool,
-    pub integrity: visual_novel_engine::BundleIntegrity,
-    pub hmac_key: String,
-    pub last_plan: Option<visual_novel_engine::ExportPlan>,
-    pub last_error: Option<String>,
-    pub last_report: Option<visual_novel_engine::ExportBundleReport>,
-    pub dry_run: bool,
-    pub logs: Vec<String>,
-}
-
-impl Default for ExportWizardState {
-    fn default() -> Self {
-        Self {
-            export_kind: ExportWizardKind::ExecutableGame,
-            target: if cfg!(target_os = "windows") {
-                visual_novel_engine::ExportTargetPlatform::Windows
-            } else if cfg!(target_os = "macos") {
-                visual_novel_engine::ExportTargetPlatform::Macos
-            } else {
-                visual_novel_engine::ExportTargetPlatform::Linux
-            },
-            output_root: String::new(),
-            runtime_artifact: String::new(),
-            entry_script: String::new(),
-            require_executable: true,
-            integrity: visual_novel_engine::BundleIntegrity::None,
-            hmac_key: String::new(),
-            last_plan: None,
-            last_error: None,
-            last_report: None,
-            dry_run: true,
-            logs: Vec::new(),
-        }
+pub fn graph_viewport_resize_requires_fit(
+    previous: Option<egui::Vec2>,
+    current: egui::Vec2,
+) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+    if previous.x <= 0.0 || previous.y <= 0.0 || current.x <= 0.0 || current.y <= 0.0 {
+        return false;
     }
+    let width_delta = (current.x - previous.x).abs();
+    let height_delta = (current.y - previous.y).abs();
+    let area_ratio = (current.x * current.y) / (previous.x * previous.y).max(1.0);
+    width_delta > 48.0 || height_delta > 48.0 || !(0.88..=1.12).contains(&area_ratio)
 }
 
 /// Main editor workbench state and UI.
@@ -198,6 +78,7 @@ pub struct EditorWorkbench {
     pub show_profiler_cache_panel: bool,
     pub active_ui_theme: visual_novel_engine::UiTheme,
     pub theme_editor_draft: Option<ThemeEditorDraft>,
+    pub theme_preview_text: String,
     pub export_wizard: ExportWizardState,
     pub last_export_report: Option<visual_novel_engine::ExportBundleReport>,
 
@@ -206,6 +87,7 @@ pub struct EditorWorkbench {
     pub selected_entity: Option<u32>,
     pub pending_graph_focus: Option<u32>,
     pub pending_graph_fit: bool,
+    last_graph_viewport_size: Option<egui::Vec2>,
 
     // Scene Data
     pub scene: visual_novel_engine::SceneState,
@@ -364,12 +246,14 @@ impl EditorWorkbench {
             show_profiler_cache_panel: false,
             active_ui_theme: visual_novel_engine::UiTheme::default(),
             theme_editor_draft: None,
+            theme_preview_text: "Sakura: Where should we go first?".to_string(),
             export_wizard: ExportWizardState::default(),
             last_export_report: None,
             selected_node: None,
             selected_entity: None,
             pending_graph_focus: None,
             pending_graph_fit: false,
+            last_graph_viewport_size: None,
             scene: visual_novel_engine::SceneState::default(),
             composer_entity_owners: std::collections::HashMap::new(),
             composer_image_cache: std::collections::HashMap::new(),
@@ -616,55 +500,5 @@ mod ui_actions;
 mod workspace_layout_ops;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn create_file_symlink(link: &std::path::Path, target: &std::path::Path) -> bool {
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(target, link).is_ok()
-        }
-
-        #[cfg(windows)]
-        {
-            std::os::windows::fs::symlink_file(target, link).is_ok()
-        }
-
-        #[cfg(not(any(unix, windows)))]
-        {
-            let _ = link;
-            let _ = target;
-            false
-        }
-    }
-
-    #[test]
-    fn corrupt_layout_prefs_are_not_silently_ignored() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("layout.json");
-        std::fs::write(&path, "{not-json").expect("write corrupt prefs");
-
-        let err = EditorWorkbench::load_layout_prefs(&path)
-            .expect_err("corrupt layout preferences must report an error");
-
-        assert!(err.contains("parse layout preferences"));
-        assert!(err.contains("layout.json"));
-    }
-
-    #[test]
-    fn dangling_layout_prefs_symlink_is_not_silently_ignored() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("layout.json");
-        let missing_target = dir.path().join("missing-layout.json");
-        if !create_file_symlink(&path, &missing_target) {
-            eprintln!("file symlink creation not supported on this platform");
-            return;
-        }
-
-        let err = EditorWorkbench::load_layout_prefs(&path)
-            .expect_err("dangling layout preferences symlink must report an error");
-
-        assert!(err.contains("read '"));
-        assert!(err.contains("layout.json"));
-    }
-}
+#[path = "workbench/tests.rs"]
+mod tests;

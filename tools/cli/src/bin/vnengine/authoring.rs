@@ -13,6 +13,7 @@ use visual_novel_engine::{run_repro_case, ReproCase};
 
 #[path = "authoring/report.rs"]
 mod report;
+use report::{print_report, ReportCompareSummary};
 
 #[derive(Subcommand)]
 pub enum AuthoringCommand {
@@ -538,28 +539,4 @@ impl From<CliDocumentCommand> for AuthoringDocumentCommand {
             }
         }
     }
-}
-
-fn print_report(report: &AuthoringValidationReport) {
-    println!(
-        "authoring validation => issues={} errors={} warnings={} infos={}",
-        report.issue_count, report.error_count, report.warning_count, report.info_count
-    );
-    for issue in &report.issues {
-        println!(
-            "{} [{}:{}] {}",
-            issue.diagnostic_id, issue.severity, issue.code, issue.text_en.actual
-        );
-    }
-}
-
-#[derive(Serialize)]
-struct ReportCompareSummary {
-    before_issue_count: usize,
-    after_issue_count: usize,
-    before_error_count: usize,
-    after_error_count: usize,
-    semantic_changed: bool,
-    layout_changed: bool,
-    assets_changed: bool,
 }

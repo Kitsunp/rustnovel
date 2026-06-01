@@ -330,6 +330,8 @@ class NativeBindingsTests(unittest.TestCase):
             "UiThemeValidationReport",
             "LayoutResolution",
             "validate_ui_theme",
+            "preview_theme_color",
+            "preview_typography_token",
             "resolve_layout",
         ):
             self.assertTrue(hasattr(self.native, name), f"missing {name}")
@@ -362,6 +364,26 @@ class NativeBindingsTests(unittest.TestCase):
         theme_report = self.native.validate_ui_theme(json.dumps(theme))
         self.assertTrue(hasattr(theme_report, "to_dict"))
         self.assertTrue(theme_report.to_dict()["valid"])
+
+        color_preview = json.loads(self.native.preview_theme_color("#3366CC80"))
+        self.assertTrue(color_preview["valid"])
+        self.assertEqual(color_preview["rgba"], {"r": 51, "g": 102, "b": 204, "a": 128})
+
+        typography_preview = json.loads(
+            self.native.preview_typography_token(
+                json.dumps(
+                    {
+                        "font_family": "serif",
+                        "size": 20.0,
+                        "weight": 700,
+                        "line_height": 1.4,
+                    }
+                ),
+                "Custom preview",
+            )
+        )
+        self.assertEqual(typography_preview["sample"], "Custom preview")
+        self.assertEqual(typography_preview["line_height_px"], 28.0)
 
         display = {
             "logical_size": [800.0, 600.0],

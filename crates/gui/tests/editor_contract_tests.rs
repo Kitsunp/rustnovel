@@ -73,6 +73,16 @@ mod asset_browser_tests {
     editor_contract_cases!("asset_browser_tests.rs");
 }
 
+mod asset_candidates_tests {
+    pub use crate::editor::asset_candidates::*;
+    editor_contract_cases!("asset_candidates_tests.rs");
+}
+
+mod atomic_io_tests {
+    pub use crate::editor::atomic_io::*;
+    editor_contract_cases!("atomic_io_tests.rs");
+}
+
 mod node_rendering_tests {
     pub use crate::editor::node_rendering::*;
     pub use crate::editor::{NodeGraph, StoryNode};

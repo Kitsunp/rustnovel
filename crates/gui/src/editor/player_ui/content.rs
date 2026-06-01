@@ -183,34 +183,46 @@ pub fn render_dialogue_overlay(
     } = dialogue;
     let rendered_text = player.visible_text(text, now_sec);
     let text_complete = player.is_text_fully_revealed(text, now_sec);
-    let rect = crate::player_overlay::dialogue_overlay_rect(geometry.stage_rect);
-    let box_height = rect.height();
+    let layout = crate::player_overlay::dialogue_overlay_layout(geometry.stage_rect);
+    let rect = layout.panel;
 
     ui.painter().rect_filled(
         rect,
-        6.0,
+        layout.corner_radius,
         egui::Color32::from_rgba_premultiplied(8, 8, 14, 220),
     );
     ui.painter().rect_stroke(
         rect,
-        6.0,
+        layout.corner_radius,
         egui::Stroke::new(1.0, egui::Color32::from_gray(130)),
     );
     let mut should_advance = false;
-    ui.allocate_ui_at_rect(rect.shrink2(egui::vec2(16.0, 12.0)), |ui| {
-        ui.set_clip_rect(rect.shrink(8.0));
+    ui.allocate_ui_at_rect(rect.shrink2(layout.content_padding), |ui| {
+        ui.set_clip_rect(rect.shrink(layout.clip_padding));
         ui.add_sized(
-            [ui.available_width(), 22.0],
+            [ui.available_width(), layout.speaker_height],
             egui::Label::new(
-                egui::RichText::new(speaker).color(egui::Color32::from_rgb(180, 210, 255)),
+                egui::RichText::new(speaker)
+                    .color(egui::Color32::from_rgb(180, 210, 255))
+                    .size(layout.speaker_font_size),
             )
             .wrap(true),
         );
-        ui.add_space(6.0);
+        ui.add_space(layout.speaker_text_gap);
+        let text_height = (rect.height()
+            - layout.content_padding.y * 2.0
+            - layout.speaker_height
+            - layout.speaker_text_gap
+            - layout.control_height)
+            .max(12.0 * layout.scale);
         ui.add_sized(
-            [ui.available_width(), (box_height - 82.0).max(24.0)],
-            egui::Label::new(egui::RichText::new(rendered_text).color(egui::Color32::WHITE))
-                .wrap(true),
+            [ui.available_width(), text_height],
+            egui::Label::new(
+                egui::RichText::new(rendered_text)
+                    .color(egui::Color32::WHITE)
+                    .size(layout.text_font_size),
+            )
+            .wrap(true),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let label = if text_complete {
@@ -218,7 +230,13 @@ pub fn render_dialogue_overlay(
             } else {
                 "Show full"
             };
-            if ui.button(label).clicked() {
+            if ui
+                .add_sized(
+                    [96.0 * layout.scale, layout.control_height],
+                    egui::Button::new(egui::RichText::new(label).size(layout.text_font_size)),
+                )
+                .clicked()
+            {
                 reveal_or_advance_dialogue(
                     player,
                     text,
@@ -325,29 +343,31 @@ pub fn render_choice_overlay(
         .collect::<Vec<_>>();
     let layout =
         crate::player_overlay::choice_overlay_layout(geometry.stage_rect, prompt, &option_labels);
+    let corner_radius = 6.0 * layout.scale;
     ui.painter().rect_filled(
         layout.panel,
-        6.0,
+        corner_radius,
         egui::Color32::from_rgba_premultiplied(10, 12, 18, 230),
     );
     ui.painter().rect_stroke(
         layout.panel,
-        6.0,
+        corner_radius,
         egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
     );
 
     let mut selected = None;
-    ui.allocate_ui_at_rect(layout.panel.shrink2(egui::vec2(18.0, 14.0)), |ui| {
-        ui.set_clip_rect(layout.panel.shrink(8.0));
+    ui.allocate_ui_at_rect(layout.panel.shrink2(layout.content_padding), |ui| {
+        ui.set_clip_rect(layout.panel.shrink(layout.clip_padding));
         ui.add_sized(
             [ui.available_width(), layout.prompt_height],
             egui::Label::new(
                 egui::RichText::new(crate::player_overlay::soft_wrap_long_tokens(prompt, 28))
-                    .color(egui::Color32::WHITE),
+                    .color(egui::Color32::WHITE)
+                    .size(layout.prompt_font_size),
             )
             .wrap(true),
         );
-        ui.add_space(10.0);
+        ui.add_space(layout.prompt_option_gap);
         egui::ScrollArea::vertical()
             .id_source("player_choice_overlay_scroll")
             .max_height(layout.options_viewport_height)
@@ -358,15 +378,18 @@ pub fn render_choice_overlay(
                     if ui
                         .add_sized(
                             [ui.available_width(), row_height],
-                            egui::Button::new(crate::player_overlay::soft_wrap_long_tokens(
-                                option, 32,
-                            )),
+                            egui::Button::new(
+                                egui::RichText::new(crate::player_overlay::soft_wrap_long_tokens(
+                                    option, 32,
+                                ))
+                                .size(layout.option_font_size),
+                            ),
                         )
                         .clicked()
                     {
                         selected = Some((idx, option.clone()));
                     }
-                    ui.add_space(8.0);
+                    ui.add_space(layout.option_gap);
                 }
             });
     });

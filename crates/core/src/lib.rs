@@ -95,11 +95,13 @@ pub use route_tree::{
     RouteNodeKind, RouteProgressSnapshot, RouteTree, VisualResolveStrategy,
 };
 pub use scene_frame::{
-    resolve_layout, validate_ui_theme, Anchor, ComponentRegistry, ComponentStyle,
-    ComponentStyleOverride, DisplayOrientation, DisplayProfile, HeadlessSceneFramePresenter,
-    ImageFit, InteractionSpec, LayoutBreakpoint, LayoutPolicy, LayoutRect, LayoutResolution,
-    LayoutSpec, RenderCommand, SafeAreaInsets, SafeAreaMode, SceneFrame, SceneFramePresenter,
-    StageFitPolicy, StageProfile, TypographyToken, UiDensity, UiResponse, UiTheme,
+    format_theme_color_code, format_theme_color_code_with_alpha, parse_theme_color_code,
+    preview_theme_color, preview_typography_token, resolve_layout, validate_ui_theme, Anchor,
+    ComponentRegistry, ComponentStyle, ComponentStyleOverride, DisplayOrientation, DisplayProfile,
+    HeadlessSceneFramePresenter, ImageFit, InteractionSpec, LayoutBreakpoint, LayoutPolicy,
+    LayoutRect, LayoutResolution, LayoutSpec, RenderCommand, SafeAreaInsets, SafeAreaMode,
+    SceneFrame, SceneFramePresenter, StageFitPolicy, StageProfile, ThemeColorPreview,
+    ThemeColorRgba, TypographyPreview, TypographyToken, UiDensity, UiResponse, UiTheme,
     UiThemeValidationReport, WindowMode,
 };
 pub use schema_policy::{

@@ -194,6 +194,35 @@ fn loaded_graph_pending_fit_uses_visible_graph_panel() {
 }
 
 #[test]
+fn graph_view_refits_after_real_viewport_resize() {
+    let ctx = egui::Context::default();
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    workbench.mode = EditorMode::Editor;
+    workbench.show_graph = true;
+    workbench.show_inspector = false;
+    workbench.show_timeline = false;
+    workbench.show_asset_browser = false;
+    workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+    workbench
+        .node_graph
+        .add_node(StoryNode::End, egui::pos2(900.0, 620.0));
+    workbench.pending_graph_fit = true;
+
+    run_workbench_frame(&ctx, &mut workbench, 900.0, 520.0, Vec::new());
+    let compact_zoom = workbench.node_graph.zoom();
+
+    run_workbench_frame(&ctx, &mut workbench, 1920.0, 1080.0, Vec::new());
+    let wide_zoom = workbench.node_graph.zoom();
+
+    assert!(
+        wide_zoom > compact_zoom * 1.2,
+        "graph should refit when the real node editor viewport grows, compact={compact_zoom}, wide={wide_zoom}"
+    );
+}
+
+#[test]
 fn editor_workbench_splitters_resize_real_panels_end_to_end() {
     #[derive(Clone, Copy)]
     enum SplitterProbe {
@@ -477,7 +506,12 @@ fn node_context_menu_renders_scene_actions_inside_edge_viewports() {
 
 #[test]
 fn editor_auxiliary_windows_render_without_escaping_viewports() {
-    for &(width, height) in &[(800.0, 600.0), (1280.0, 720.0), (1920.0, 1080.0)] {
+    for &(width, height) in &[
+        (800.0, 520.0),
+        (800.0, 600.0),
+        (1280.0, 720.0),
+        (1920.0, 1080.0),
+    ] {
         let ctx = egui::Context::default();
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
         let mut workbench = EditorWorkbench::new(VnConfig::default());
@@ -505,6 +539,11 @@ fn editor_auxiliary_windows_render_without_escaping_viewports() {
         assert_visible_shapes_inside_screen(
             &format!("auxiliary windows {width}x{height}"),
             &output.shapes,
+            screen,
+        );
+        assert_used_rect_inside_screen(
+            &format!("auxiliary windows {width}x{height}"),
+            ctx.used_rect(),
             screen,
         );
     }
@@ -655,6 +694,82 @@ fn visual_composer_panel_renders_real_responsive_rows_without_horizontal_escape(
             );
         }
     }
+}
+
+#[test]
+fn visual_composer_dialogue_overlay_keeps_stage_visible_in_compact_window() {
+    let ctx = egui::Context::default();
+    ctx.set_pixels_per_point(2.0);
+    let width = 560.0;
+    let height = 360.0;
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+    let mut scene = SceneState::new();
+    let engine: Option<Engine> = None;
+    let mut preview_quality = PreviewQuality::High;
+    let mut stage_fit = StageFit::Fill;
+    let mut background_fit = BackgroundFit::Cover;
+    let mut preview_mode = ComposerPreviewMode::RuntimeInherited;
+    let mut image_cache = HashMap::new();
+    let mut image_failures = HashMap::new();
+    let mut resource_service = EditorResourceService::new();
+    let mut selected_entity_id = None;
+    let layer_overrides = HashMap::new();
+    let entity_owners = HashMap::new();
+    let snapshot = stress_presentation_snapshot();
+    let selected_node = StoryNode::Dialogue {
+        speaker: "Sakura".to_string(),
+        text: "The music room is upstairs. Someone is always practicing something beautiful there."
+            .to_string(),
+    };
+
+    let output = run_panel_frame(&ctx, width, height, Vec::new(), |ctx| {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none())
+            .show(ctx, |ui| {
+                let panel_rect =
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+                ui.allocate_ui_at_rect(panel_rect, |ui| {
+                    ui.set_clip_rect(panel_rect);
+                    let mut panel = VisualComposerPanel::new(VisualComposerPanelParams {
+                        scene: &mut scene,
+                        engine: &engine,
+                        project_root: None,
+                        stage_resolution: Some((1280, 720)),
+                        preview_quality: &mut preview_quality,
+                        stage_fit: &mut stage_fit,
+                        background_fit: &mut background_fit,
+                        preview_mode: &mut preview_mode,
+                        image_cache: &mut image_cache,
+                        image_failures: &mut image_failures,
+                        resource_service: &mut resource_service,
+                        selected_entity_id: &mut selected_entity_id,
+                        layer_overrides: &layer_overrides,
+                        active_event_node_id: Some(42),
+                        selected_authoring_node_id: Some(42),
+                        selected_authoring_node: Some(&selected_node),
+                        presentation_snapshot: Some(&snapshot),
+                    });
+                    assert!(panel.ui(ui, &entity_owners).is_none());
+                });
+            });
+    });
+
+    assert_visible_shapes_inside_screen("compact dialogue composer", &output.shapes, screen);
+    let max_visible_shape_height = output
+        .shapes
+        .iter()
+        .map(|shape| {
+            shape
+                .shape
+                .visual_bounding_rect()
+                .intersect(shape.clip_rect)
+                .height()
+        })
+        .fold(0.0, f32::max);
+    assert!(
+        max_visible_shape_height >= height * 0.35,
+        "dialogue overlay and overlay edit should not collapse the visual composer stage; max painted height was {max_visible_shape_height}"
+    );
 }
 
 fn click_timeline(
