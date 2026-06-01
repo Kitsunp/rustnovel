@@ -29,6 +29,48 @@ impl NodeGraph {
         self.pan += delta;
     }
 
+    pub fn pan_node_into_viewport(&mut self, node_id: u32, viewport: egui::Vec2) -> bool {
+        let Some(node) = self.get_node(node_id) else {
+            return false;
+        };
+        let Some(pos) = self.get_node_pos(node_id) else {
+            return false;
+        };
+
+        let node_size = egui::vec2(node_visual_width(node), node_visual_height(node));
+        let node_rect = egui::Rect::from_min_size(pos, node_size);
+        let zoom = self.zoom().max(f32::EPSILON);
+        let margin_x = viewport.x.clamp(1.0, 48.0);
+        let margin_y = viewport.y.clamp(1.0, 48.0);
+        let inner_w = (viewport.x - margin_x * 2.0).max(1.0);
+        let inner_h = (viewport.y - margin_y * 2.0).max(1.0);
+
+        let mut next_pan = self.pan;
+        let left = (node_rect.left() + next_pan.x) * zoom;
+        let right = (node_rect.right() + next_pan.x) * zoom;
+        if node_rect.width() * zoom > inner_w {
+            next_pan.x = margin_x / zoom - node_rect.left();
+        } else if left < margin_x {
+            next_pan.x += (margin_x - left) / zoom;
+        } else if right > viewport.x - margin_x {
+            next_pan.x -= (right - (viewport.x - margin_x)) / zoom;
+        }
+
+        let top = (node_rect.top() + next_pan.y) * zoom;
+        let bottom = (node_rect.bottom() + next_pan.y) * zoom;
+        if node_rect.height() * zoom > inner_h {
+            next_pan.y = margin_y / zoom - node_rect.top();
+        } else if top < margin_y {
+            next_pan.y += (margin_y - top) / zoom;
+        } else if bottom > viewport.y - margin_y {
+            next_pan.y -= (bottom - (viewport.y - margin_y)) / zoom;
+        }
+
+        let changed = (next_pan - self.pan).length_sq() > f32::EPSILON;
+        self.pan = next_pan;
+        changed
+    }
+
     /// Resets pan and zoom to default values.
     pub fn reset_view(&mut self) {
         self.pan = egui::Vec2::ZERO;
@@ -55,7 +97,7 @@ impl NodeGraph {
         for (_, node, pos) in self.nodes() {
             min_x = min_x.min(pos.x);
             min_y = min_y.min(pos.y);
-            max_x = max_x.max(pos.x + NODE_WIDTH);
+            max_x = max_x.max(pos.x + node_visual_width(&node));
             max_y = max_y.max(pos.y + node_visual_height(&node));
         }
 

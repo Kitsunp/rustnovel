@@ -95,19 +95,21 @@ impl<'a> GraphPanel<'a> {
         let mut new_selection = None;
         let current_selection = self.graph.selected;
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for (id, text, color) in nodes {
-                let is_selected = current_selection == Some(id);
-                let response = ui.selectable_label(
-                    is_selected,
-                    egui::RichText::new(format!("{}: {}", id, text)).color(color),
-                );
+        egui::ScrollArea::vertical()
+            .id_source("graph_panel_node_list_scroll")
+            .show(ui, |ui| {
+                for (id, text, color) in nodes {
+                    let is_selected = current_selection == Some(id);
+                    let response = ui.selectable_label(
+                        is_selected,
+                        egui::RichText::new(format!("{}: {}", id, text)).color(color),
+                    );
 
-                if response.clicked() {
-                    new_selection = Some(id);
+                    if response.clicked() {
+                        new_selection = Some(id);
+                    }
                 }
-            }
-        });
+            });
 
         if let Some(id) = new_selection {
             self.graph.set_single_selection(Some(id));

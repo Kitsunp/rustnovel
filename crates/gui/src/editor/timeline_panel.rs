@@ -188,6 +188,7 @@ impl<'a> TimelinePanel<'a> {
         let current_time = (*self.current_time).min(duration);
         let list_height = timeline_track_list_height(ui.available_height());
         egui::ScrollArea::vertical()
+            .id_source("timeline_track_list_scroll")
             .max_height(list_height)
             .auto_shrink([false, false])
             .show(ui, |ui| {

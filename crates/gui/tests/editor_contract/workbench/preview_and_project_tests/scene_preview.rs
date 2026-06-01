@@ -107,6 +107,51 @@ fn scene_preview_tracks_selected_node_context() {
 }
 
 #[test]
+fn composer_preview_reconciles_graph_selection_after_composer_interaction() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+
+    let scene_a = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/one.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        },
+        egui::pos2(0.0, 100.0),
+    );
+    let scene_b = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg/two.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        },
+        egui::pos2(0.0, 200.0),
+    );
+    workbench.selected_node = Some(scene_a);
+    workbench.node_graph.set_single_selection(Some(scene_b));
+
+    assert!(workbench.reconcile_editor_selection_for_frame(Some(scene_a)));
+
+    assert_eq!(workbench.selected_node, Some(scene_b));
+    assert!(
+        workbench.scene.iter().any(|entity| matches!(
+            &entity.kind,
+            visual_novel_engine::EntityKind::Image(image) if image.path.as_ref() == "bg/two.png"
+        )),
+        "composer preview should follow the graph click after prior composer interaction"
+    );
+    assert!(
+        !workbench.scene.iter().any(|entity| matches!(
+            &entity.kind,
+            visual_novel_engine::EntityKind::Image(image) if image.path.as_ref() == "bg/one.png"
+        )),
+        "stale composer-selected scene must not remain visible after graph selection changes"
+    );
+}
+
+#[test]
 fn scene_preview_reconstructs_selected_context_from_start_after_runtime_advances() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);

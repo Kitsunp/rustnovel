@@ -17,14 +17,20 @@ fn diagnostic_id_is_stable_and_includes_phase_code_node_and_ip() {
         LintCode::UnreachableNode,
         "dead code",
     );
-    assert!(issue
-        .diagnostic_id()
-        .starts_with("authoring-diagnostic-v2:GRAPH:VAL_UNREACHABLE:7:na:na:na:na"));
+    let id = issue.diagnostic_id();
+    assert!(id.starts_with("authoring-diagnostic-v2:GRAPH:VAL_UNREACHABLE:node=7"));
+    assert!(
+        !id.contains(":na"),
+        "diagnostic ids should not serialize absent fields as na: {id}"
+    );
 
     let issue = issue.with_event_ip(Some(3));
-    assert!(issue
-        .diagnostic_id()
-        .starts_with("authoring-diagnostic-v2:GRAPH:VAL_UNREACHABLE:7:3:na:na:na"));
+    let id = issue.diagnostic_id();
+    assert!(id.starts_with("authoring-diagnostic-v2:GRAPH:VAL_UNREACHABLE:node=7:ip=3"));
+    assert!(
+        !id.contains(":na"),
+        "diagnostic ids should not serialize absent fields as na: {id}"
+    );
 }
 
 #[test]
@@ -122,6 +128,64 @@ fn validate_reports_unsafe_asset_paths_and_transition_duration() {
     assert!(issues
         .iter()
         .any(|i| i.code == LintCode::InvalidTransitionKind));
+}
+
+#[test]
+fn validation_report_copy_text_includes_full_diagnostic_flow() {
+    let issue = LintIssue::warning(
+        Some(7),
+        ValidationPhase::DryRun,
+        LintCode::DryRunFinished,
+        "Dry Run finished in 10 step(s); stop_ip=12; route=first",
+    )
+    .with_event_ip(Some(12));
+
+    let text = crate::editor::lint_panel::validation_report_copy_text(
+        &[issue],
+        crate::editor::DiagnosticLanguage::Es,
+    );
+
+    assert!(text.contains("diagnostic_id"));
+    assert!(text.contains("phase=DRYRUN code=DRY_FINISHED"));
+    assert!(text.contains("event_ip=12"));
+    assert!(text.contains("cause="));
+    assert!(text.contains("why_failed="));
+    assert!(text.contains("how_to_fix="));
+    assert!(!text.contains(":na"));
+}
+
+#[test]
+fn validation_report_issue_copy_text_reuses_full_report_issue_block() {
+    let dry_finished = LintIssue::info(
+        None,
+        ValidationPhase::DryRun,
+        LintCode::DryRunFinished,
+        "Dry Run finished in 10 step(s); stop_ip=10; route=first",
+    )
+    .with_event_ip(Some(10));
+    let step_limit = LintIssue::warning(
+        None,
+        ValidationPhase::DryRun,
+        LintCode::DryRunStepLimit,
+        "Dry Run route coverage hit the choice depth or repeated-state limit",
+    )
+    .with_blocked_by("route_enumeration");
+    let issues = vec![dry_finished, step_limit];
+
+    let full = crate::editor::lint_panel::validation_report_copy_text(
+        &issues,
+        crate::editor::DiagnosticLanguage::Es,
+    );
+    let selected = crate::editor::lint_panel::validation_report_issue_copy_text(
+        &issues[1],
+        1,
+        crate::editor::DiagnosticLanguage::Es,
+    );
+
+    assert!(full.contains(&selected));
+    assert!(selected.starts_with("#2 warning"));
+    assert!(selected.contains("blocked_by=route_enumeration"));
+    assert!(!selected.contains("DRY_FINISHED"));
 }
 
 #[test]

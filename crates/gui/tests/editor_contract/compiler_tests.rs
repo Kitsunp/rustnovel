@@ -123,10 +123,61 @@ fn compile_project_reports_dry_run_completion() {
     let result = compile_project(&graph);
 
     assert!(result.engine_result.is_ok());
-    assert!(result
+    let issue = result
         .issues
         .iter()
-        .any(|issue| issue.code == LintCode::DryRunFinished));
+        .find(|issue| issue.code == LintCode::DryRunFinished)
+        .expect("dry-run completion diagnostic");
+    let diagnostic_id = issue.diagnostic_id();
+    assert!(
+        diagnostic_id.starts_with("authoring-diagnostic-v2:DRYRUN:DRY_FINISHED:scope=global:ip="),
+        "DRY_FINISHED should identify the stop ip in the common diagnostic id: {diagnostic_id}"
+    );
+    assert!(
+        !diagnostic_id.contains(":na"),
+        "DRY_FINISHED should not hide missing context as na fields: {diagnostic_id}"
+    );
+    let envelope = issue.envelope_v2();
+    assert!(envelope.message_args.contains_key("event_ip"));
+    assert!(envelope.message_args.contains_key("semantic_value_0_raw"));
+    assert!(envelope.evidence_trace.is_some());
+}
+
+#[test]
+fn compile_project_propagates_alternate_route_dry_run_failures() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, p(0.0, 0.0));
+    let choice = graph.add_node(
+        StoryNode::Choice {
+            prompt: "Route".to_string(),
+            options: vec!["Safe".to_string(), "Loop".to_string()],
+        },
+        p(0.0, 100.0),
+    );
+    let safe_end = graph.add_node(StoryNode::End, p(-120.0, 220.0));
+    let extcall = graph.add_node(
+        StoryNode::Generic(visual_novel_engine::runtime::EventRaw::ExtCall {
+            command: "host.open_inventory".to_string(),
+            args: Vec::new(),
+        }),
+        p(120.0, 220.0),
+    );
+    graph.connect(start, choice);
+    graph.connect_port(choice, 0, safe_end);
+    graph.connect_port(choice, 1, extcall);
+
+    let result = compile_project(&graph);
+    let report = result.dry_run_report.expect("dry run report");
+
+    assert_eq!(report.stop_reason, DryRunStopReason::Finished);
+    assert!(result.issues.iter().any(|issue| {
+        issue.code == LintCode::DryRunExtCallBlocked
+            && issue
+                .blocked_by
+                .as_deref()
+                .is_some_and(|blocked_by| blocked_by.contains("route_policy="))
+            && issue.message.contains("route")
+    }));
 }
 
 #[test]

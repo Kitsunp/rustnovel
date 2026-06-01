@@ -1,7 +1,7 @@
 use super::super::*;
 use crate::editor::StoryNode;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -36,6 +36,31 @@ fn test_workbench_initialization() {
         workbench.current_time > 0.0,
         "Time should advance when playing"
     );
+}
+
+#[test]
+fn composer_node_selection_schedules_graph_focus() {
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    let scene = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("bg.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        },
+        eframe::egui::pos2(1200.0, 900.0),
+    );
+
+    workbench.handle_composer_actions(
+        vec![crate::editor::visual_composer::VisualComposerAction::SelectNode(
+            scene,
+        )],
+        None,
+    );
+
+    assert_eq!(workbench.node_graph.selected, Some(scene));
+    assert_eq!(workbench.selected_node, Some(scene));
+    assert_eq!(workbench.pending_graph_focus, Some(scene));
 }
 
 #[test]
@@ -355,6 +380,78 @@ fn workbench_reuses_compilation_cache_until_graph_changes() {
 
     let _ = workbench.run_dry_validation();
     assert_eq!(workbench.compilation_cache_stats(), (1, 2));
+}
+
+#[test]
+fn dry_validation_phase_trace_uses_distinct_identity_not_dry_finished() {
+    let config = VnConfig::default();
+    let mut workbench = EditorWorkbench::new(config);
+
+    let start = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+    let dialogue = workbench.node_graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Ava".to_string(),
+            text: "Hola".to_string(),
+        },
+        egui::pos2(0.0, 120.0),
+    );
+    let end = workbench
+        .node_graph
+        .add_node(StoryNode::End, egui::pos2(0.0, 240.0));
+    workbench.node_graph.connect(start, dialogue);
+    workbench.node_graph.connect(dialogue, end);
+
+    assert!(workbench.run_dry_validation());
+
+    assert!(
+        !workbench.validation_issues.iter().any(|issue| {
+            issue.phase == ValidationPhase::Graph && issue.code == LintCode::DryRunFinished
+        }),
+        "GRAPH phase traces must not reuse DRY_FINISHED identity"
+    );
+
+    let phase_trace_issues = workbench
+        .validation_issues
+        .iter()
+        .filter(|issue| issue.code == LintCode::PhaseTraceOk)
+        .collect::<Vec<_>>();
+    assert!(
+        phase_trace_issues.len() >= 2,
+        "expected graph phase trace diagnostics"
+    );
+    let ids = phase_trace_issues
+        .iter()
+        .map(|issue| issue.diagnostic_id())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        ids.len(),
+        phase_trace_issues.len(),
+        "phase trace diagnostic IDs must be unique per pipeline phase"
+    );
+    assert!(ids.iter().any(|id| {
+        id.starts_with("authoring-diagnostic-v2:GRAPH:TRACE_PHASE_OK:scope=global")
+            && id.contains("field=phase_trace_GRAPH_SYNC")
+    }));
+    assert!(ids.iter().any(|id| {
+        id.starts_with("authoring-diagnostic-v2:GRAPH:TRACE_PHASE_OK:scope=global")
+            && id.contains("field=phase_trace_GRAPH_VALIDATION")
+    }));
+
+    let graph_sync = phase_trace_issues
+        .iter()
+        .find(|issue| {
+            issue
+                .field_path
+                .as_ref()
+                .is_some_and(|path| path.value == "phase_trace.GRAPH_SYNC")
+        })
+        .expect("GRAPH_SYNC phase trace");
+    let explanation = graph_sync.explanation(DiagnosticLanguage::Es);
+    assert_eq!(explanation.title, "Fase completada");
+    assert!(!explanation.root_cause.contains("EndOfScript"));
+    assert!(explanation.why_failed.starts_with("No fallo"));
 }
 
 #[test]

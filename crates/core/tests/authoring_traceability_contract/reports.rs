@@ -210,3 +210,31 @@ fn validation_report_rejects_legacy_v1() {
         .expect_err("legacy report must be rejected");
     assert!(err.to_string().contains("unsupported"));
 }
+
+#[test]
+fn validation_report_uses_structured_diagnostic_ids_without_absent_placeholders() {
+    let graph = NodeGraph::new();
+    let script = graph.to_script_lossy_for_diagnostics();
+    let issues = validate_authoring_graph_no_io(&graph);
+    let missing_start = issues
+        .iter()
+        .find(|issue| issue.code == LintCode::MissingStart)
+        .expect("missing start diagnostic");
+
+    let report = AuthoringValidationReport::from_graph_and_issues(&graph, &script, &issues);
+    let envelope = report
+        .issues
+        .iter()
+        .find(|issue| issue.code == LintCode::MissingStart.label())
+        .expect("missing start envelope");
+
+    assert_eq!(envelope.diagnostic_id, missing_start.diagnostic_id());
+    assert_eq!(
+        envelope.diagnostic_id,
+        "authoring-diagnostic-v2:GRAPH:VAL_START_MISSING:scope=global:target=graph"
+    );
+    assert!(
+        !envelope.diagnostic_id.contains(":na"),
+        "absent diagnostic dimensions must be omitted instead of serialized as na"
+    );
+}

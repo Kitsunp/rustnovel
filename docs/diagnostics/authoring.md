@@ -158,6 +158,14 @@ Fragment-internal labels must not collide after deterministic namespacing.
 
 Generic events require review because the editor cannot fully interpret their semantics.
 
+## trace-phase-ok
+
+Phase OK entries are informational pipeline traces. They identify which authoring phase completed and must not be reported as dry-run completion.
+
+## trace-phase-failed
+
+Phase failed entries identify the pipeline phase that stopped validation before a later phase could run.
+
 ## cmp-script-error
 
 Compilation errors mean the runtime script cannot be produced safely.

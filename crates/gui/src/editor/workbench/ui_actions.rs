@@ -68,6 +68,7 @@ impl EditorWorkbench {
                     self.node_graph.set_single_selection(Some(nid));
                     self.selected_node = Some(nid);
                     self.selected_entity = None;
+                    self.pending_graph_focus = Some(nid);
                 }
                 crate::editor::visual_composer::VisualComposerAction::CreateNode { node, pos } => {
                     self.add_composer_created_node(node, pos);
@@ -84,6 +85,7 @@ impl EditorWorkbench {
                     if self.apply_composer_node_mutation(node_id, mutation) {
                         self.node_graph.set_single_selection(Some(node_id));
                         self.selected_node = Some(node_id);
+                        self.pending_graph_focus = Some(node_id);
                         self.node_graph.mark_modified();
                     }
                 }
@@ -95,6 +97,7 @@ impl EditorWorkbench {
                     Ok(()) => {
                         self.node_graph.set_single_selection(Some(node_id));
                         self.selected_node = Some(node_id);
+                        self.pending_graph_focus = Some(node_id);
                         self.toast = Some(ToastState::success(format!(
                             "Assigned asset to selected node: {asset}"
                         )));
@@ -114,6 +117,7 @@ impl EditorWorkbench {
                     Ok(()) => {
                         self.node_graph.set_single_selection(Some(node_id));
                         self.selected_node = Some(node_id);
+                        self.pending_graph_focus = Some(node_id);
                         self.toast = Some(ToastState::success(format!(
                             "Added character asset to selected scene: {asset}"
                         )));

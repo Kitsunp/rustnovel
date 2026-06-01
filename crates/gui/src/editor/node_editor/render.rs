@@ -64,7 +64,7 @@ impl<'a> NodeEditorPanel<'a> {
                         continue;
                     };
                     let height = self.get_node_height(node);
-                    let size = egui::vec2(NODE_WIDTH, height) * self.graph.zoom();
+                    let size = egui::vec2(node_visual_width(node), height) * self.graph.zoom();
                     let node_rect = egui::Rect::from_min_size(screen_pos, size);
                     if node_rect.contains(pos) {
                         self.undo_stack.push(self.graph.clone());
@@ -108,7 +108,7 @@ impl<'a> NodeEditorPanel<'a> {
                             continue;
                         };
                         let height = self.get_node_height(node);
-                        let size = egui::vec2(NODE_WIDTH, height) * self.graph.zoom();
+                        let size = egui::vec2(node_visual_width(node), height) * self.graph.zoom();
                         let node_rect = egui::Rect::from_min_size(screen_pos, size);
 
                         if node_rect.contains(pos) {
@@ -157,7 +157,7 @@ impl<'a> NodeEditorPanel<'a> {
         for (id, node, pos) in &nodes {
             let screen_pos = self.graph_to_screen(rect, *pos);
             let height = self.get_node_height(node);
-            let size = egui::vec2(NODE_WIDTH, height) * self.graph.zoom();
+            let size = egui::vec2(node_visual_width(node), height) * self.graph.zoom();
             let node_rect = egui::Rect::from_min_size(screen_pos, size);
 
             if !rect.intersects(node_rect) {
@@ -204,15 +204,17 @@ impl<'a> NodeEditorPanel<'a> {
             // Body / Options
             match node {
                 StoryNode::Choice { options, .. } => {
-                    let header_height = 40.0 * self.graph.zoom();
-                    let option_h = 30.0 * self.graph.zoom();
+                    let header_height = CHOICE_HEADER_HEIGHT * self.graph.zoom();
+                    let option_h = CHOICE_OPTION_ROW_HEIGHT * self.graph.zoom();
+                    let cell_w = CHOICE_OPTION_CELL_WIDTH * self.graph.zoom();
 
                     for (i, opt) in options.iter().enumerate() {
-                        let y_off = header_height + (i as f32 * option_h);
+                        let x_off = i as f32 * cell_w;
                         let opt_rect = egui::Rect::from_min_size(
-                            node_rect.min + egui::vec2(0.0, y_off),
-                            egui::vec2(node_rect.width(), option_h),
+                            node_rect.min + egui::vec2(x_off, header_height),
+                            egui::vec2(cell_w.min(node_rect.width()), option_h),
                         );
+                        let route_color = node_rendering::route_color(i);
 
                         // Double-click on option to edit
                         if ui.input(|inp| {
@@ -227,14 +229,35 @@ impl<'a> NodeEditorPanel<'a> {
                         }
 
                         painter.line_segment(
-                            [opt_rect.left_top(), opt_rect.right_top()],
+                            [opt_rect.left_top(), opt_rect.left_bottom()],
                             egui::Stroke::new(1.0, egui::Color32::BLACK),
                         );
+                        painter.rect_filled(
+                            egui::Rect::from_min_size(
+                                opt_rect.left_top(),
+                                egui::vec2(opt_rect.width(), 3.0 * self.graph.zoom()),
+                            ),
+                            0.0,
+                            route_color,
+                        );
 
+                        let badge_center =
+                            opt_rect.left_top() + egui::vec2(13.0, 13.0) * self.graph.zoom();
+                        painter.circle_filled(badge_center, 6.0 * self.graph.zoom(), route_color);
                         painter.text(
-                            opt_rect.left_center() + egui::vec2(5.0, 0.0),
+                            badge_center,
+                            egui::Align2::CENTER_CENTER,
+                            (i + 1).to_string(),
+                            egui::FontId::proportional(8.0 * self.graph.zoom()),
+                            egui::Color32::BLACK,
+                        );
+
+                        let option_max_chars =
+                            ((CHOICE_OPTION_CELL_WIDTH - 32.0) / 6.2).floor() as usize;
+                        painter.text(
+                            opt_rect.left_center() + egui::vec2(22.0 * self.graph.zoom(), 0.0),
                             egui::Align2::LEFT_CENTER,
-                            crate::editor::graph_panel::truncate(opt, 15),
+                            crate::editor::graph_panel::truncate(opt, option_max_chars),
                             egui::FontId::proportional(11.0 * self.graph.zoom()),
                             egui::Color32::LIGHT_GRAY,
                         );
@@ -247,7 +270,7 @@ impl<'a> NodeEditorPanel<'a> {
                             .hover_pos()
                             .is_some_and(|p| p.distance(socket_center) < hover_radius);
 
-                        let mut color = egui::Color32::WHITE;
+                        let mut color = route_color;
                         let mut radius = 4.0 * self.graph.zoom();
 
                         if is_hovered {
@@ -268,13 +291,13 @@ impl<'a> NodeEditorPanel<'a> {
 
                     // "New option" row/socket for fast branching.
                     let add_idx = options.len();
-                    let add_y_off = header_height + (add_idx as f32 * option_h);
+                    let add_x_off = add_idx as f32 * cell_w;
                     let add_rect = egui::Rect::from_min_size(
-                        node_rect.min + egui::vec2(0.0, add_y_off),
-                        egui::vec2(node_rect.width(), option_h),
+                        node_rect.min + egui::vec2(add_x_off, header_height),
+                        egui::vec2(cell_w.min(node_rect.width()), option_h),
                     );
                     painter.line_segment(
-                        [add_rect.left_top(), add_rect.right_top()],
+                        [add_rect.left_top(), add_rect.left_bottom()],
                         egui::Stroke::new(1.0, egui::Color32::BLACK),
                     );
                     painter.text(
@@ -289,19 +312,21 @@ impl<'a> NodeEditorPanel<'a> {
                     let add_hovered = response
                         .hover_pos()
                         .is_some_and(|p| p.distance(add_socket) < 8.0 * self.graph.zoom());
-                    painter.circle_filled(
-                        add_socket,
-                        if add_hovered {
-                            6.0 * self.graph.zoom()
-                        } else {
-                            4.0 * self.graph.zoom()
-                        },
-                        if add_hovered {
-                            egui::Color32::YELLOW
-                        } else {
-                            egui::Color32::LIGHT_GREEN
-                        },
-                    );
+                    if add_hovered || self.graph.connecting_from.is_some() {
+                        painter.circle_filled(
+                            add_socket,
+                            if add_hovered {
+                                6.0 * self.graph.zoom()
+                            } else {
+                                3.0 * self.graph.zoom()
+                            },
+                            if add_hovered {
+                                egui::Color32::YELLOW
+                            } else {
+                                egui::Color32::from_rgb(120, 180, 120)
+                            },
+                        );
+                    }
                 }
                 StoryNode::JumpIf { .. } => {
                     painter.text(
@@ -426,6 +451,12 @@ impl<'a> NodeEditorPanel<'a> {
             } else {
                 self.graph.set_single_selection(Some(id));
             }
+        } else if response.clicked()
+            && !clicked_on_any_node
+            && self.graph.connecting_from.is_none()
+            && self.graph.marquee_start.is_none()
+        {
+            self.graph.set_single_selection(None);
         }
         let context_click_without_drag =
             response.secondary_clicked() && response.drag_delta().length_sq() <= 16.0;

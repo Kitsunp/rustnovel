@@ -10,10 +10,11 @@
 
 use eframe::egui;
 
-use super::node_graph::NodeGraph;
-use super::node_rendering;
+use super::node_graph::{GraphLayoutOrientation, NodeGraph};
+use super::node_rendering::{self, draw_story_connection_projected as draw_conn};
 use super::node_types::{
-    node_visual_height, ContextMenu, StoryNode, StoryNodeVisualExt, NODE_WIDTH,
+    node_visual_height, node_visual_width, ContextMenu, StoryNode, StoryNodeVisualExt,
+    CHOICE_HEADER_HEIGHT, CHOICE_OPTION_CELL_WIDTH, CHOICE_OPTION_ROW_HEIGHT, NODE_WIDTH,
 };
 use super::undo::UndoStack;
 
@@ -92,13 +93,19 @@ impl<'a> NodeEditorPanel<'a> {
         ui.heading(node_editor_heading_label(ui.available_width()));
         ui.separator();
 
-        self.render_toolbar(ui);
+        let layout_requested = self.render_toolbar(ui);
         ui.separator();
 
         let available_size = ui.available_size();
         let (response, painter) =
             ui.allocate_painter(available_size, egui::Sense::click_and_drag());
         let rect = response.rect;
+        let painter = painter.with_clip_rect(rect);
+
+        if layout_requested {
+            self.graph.auto_layout_hierarchical();
+            self.graph.zoom_to_fit_viewport(rect.size());
+        }
 
         painter.rect_filled(rect, 5.0, egui::Color32::from_rgb(25, 25, 35));
 
@@ -112,8 +119,9 @@ impl<'a> NodeEditorPanel<'a> {
         self.render_status_bar(&painter, rect);
     }
 
-    fn render_toolbar(&mut self, ui: &mut egui::Ui) {
+    fn render_toolbar(&mut self, ui: &mut egui::Ui) -> bool {
         let compact = node_toolbar_is_compact(ui.available_width());
+        let mut layout_requested = false;
         ui.horizontal_wrapped(|ui| {
             let add_label = if compact { "+ Add" } else { "Add Node" };
             ui.menu_button(add_label, |ui| {
@@ -190,10 +198,34 @@ impl<'a> NodeEditorPanel<'a> {
             if ui.button(reset_label).clicked() {
                 self.graph.reset_view();
             }
+            egui::ComboBox::from_id_source("node_editor_layout_orientation")
+                .selected_text(self.graph.layout_orientation.label())
+                .width(if compact { 72.0 } else { 96.0 })
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_value(
+                            &mut self.graph.layout_orientation,
+                            GraphLayoutOrientation::Vertical,
+                            "Vertical",
+                        )
+                        .changed()
+                    {
+                        layout_requested = true;
+                    }
+                    if ui
+                        .selectable_value(
+                            &mut self.graph.layout_orientation,
+                            GraphLayoutOrientation::Horizontal,
+                            "Horizontal",
+                        )
+                        .changed()
+                    {
+                        layout_requested = true;
+                    }
+                });
             let layout_label = if compact { "Layout" } else { "Auto Layout" };
             if ui.button(layout_label).clicked() {
-                self.graph.auto_layout_hierarchical();
-                self.graph.zoom_to_fit();
+                layout_requested = true;
             }
             ui.label(format!("{:.0}%", self.graph.zoom() * 100.0));
 
@@ -225,6 +257,7 @@ impl<'a> NodeEditorPanel<'a> {
                 ui.label("⚠ Modified");
             }
         });
+        layout_requested
     }
 
     fn render_grid(&self, painter: &egui::Painter, rect: egui::Rect) {
@@ -426,32 +459,40 @@ impl<'a> NodeEditorPanel<'a> {
                 .map(|(_, node, p)| (*p, node.clone()));
 
             if let (Some((from_base, from_node)), Some((to_base, to_node))) = (from_pos, to_pos) {
-                // Determine source port position
-                let from_screen = self.graph_to_screen(
-                    rect,
-                    self.calculate_port_pos(from_base, &from_node, conn.from_port),
+                let zoom = self.graph.zoom();
+                let to_rect = node_graph_rect(to_base, &to_node);
+                let from_graph = node_output_port_pos_towards(
+                    from_base,
+                    &from_node,
+                    conn.from_port,
+                    to_rect.center(),
                 );
+                let to_graph = connection_target_point(from_graph, to_base, &to_node);
 
-                let to_node_top_left = self.graph_to_screen(rect, to_base);
-                let to_node_size =
-                    egui::vec2(NODE_WIDTH, node_visual_height(&to_node)) * self.graph.zoom();
-                let to_rect = egui::Rect::from_min_size(to_node_top_left, to_node_size);
-                let to_screen = if from_screen.y <= to_rect.top() {
-                    egui::pos2(to_rect.center().x, to_rect.top())
-                } else if from_screen.y >= to_rect.bottom() {
-                    egui::pos2(to_rect.center().x, to_rect.bottom())
-                } else if from_screen.x <= to_rect.left() {
-                    egui::pos2(to_rect.left(), to_rect.center().y)
-                } else {
-                    egui::pos2(to_rect.right(), to_rect.center().y)
-                };
+                if !node_rendering::connection_intersects_viewport_projected(
+                    from_graph,
+                    to_graph,
+                    rect,
+                    zoom,
+                    |point| self.graph_to_screen(rect, point),
+                ) {
+                    continue;
+                }
 
-                node_rendering::draw_bezier_connection(painter, from_screen, to_screen);
+                let port = conn.from_port;
+                draw_conn(
+                    painter,
+                    from_graph,
+                    to_graph,
+                    &from_node,
+                    port,
+                    zoom,
+                    |point| self.graph_to_screen(rect, point),
+                );
             }
         }
     }
 
-    /// Calculates local graph position of an output port
     fn calculate_port_pos(
         &self,
         node_pos: egui::Pos2,
@@ -459,27 +500,162 @@ impl<'a> NodeEditorPanel<'a> {
         port: usize,
     ) -> egui::Pos2 {
         match node {
-            StoryNode::Choice { .. } => {
-                let header_height = 40.0;
-                let option_height = 30.0;
-                let option_offset =
-                    header_height + (port as f32 * option_height) + (option_height / 2.0);
-
-                node_pos + egui::vec2(NODE_WIDTH / 2.0, option_offset + 15.0)
-            }
+            StoryNode::Choice { .. } => match self.graph.layout_orientation {
+                GraphLayoutOrientation::Horizontal => {
+                    node_output_port_pos_on_side(node_pos, node, port, ConnectionSide::Right)
+                }
+                GraphLayoutOrientation::Vertical => {
+                    node_output_port_pos_on_side(node_pos, node, port, ConnectionSide::Bottom)
+                }
+            },
             StoryNode::JumpIf { .. } => {
                 let y = if port == 0 {
                     node_visual_height(node) * 0.68
                 } else {
                     node_visual_height(node) * 0.92
                 };
-                node_pos + egui::vec2(NODE_WIDTH / 2.0, y)
+                node_pos + egui::vec2(NODE_WIDTH - 8.0, y)
             }
             _ => {
                 // Standard single output (Bottom Center)
                 node_pos + egui::vec2(NODE_WIDTH / 2.0, node_visual_height(node))
             }
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectionSide {
+    Top,
+    Right,
+    Bottom,
+    Left,
+}
+
+pub fn node_output_port_pos_towards(
+    node_pos: egui::Pos2,
+    node: &StoryNode,
+    port: usize,
+    target_center: egui::Pos2,
+) -> egui::Pos2 {
+    let rect = node_graph_rect(node_pos, node);
+    let delta = target_center - rect.center();
+    let side = if delta.x.abs() >= delta.y.abs() {
+        if delta.x >= 0.0 {
+            ConnectionSide::Right
+        } else {
+            ConnectionSide::Left
+        }
+    } else if delta.y >= 0.0 {
+        ConnectionSide::Bottom
+    } else {
+        ConnectionSide::Top
+    };
+    node_output_port_pos_on_side(node_pos, node, port, side)
+}
+
+pub fn node_output_port_pos_on_side(
+    node_pos: egui::Pos2,
+    node: &StoryNode,
+    port: usize,
+    side: ConnectionSide,
+) -> egui::Pos2 {
+    let width = node_visual_width(node);
+    let height = node_visual_height(node);
+    match node {
+        StoryNode::Choice { options, .. } => {
+            let route_count = (options.len() + 1).max(1);
+            let route_index = port.min(route_count - 1);
+            match side {
+                ConnectionSide::Top | ConnectionSide::Bottom => {
+                    let x = ((route_index as f32 + 0.5) * CHOICE_OPTION_CELL_WIDTH)
+                        .clamp(8.0, width - 8.0);
+                    let y = if side == ConnectionSide::Top {
+                        0.0
+                    } else {
+                        height
+                    };
+                    node_pos + egui::vec2(x, y)
+                }
+                ConnectionSide::Right | ConnectionSide::Left => {
+                    let min_y = CHOICE_HEADER_HEIGHT + 8.0;
+                    let max_y = height - 8.0;
+                    let y = distributed_route_lane(route_index, route_count, min_y, max_y);
+                    let x = if side == ConnectionSide::Left {
+                        0.0
+                    } else {
+                        width
+                    };
+                    node_pos + egui::vec2(x, y)
+                }
+            }
+        }
+        StoryNode::JumpIf { .. } => match side {
+            ConnectionSide::Top | ConnectionSide::Bottom => {
+                let x = if port == 0 {
+                    width * 0.35
+                } else {
+                    width * 0.65
+                };
+                let y = if side == ConnectionSide::Top {
+                    0.0
+                } else {
+                    height
+                };
+                node_pos + egui::vec2(x, y)
+            }
+            ConnectionSide::Right | ConnectionSide::Left => {
+                let y = if port == 0 {
+                    height * 0.68
+                } else {
+                    height * 0.92
+                };
+                let x = if side == ConnectionSide::Left {
+                    0.0
+                } else {
+                    width
+                };
+                node_pos + egui::vec2(x, y)
+            }
+        },
+        _ => match side {
+            ConnectionSide::Top => node_pos + egui::vec2(width * 0.5, 0.0),
+            ConnectionSide::Right => node_pos + egui::vec2(width, height * 0.5),
+            ConnectionSide::Bottom => node_pos + egui::vec2(width * 0.5, height),
+            ConnectionSide::Left => node_pos + egui::vec2(0.0, height * 0.5),
+        },
+    }
+}
+
+fn distributed_route_lane(index: usize, count: usize, min: f32, max: f32) -> f32 {
+    if count <= 1 || (max - min).abs() <= f32::EPSILON {
+        return (min + max) * 0.5;
+    }
+    let t = index as f32 / (count - 1) as f32;
+    min + (max - min) * t
+}
+
+fn node_graph_rect(node_pos: egui::Pos2, node: &StoryNode) -> egui::Rect {
+    egui::Rect::from_min_size(
+        node_pos,
+        egui::vec2(node_visual_width(node), node_visual_height(node)),
+    )
+}
+
+fn connection_target_point(
+    from_graph: egui::Pos2,
+    to_base: egui::Pos2,
+    to_node: &StoryNode,
+) -> egui::Pos2 {
+    let to_rect = node_graph_rect(to_base, to_node);
+    if from_graph.y <= to_rect.top() {
+        egui::pos2(to_rect.center().x, to_rect.top())
+    } else if from_graph.y >= to_rect.bottom() {
+        egui::pos2(to_rect.center().x, to_rect.bottom())
+    } else if from_graph.x <= to_rect.left() {
+        egui::pos2(to_rect.left(), to_rect.center().y)
+    } else {
+        egui::pos2(to_rect.right(), to_rect.center().y)
     }
 }
 

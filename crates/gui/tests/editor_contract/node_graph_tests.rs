@@ -46,6 +46,29 @@ fn test_node_graph_connect() {
 }
 
 #[test]
+fn pan_node_into_viewport_keeps_visible_node_stable() {
+    let mut graph = NodeGraph::new();
+    let id = graph.add_node(StoryNode::Start, pos(80.0, 80.0));
+    let before = graph.pan();
+
+    assert!(!graph.pan_node_into_viewport(id, egui::vec2(320.0, 240.0)));
+    assert_eq!(graph.pan(), before);
+}
+
+#[test]
+fn pan_node_into_viewport_brings_offscreen_node_back() {
+    let mut graph = NodeGraph::new();
+    let id = graph.add_node(StoryNode::Start, pos(1200.0, 900.0));
+
+    assert!(graph.pan_node_into_viewport(id, egui::vec2(320.0, 240.0)));
+
+    let pos = graph.get_node_pos(id).expect("node pos");
+    let screen_min = (pos.to_vec2() + graph.pan()) * graph.zoom();
+    assert!(screen_min.x >= 0.0 && screen_min.x <= 320.0);
+    assert!(screen_min.y >= 0.0 && screen_min.y <= 240.0);
+}
+
+#[test]
 fn diagnostic_focus_uses_granular_v2_target_when_node_id_is_missing() {
     let mut graph = NodeGraph::new();
     let choice = graph.add_node(
@@ -176,6 +199,25 @@ fn test_connecting_choice_port_auto_creates_option() {
     };
     assert_eq!(options.len(), 2);
     assert_eq!(graph.connection_count(), 2);
+}
+
+#[test]
+fn choice_nodes_use_horizontal_option_cells_for_hit_testing() {
+    let mut graph = NodeGraph::new();
+    let choice = graph.add_node(
+        StoryNode::Choice {
+            prompt: "Select".to_string(),
+            options: vec![
+                "Visit the court".to_string(),
+                "Find the music".to_string(),
+            ],
+        },
+        pos(20.0, 30.0),
+    );
+    let node = graph.get_node(choice).expect("choice node");
+    assert!(node_visual_width(node) > NODE_WIDTH);
+    assert!(node_visual_height(node) < 100.0);
+    assert_eq!(graph.node_at_position(pos(250.0, 82.0)), Some(choice));
 }
 
 #[test]

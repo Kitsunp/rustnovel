@@ -2,6 +2,7 @@ use directories::ProjectDirs;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 use visual_novel_engine::{
+    authoring::{SemanticValue, SemanticValueKind},
     runtime::{Engine, ScriptRaw},
     LocalizationCatalog,
 };
@@ -203,6 +204,8 @@ pub struct EditorWorkbench {
     // Selection
     pub selected_node: Option<u32>,
     pub selected_entity: Option<u32>,
+    pub pending_graph_focus: Option<u32>,
+    pub pending_graph_fit: bool,
 
     // Scene Data
     pub scene: visual_novel_engine::SceneState,
@@ -289,16 +292,28 @@ impl EditorWorkbench {
                 LintIssue::info(
                     None,
                     phase,
-                    LintCode::DryRunFinished,
+                    LintCode::PhaseTraceOk,
                     format!("Phase {} OK: {}", trace.phase.label(), trace.detail),
                 )
+                .with_field_path(format!("phase_trace.{}", trace.phase.label()))
+                .with_semantic_value(SemanticValue::new(
+                    SemanticValueKind::Text,
+                    trace.phase.label(),
+                    "phase_trace.phase",
+                ))
             } else {
                 LintIssue::warning(
                     None,
                     phase,
-                    LintCode::RuntimeInitError,
+                    LintCode::PhaseTraceFailed,
                     format!("Phase {} FAILED: {}", trace.phase.label(), trace.detail),
                 )
+                .with_field_path(format!("phase_trace.{}", trace.phase.label()))
+                .with_semantic_value(SemanticValue::new(
+                    SemanticValueKind::Text,
+                    trace.phase.label(),
+                    "phase_trace.phase",
+                ))
             };
             issues.push(entry);
         }
@@ -353,6 +368,8 @@ impl EditorWorkbench {
             last_export_report: None,
             selected_node: None,
             selected_entity: None,
+            pending_graph_focus: None,
+            pending_graph_fit: false,
             scene: visual_novel_engine::SceneState::default(),
             composer_entity_owners: std::collections::HashMap::new(),
             composer_image_cache: std::collections::HashMap::new(),

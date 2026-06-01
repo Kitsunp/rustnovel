@@ -123,15 +123,17 @@ pub fn render_backlog_window(
                 ui.label("No dialogue history yet.");
                 return;
             }
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for line in engine.state().history.iter().rev() {
-                    ui.group(|ui| {
-                        ui.label(egui::RichText::new(line.speaker.as_ref()).strong());
-                        ui.label(line.text.as_ref());
-                    });
-                    ui.add_space(6.0);
-                }
-            });
+            egui::ScrollArea::vertical()
+                .id_source("player_backlog_scroll")
+                .show(ui, |ui| {
+                    for line in engine.state().history.iter().rev() {
+                        ui.group(|ui| {
+                            ui.label(egui::RichText::new(line.speaker.as_ref()).strong());
+                            ui.label(line.text.as_ref());
+                        });
+                        ui.add_space(6.0);
+                    }
+                });
         });
     player.show_backlog = open;
 }
@@ -153,12 +155,14 @@ pub fn render_choice_history_window(
                 ui.label("No choices selected yet.");
                 return;
             }
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for (idx, entry) in engine.choice_history().iter().enumerate().rev() {
-                    render_choice_history_entry(ui, idx, entry);
-                    ui.add_space(6.0);
-                }
-            });
+            egui::ScrollArea::vertical()
+                .id_source("player_choice_history_scroll")
+                .show(ui, |ui| {
+                    for (idx, entry) in engine.choice_history().iter().enumerate().rev() {
+                        render_choice_history_entry(ui, idx, entry);
+                        ui.add_space(6.0);
+                    }
+                });
         });
     player.show_choice_history = open;
 }

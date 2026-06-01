@@ -52,31 +52,14 @@ impl EditorWorkbench {
         } else {
             self.composer_entity_owners.clone()
         };
-        let active_event_node_id = self.engine.as_ref().and_then(|engine| {
-            self.node_graph
-                .authoring_graph()
-                .node_for_event_ip(engine.state().position)
-        });
-        let composer_selected_node = self.node_graph.selected.or(self.selected_node);
-        let selected_authoring_node =
-            composer_selected_node.and_then(|node_id| self.node_graph.get_node(node_id).cloned());
-        let mut composer_background_fit =
-            self.composer_background_fit_for_node(composer_selected_node);
         let mut composer_preview_mode = self.composer_preview_mode;
+        let mut composer_selected_node_for_actions =
+            self.node_graph.selected.or(self.selected_node);
         let mut composer_actions = Vec::new();
         let stage_resolution = self
             .manifest
             .as_ref()
             .map(|manifest| manifest.settings.resolution);
-        let presentation_snapshot =
-            visual_novel_engine::authoring::composer::build_presentation_snapshot(
-                self.node_graph.authoring_graph(),
-                composer_selected_node,
-                stage_resolution,
-                self.engine.as_ref(),
-                Some(&self.player_locale),
-                Some(&self.localization_catalog),
-            );
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let available = ui.available_rect_before_wrap();
@@ -146,6 +129,7 @@ impl EditorWorkbench {
                     ui.heading(crate::editor::node_editor::logic_graph_heading_label(
                         panel_rect.width(),
                     ));
+                    self.apply_pending_graph_view(panel_rect.size());
                     let mut panel =
                         NodeEditorPanel::new(&mut self.node_graph, &mut self.undo_stack);
                     panel.ui(ui);
@@ -173,6 +157,26 @@ impl EditorWorkbench {
                 ui.set_clip_rect(composer_rect);
                 self.render_fragments_panel(ui);
                 ui.separator();
+                let active_event_node_id = self.engine.as_ref().and_then(|engine| {
+                    self.node_graph
+                        .authoring_graph()
+                        .node_for_event_ip(engine.state().position)
+                });
+                let composer_selected_node = self.node_graph.selected.or(self.selected_node);
+                composer_selected_node_for_actions = composer_selected_node;
+                let selected_authoring_node = composer_selected_node
+                    .and_then(|node_id| self.node_graph.get_node(node_id).cloned());
+                let mut composer_background_fit =
+                    self.composer_background_fit_for_node(composer_selected_node);
+                let presentation_snapshot =
+                    visual_novel_engine::authoring::composer::build_presentation_snapshot(
+                        self.node_graph.authoring_graph(),
+                        composer_selected_node,
+                        stage_resolution,
+                        self.engine.as_ref(),
+                        Some(&self.player_locale),
+                        Some(&self.localization_catalog),
+                    );
                 let mut composer = crate::editor::visual_composer::VisualComposerPanel::new(
                     crate::editor::visual_composer::VisualComposerPanelParams {
                         scene: &mut self.scene,
@@ -223,6 +227,7 @@ impl EditorWorkbench {
                 ui.allocate_ui_at_rect(panel_rect, |ui| {
                     ui.set_clip_rect(panel_rect);
                     egui::ScrollArea::vertical()
+                        .id_source("workbench_inspector_panel_scroll")
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             if self.show_validation {
@@ -267,36 +272,11 @@ impl EditorWorkbench {
 
         // 5. Apply Deferred Actions
         self.handle_asset_browser_actions(asset_browser_actions);
-        self.handle_composer_actions(composer_actions, composer_selected_node);
+        self.handle_composer_actions(composer_actions, composer_selected_node_for_actions);
         self.handle_inspector_actions(inspector_actions);
 
-        // Common Sync
-        // External panels may set selected_node directly (lint, diagnostics).
-        // Apply that request only when it changed this frame, otherwise keep
-        // node editor/composer selection as source of truth.
-        if self.selected_node != selected_before {
-            match self.selected_node {
-                Some(requested) if self.node_graph.get_node(requested).is_some() => {
-                    self.node_graph.set_single_selection(Some(requested));
-                    self.selected_entity = None;
-                }
-                Some(_) => {
-                    self.selected_node = self.node_graph.selected;
-                }
-                None => {
-                    self.node_graph.set_single_selection(None);
-                }
-            }
-        }
-
-        if self.node_graph.selected != self.selected_node {
-            self.selected_node = self.node_graph.selected;
-            if self.selected_node.is_some() {
-                self.selected_entity = None;
-            }
-        }
-        if self.selected_node != selected_before {
-            self.refresh_scene_from_engine_preview();
+        if self.reconcile_editor_selection_for_frame(selected_before) {
+            ctx.request_repaint();
         }
 
         if self.node_graph.is_modified() && self.node_graph.dragging_node.is_none() {
@@ -326,6 +306,7 @@ impl EditorWorkbench {
                             .open(&mut embedded_open)
                             .resizable(true)
                             .show(viewport_ctx, |ui| {
+                                self.apply_pending_graph_view(ui.available_size());
                                 let mut panel = NodeEditorPanel::new(
                                     &mut self.node_graph,
                                     &mut self.undo_stack,
@@ -335,6 +316,7 @@ impl EditorWorkbench {
                     }
                     egui::ViewportClass::Immediate | egui::ViewportClass::Root => {
                         egui::CentralPanel::default().show(viewport_ctx, |ui| {
+                            self.apply_pending_graph_view(ui.available_size());
                             let mut panel =
                                 NodeEditorPanel::new(&mut self.node_graph, &mut self.undo_stack);
                             panel.ui(ui);
@@ -351,6 +333,52 @@ impl EditorWorkbench {
             if self.node_graph.is_modified() && self.node_graph.dragging_node.is_none() {
                 self.commit_modified_graph(graph_before_detached_interaction);
             }
+        }
+    }
+
+    pub fn reconcile_editor_selection_for_frame(&mut self, selected_before: Option<u32>) -> bool {
+        // External panels may set selected_node directly (lint, diagnostics).
+        // Apply that request only when it changed this frame, otherwise keep
+        // node editor/composer selection as source of truth.
+        if self.selected_node != selected_before {
+            match self.selected_node {
+                Some(requested) if self.node_graph.get_node(requested).is_some() => {
+                    self.node_graph.set_single_selection(Some(requested));
+                    self.selected_entity = None;
+                }
+                Some(_) => {
+                    self.selected_node = self.node_graph.selected;
+                }
+                None => {
+                    self.node_graph.set_single_selection(None);
+                }
+            }
+        }
+
+        if self.node_graph.selected != self.selected_node {
+            self.selected_node = self.node_graph.selected;
+            self.selected_entity = None;
+        }
+        let changed = self.selected_node != selected_before;
+        if changed {
+            self.refresh_scene_from_engine_preview();
+        }
+        changed
+    }
+
+    fn apply_pending_graph_view(&mut self, viewport_size: egui::Vec2) {
+        if self.pending_graph_fit {
+            self.node_graph.zoom_to_fit_viewport(viewport_size);
+            self.pending_graph_fit = false;
+            self.pending_graph_focus = None;
+            return;
+        }
+        let Some(node_id) = self.pending_graph_focus.take() else {
+            return;
+        };
+        if self.node_graph.get_node(node_id).is_some() {
+            self.node_graph
+                .pan_node_into_viewport(node_id, viewport_size);
         }
     }
 

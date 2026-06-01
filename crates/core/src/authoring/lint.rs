@@ -85,6 +85,8 @@ pub enum LintCode {
     PlaceholderChoiceOption,
     ContractUnsupportedExport,
     GenericEventUnchecked,
+    PhaseTraceOk,
+    PhaseTraceFailed,
     CompileError,
     RuntimeInitError,
     DryRunUnreachableCompiled,
@@ -133,6 +135,8 @@ impl LintCode {
         Self::PlaceholderChoiceOption,
         Self::ContractUnsupportedExport,
         Self::GenericEventUnchecked,
+        Self::PhaseTraceOk,
+        Self::PhaseTraceFailed,
         Self::CompileError,
         Self::RuntimeInitError,
         Self::DryRunUnreachableCompiled,
@@ -181,6 +185,8 @@ impl LintCode {
             LintCode::PlaceholderChoiceOption => "VAL_CHOICE_PLACEHOLDER",
             LintCode::ContractUnsupportedExport => "VAL_CONTRACT_EXPORT_UNSUPPORTED",
             LintCode::GenericEventUnchecked => "VAL_GENERIC_UNCHECKED",
+            LintCode::PhaseTraceOk => "TRACE_PHASE_OK",
+            LintCode::PhaseTraceFailed => "TRACE_PHASE_FAILED",
             LintCode::CompileError => "CMP_SCRIPT_ERROR",
             LintCode::RuntimeInitError => "CMP_RUNTIME_INIT",
             LintCode::DryRunUnreachableCompiled => "DRY_UNREACHABLE",
@@ -229,62 +235,54 @@ pub struct LintIssue {
 impl LintIssue {
     pub fn diagnostic_id(&self) -> String {
         const RULE_VERSION: &str = "authoring-diagnostic-v2";
-        let node = self
-            .node_id
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "global".to_string());
-        let event_ip = self
-            .event_ip
-            .map(|ip| ip.to_string())
-            .unwrap_or_else(|| "na".to_string());
-        let edge = match (self.edge_from, self.edge_to) {
-            (Some(from), Some(to)) => format!("{from}>{to}"),
-            (Some(from), None) => format!("{from}>na"),
-            (None, Some(to)) => format!("na>{to}"),
-            (None, None) => "na".to_string(),
-        };
-        let asset = self
-            .asset_path
-            .as_deref()
-            .map(normalize_diagnostic_part)
-            .unwrap_or_else(|| "na".to_string());
-        let blocked_by = self
-            .blocked_by
-            .as_deref()
-            .map(normalize_diagnostic_part)
-            .unwrap_or_else(|| "na".to_string());
-        let target = self
-            .target
-            .as_ref()
-            .map(|target| normalize_diagnostic_part(&target.stable_key()))
-            .unwrap_or_else(|| "na".to_string());
-        let field_path = self
-            .field_path
-            .as_ref()
-            .map(|path| normalize_diagnostic_part(&path.value))
-            .unwrap_or_else(|| "na".to_string());
-        let semantic = if self.semantic_values.is_empty() {
-            "na".to_string()
-        } else {
-            self.semantic_values
+        let mut parts = vec![
+            RULE_VERSION.to_string(),
+            self.phase.label().to_string(),
+            self.code.label().to_string(),
+            self.node_id
+                .map(|id| format!("node={id}"))
+                .unwrap_or_else(|| "scope=global".to_string()),
+        ];
+        if let Some(event_ip) = self.event_ip {
+            parts.push(format!("ip={event_ip}"));
+        }
+        match (self.edge_from, self.edge_to) {
+            (Some(from), Some(to)) => parts.push(format!("edge={from}>{to}")),
+            (Some(from), None) => parts.push(format!("edge_from={from}")),
+            (None, Some(to)) => parts.push(format!("edge_to={to}")),
+            (None, None) => {}
+        }
+        if let Some(asset_path) = self.asset_path.as_deref() {
+            parts.push(format!("asset={}", normalize_diagnostic_part(asset_path)));
+        }
+        if let Some(blocked_by) = self.blocked_by.as_deref() {
+            parts.push(format!(
+                "blocked_by={}",
+                normalize_diagnostic_part(blocked_by)
+            ));
+        }
+        if let Some(target) = &self.target {
+            parts.push(format!(
+                "target={}",
+                normalize_diagnostic_part(&target.stable_key())
+            ));
+        }
+        if let Some(field_path) = &self.field_path {
+            parts.push(format!(
+                "field={}",
+                normalize_diagnostic_part(&field_path.value)
+            ));
+        }
+        if !self.semantic_values.is_empty() {
+            let semantic = self
+                .semantic_values
                 .iter()
                 .map(|value| normalize_diagnostic_part(&value.stable_key()))
                 .collect::<Vec<_>>()
-                .join("_")
-        };
-        format!(
-            "{RULE_VERSION}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
-            self.phase.label(),
-            self.code.label(),
-            node,
-            event_ip,
-            edge,
-            asset,
-            blocked_by,
-            target,
-            field_path,
-            semantic
-        )
+                .join("_");
+            parts.push(format!("semantic={semantic}"));
+        }
+        parts.join(":")
     }
 
     pub fn new(

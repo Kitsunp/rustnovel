@@ -589,6 +589,7 @@ fn render_preview_history_tab(ui: &mut egui::Ui, engine: &Engine) {
         return;
     }
     egui::ScrollArea::vertical()
+        .id_source("player_preview_history_scroll")
         .max_height(320.0)
         .show(ui, |ui| {
             for entry in &engine.state().history {

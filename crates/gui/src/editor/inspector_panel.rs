@@ -54,24 +54,26 @@ impl<'a> InspectorPanel<'a> {
         ui.separator();
 
         let mut action = None;
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.collapsing("Selected Node", |ui| {
-                action = self.render_node_editor(ui);
-            });
+        egui::ScrollArea::vertical()
+            .id_source("inspector_panel_main_scroll")
+            .show(ui, |ui| {
+                ui.collapsing("Selected Node", |ui| {
+                    action = self.render_node_editor(ui);
+                });
 
-            ui.separator();
+                ui.separator();
 
-            ui.collapsing("Selected Entity", |ui| {
-                self.render_entity_info(ui);
-            });
+                ui.collapsing("Selected Entity", |ui| {
+                    self.render_entity_info(ui);
+                });
 
-            ui.separator();
-            ui.collapsing("Graph Summary", |ui| {
-                for line in graph_summary_lines(self.graph) {
-                    ui.label(line);
-                }
+                ui.separator();
+                ui.collapsing("Graph Summary", |ui| {
+                    for line in graph_summary_lines(self.graph) {
+                        ui.label(line);
+                    }
+                });
             });
-        });
         action
     }
 }

@@ -251,6 +251,7 @@ impl VnApp {
             return;
         }
         egui::ScrollArea::vertical()
+            .id_source("player_menu_history_scroll")
             .max_height(360.0)
             .show(ui, |ui| {
                 for entry in &self.engine.state().history {
@@ -266,6 +267,7 @@ impl VnApp {
             return;
         }
         egui::ScrollArea::vertical()
+            .id_source("player_menu_routes_scroll")
             .max_height(360.0)
             .show(ui, |ui| {
                 for (idx, entry) in self.engine.choice_history().iter().enumerate() {

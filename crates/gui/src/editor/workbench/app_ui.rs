@@ -1284,6 +1284,7 @@ impl EditorWorkbench {
 
                 ui.collapsing("Quick Action Buttons", |ui| {
                     egui::ScrollArea::vertical()
+                        .id_source("player_menu_quick_actions_scroll")
                         .max_height(180.0)
                         .show(ui, |ui| {
                             for action in &mut menu.quick_actions {

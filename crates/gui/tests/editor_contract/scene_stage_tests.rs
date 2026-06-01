@@ -96,6 +96,76 @@ fn background_fit_modes_change_background_rect_without_moving_stage() {
 }
 
 #[test]
+fn non_background_entities_keep_logical_scale_across_viewport_sizes() {
+    let large = stage_geometry(
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 720.0)),
+        (1280.0, 720.0),
+        StageFit::Fill,
+    );
+    let small = stage_geometry(
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 360.0)),
+        (1280.0, 720.0),
+        StageFit::Fill,
+    );
+    let scale_ratio = small.scale / large.scale;
+    let mut transform = Transform::at(120, 80);
+    transform.scale = 1250;
+    let kinds = [
+        EntityKind::Character(visual_novel_engine::CharacterData {
+            name: SharedStr::from("hero"),
+            expression: Some(SharedStr::from("hero.png")),
+        }),
+        EntityKind::Image(visual_novel_engine::ImageData {
+            path: SharedStr::from("prop.png"),
+            tint: None,
+        }),
+        EntityKind::Video(visual_novel_engine::VideoData {
+            path: SharedStr::from("clip.webm"),
+            looping: true,
+        }),
+        EntityKind::Text(visual_novel_engine::TextData {
+            content: "Caption".to_string(),
+            font_size: 24,
+            color: 0xFFFFFFFF,
+        }),
+    ];
+
+    for kind in kinds {
+        let large_rect = entity_rect_with_background_fit(
+            &kind,
+            &transform,
+            &large,
+            crate::editor::BackgroundFit::Cover,
+        );
+        let small_rect = entity_rect_with_background_fit(
+            &kind,
+            &transform,
+            &small,
+            crate::editor::BackgroundFit::Cover,
+        );
+        assert!(
+            (small_rect.width() - large_rect.width() * scale_ratio).abs() < 0.01,
+            "{kind:?} width should scale with the stage"
+        );
+        assert!(
+            (small_rect.height() - large_rect.height() * scale_ratio).abs() < 0.01,
+            "{kind:?} height should scale with the stage"
+        );
+    }
+}
+
+#[test]
+fn audio_entities_are_layer_metadata_not_stage_text() {
+    let audio = EntityKind::Audio(visual_novel_engine::AudioData {
+        path: SharedStr::from("bgm/theme.ogg"),
+        volume: 1000,
+        looping: true,
+    });
+
+    assert!(!entity_visible_on_stage(&audio));
+}
+
+#[test]
 fn character_drag_is_clamped_inside_stage() {
     let geometry = stage_geometry(
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 720.0)),

@@ -2,7 +2,7 @@ use super::{
     route_sim::select_choice_index, signatures::compiled_event_signature,
     signatures::event_kind_compiled, ChoicePolicy, DryRunReport, DryRunStepTrace, DryRunStopReason,
 };
-use crate::authoring::{LintCode, LintIssue, ValidationPhase};
+use crate::authoring::{LintCode, LintIssue, SemanticValue, SemanticValueKind, ValidationPhase};
 use crate::engine::Engine;
 use crate::error::VnError;
 use crate::event::EventCompiled;
@@ -41,13 +41,36 @@ pub fn run_dry_run(mut engine: Engine, policy: &ChoicePolicy, max_steps: usize) 
         let event = match engine.current_event() {
             Ok(event) => event,
             Err(VnError::EndOfScript) => {
-                let msg = format!("Dry Run finished in {steps} step(s)");
-                issues.push(LintIssue::info(
-                    None,
-                    ValidationPhase::DryRun,
-                    LintCode::DryRunFinished,
-                    msg.clone(),
-                ));
+                let ip = engine.state().position;
+                let msg = format!(
+                    "Dry Run finished in {steps} step(s); stop_ip={ip}; route={}",
+                    policy.label()
+                );
+                issues.push(
+                    LintIssue::info(
+                        None,
+                        ValidationPhase::DryRun,
+                        LintCode::DryRunFinished,
+                        msg.clone(),
+                    )
+                    .with_event_ip(Some(ip))
+                    .with_semantic_value(SemanticValue::new(
+                        SemanticValueKind::Number,
+                        steps.to_string(),
+                        "dry_run.executed_steps",
+                    ))
+                    .with_semantic_value(SemanticValue::new(
+                        SemanticValueKind::Number,
+                        ip.to_string(),
+                        "dry_run.stop_ip",
+                    ))
+                    .with_semantic_value(SemanticValue::new(
+                        SemanticValueKind::Text,
+                        policy.label(),
+                        "dry_run.route",
+                    ))
+                    .with_evidence_trace(),
+                );
                 break (DryRunStopReason::Finished, msg);
             }
             Err(err) => {

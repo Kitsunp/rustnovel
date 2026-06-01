@@ -23,6 +23,10 @@ pub use geometry::{
     is_background_image, scene_from_visual_state, stage_geometry, StageGeometry,
 };
 
+pub fn entity_visible_on_stage(kind: &EntityKind) -> bool {
+    !matches!(kind, EntityKind::Audio(_))
+}
+
 pub struct SceneStagePainter<'a> {
     project_root: Option<&'a Path>,
     preview_quality: PreviewQuality,
@@ -86,7 +90,12 @@ impl<'a> SceneStagePainter<'a> {
         geometry: StageGeometry,
     ) {
         self.paint_canvas(ui, &geometry, scene.is_empty());
+        let previous_clip = ui.clip_rect();
+        ui.set_clip_rect(previous_clip.intersect(geometry.stage_rect));
         for (index, entity) in scene.iter_sorted().enumerate() {
+            if !entity_visible_on_stage(&entity.kind) {
+                continue;
+            }
             if self
                 .entity_layer_override(entity, None, index)
                 .is_some_and(|entry| !entry.visible)
@@ -101,6 +110,7 @@ impl<'a> SceneStagePainter<'a> {
             );
             self.paint_entity(ui, &entity.kind, rect, false);
         }
+        ui.set_clip_rect(previous_clip);
     }
 
     pub fn paint_interactive(
@@ -125,6 +135,12 @@ impl<'a> SceneStagePainter<'a> {
             let Some(entity) = scene.get(EntityId::new(raw_id)).cloned() else {
                 continue;
             };
+            if !entity_visible_on_stage(&entity.kind) {
+                if *selected_entity_id == Some(raw_id) {
+                    *selected_entity_id = None;
+                }
+                continue;
+            }
             let source_node_id = entity_owners.get(&raw_id).copied();
             if self
                 .entity_layer_override(&entity, source_node_id, index)
@@ -146,12 +162,22 @@ impl<'a> SceneStagePainter<'a> {
             let locked = self
                 .entity_layer_override(&entity, source_node_id, index)
                 .is_some_and(|entry| entry.locked);
+            let interact_rect = rect.intersect(geometry.stage_rect);
+            if !interact_rect.is_positive() {
+                continue;
+            }
             let sense = if is_background || locked {
                 egui::Sense::hover()
             } else {
                 egui::Sense::click_and_drag()
             };
-            let interact = ui.interact(rect, egui::Id::new(("scene_entity", raw_id)), sense);
+            let previous_clip = ui.clip_rect();
+            ui.set_clip_rect(previous_clip.intersect(geometry.stage_rect));
+            let interact = ui.interact(
+                interact_rect,
+                egui::Id::new(("scene_entity", raw_id)),
+                sense,
+            );
 
             if !is_background && !locked && (interact.clicked() || interact.double_clicked()) {
                 *selected_entity_id = Some(raw_id);
@@ -182,6 +208,7 @@ impl<'a> SceneStagePainter<'a> {
                 );
             }
             self.paint_entity(ui, &entity.kind, rect, is_selected);
+            ui.set_clip_rect(previous_clip);
         }
 
         let moved_character = moved_entity.and_then(|(raw_id, delta)| {

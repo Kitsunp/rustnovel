@@ -6,7 +6,8 @@ use visual_novel_engine::{
     authoring::{
         composer::{BackgroundFit, LayerOverride},
         export_runtime_script_from_authoring, parse_authoring_document_or_script,
-        AuthoringDocument, OperationLogEntry, VerificationRun,
+        source_looks_like_authoring_document, AuthoringDocument, OperationLogEntry,
+        VerificationRun,
     },
     manifest::{ManifestMigrationReport, ProjectManifest},
 };
@@ -122,10 +123,17 @@ pub fn load_script(path: PathBuf) -> Result<LoadedScript, EditorError> {
             verification_runs: document.verification_runs,
         });
     }
+    let source_has_authoring_layout = source_looks_like_authoring_document(&source);
     let graph = parse_authoring_document_or_script(&source)
         .map_err(|e| EditorError::CompileError(format!("Parse error: {}", e)))?;
+    let mut graph = from_authoring_graph(&graph);
+    if !source_has_authoring_layout {
+        graph.auto_layout_hierarchical();
+        graph.zoom_to_fit();
+        graph.clear_modified();
+    }
     Ok(LoadedScript {
-        graph: from_authoring_graph(&graph),
+        graph,
         was_imported: false,
         composer_layer_overrides: std::collections::HashMap::new(),
         composer_background_fit_overrides: std::collections::HashMap::new(),

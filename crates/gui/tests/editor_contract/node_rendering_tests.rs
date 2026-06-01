@@ -62,6 +62,217 @@ fn test_bezier_control_points_clamp_offset_for_long_edges() {
 }
 
 #[test]
+fn route_labels_identify_choice_options_by_port() {
+    let choice = StoryNode::Choice {
+        prompt: "Where?".to_string(),
+        options: vec![
+            "Visit the court".to_string(),
+            "Find the music".to_string(),
+        ],
+    };
+    let dialogue = StoryNode::Dialogue {
+        speaker: "Sakura".to_string(),
+        text: "Hello".to_string(),
+    };
+
+    assert_eq!(
+        route_label_for_source(&choice, 0).as_deref(),
+        Some("1. Visit the court")
+    );
+    assert_eq!(
+        route_label_for_source(&choice, 1).as_deref(),
+        Some("2. Find the music")
+    );
+    assert_eq!(route_label_for_source(&choice, 2), None);
+    assert_eq!(route_label_for_source(&dialogue, 0), None);
+}
+
+#[test]
+fn route_colors_distinguish_adjacent_option_ports() {
+    assert_ne!(route_color(0), route_color(1));
+    assert_ne!(route_color(1), route_color(2));
+    assert_eq!(route_color(0), route_color(6));
+}
+
+#[test]
+fn bezier_point_clamps_label_position_to_curve() {
+    let from = egui::pos2(0.0, 50.0);
+    let to = egui::pos2(100.0, 50.0);
+
+    assert_eq!(bezier_point(from, to, -1.0), from);
+    assert_eq!(bezier_point(from, to, 2.0), to);
+    assert_eq!(bezier_point(from, to, 0.5), egui::pos2(50.0, 50.0));
+}
+
+#[test]
+fn route_labels_do_not_render_at_zoom_levels_that_crowd_node_options() {
+    let from = egui::pos2(220.0, 180.0);
+    let to = egui::pos2(360.0, 210.0);
+
+    assert_eq!(route_label_rect(from, to, "1. Visit the court", 0.48), None);
+    assert!(route_label_rect(from, to, "1. Visit the court", 0.55).is_some());
+}
+
+#[test]
+fn route_label_rect_stays_outside_source_rect_for_vertical_and_horizontal_edges() {
+    let source = egui::Rect::from_min_size(egui::pos2(100.0, 120.0), egui::vec2(372.0, 88.0));
+    let vertical_label = route_label_rect(
+        egui::pos2(162.0, source.bottom()),
+        egui::pos2(180.0, 300.0),
+        "1. Visit the court",
+        0.55,
+    )
+    .expect("vertical label");
+    let horizontal_label = route_label_rect(
+        egui::pos2(source.right(), 168.0),
+        egui::pos2(640.0, 160.0),
+        "2. Find the music room",
+        0.55,
+    )
+    .expect("horizontal label");
+
+    assert!(
+        !source.intersects(vertical_label),
+        "vertical route labels should not cover the Choice node"
+    );
+    assert!(
+        !source.intersects(horizontal_label),
+        "horizontal route labels should not cover the Choice node"
+    );
+}
+
+#[test]
+fn choice_route_labels_do_not_overlap_each_other_in_vertical_or_horizontal_flow() {
+    let choice = StoryNode::Choice {
+        prompt: "Route?".to_string(),
+        options: vec![
+            "Visit the courtyard".to_string(),
+            "Find the music room".to_string(),
+            "Ask about the locked hall".to_string(),
+        ],
+    };
+    let zoom = 0.55;
+
+    let vertical_a = route_label_rect_for_source(
+        egui::pos2(162.0, 208.0),
+        egui::pos2(165.0, 330.0),
+        "1. Visit the courtyard",
+        zoom,
+        &choice,
+        0,
+    )
+    .expect("vertical route label 1");
+    let vertical_b = route_label_rect_for_source(
+        egui::pos2(286.0, 208.0),
+        egui::pos2(286.0, 330.0),
+        "2. Find the music room",
+        zoom,
+        &choice,
+        1,
+    )
+    .expect("vertical route label 2");
+
+    assert!(
+        !vertical_a.intersects(vertical_b),
+        "choice option labels should stay in separate vertical lanes"
+    );
+
+    let horizontal_a = route_label_rect_for_source(
+        egui::pos2(472.0, 154.0),
+        egui::pos2(650.0, 152.0),
+        "1. Visit the courtyard",
+        zoom,
+        &choice,
+        0,
+    )
+    .expect("horizontal route label 1");
+    let horizontal_b = route_label_rect_for_source(
+        egui::pos2(472.0, 170.0),
+        egui::pos2(650.0, 172.0),
+        "2. Find the music room",
+        zoom,
+        &choice,
+        1,
+    )
+    .expect("horizontal route label 2");
+    let horizontal_c = route_label_rect_for_source(
+        egui::pos2(472.0, 186.0),
+        egui::pos2(650.0, 190.0),
+        "3. Ask about the locked hall",
+        zoom,
+        &choice,
+        2,
+    )
+    .expect("horizontal route label 3");
+
+    assert!(
+        !horizontal_a.intersects(horizontal_b),
+        "choice option labels should stack into separate horizontal lanes"
+    );
+    assert!(
+        !horizontal_b.intersects(horizontal_c),
+        "choice option labels should stack into separate horizontal lanes"
+    );
+}
+
+#[test]
+fn connection_viewport_culling_tracks_screen_space_after_pan() {
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(320.0, 240.0));
+
+    assert!(connection_intersects_viewport(
+        egui::pos2(20.0, 20.0),
+        egui::pos2(260.0, 180.0),
+        viewport,
+        1.0
+    ));
+    assert!(!connection_intersects_viewport(
+        egui::pos2(900.0, 900.0),
+        egui::pos2(1100.0, 920.0),
+        viewport,
+        1.0
+    ));
+
+    let shifted_from = egui::pos2(20.0, 20.0) + egui::vec2(40.0, 30.0);
+    let shifted_to = egui::pos2(260.0, 180.0) + egui::vec2(40.0, 30.0);
+    assert_eq!(
+        connection_bounds(egui::pos2(20.0, 20.0), egui::pos2(260.0, 180.0), 1.0).size(),
+        connection_bounds(shifted_from, shifted_to, 1.0).size(),
+        "panning should translate a connection without changing its shape bounds"
+    );
+}
+
+#[test]
+fn projected_bezier_curve_is_stable_when_camera_pans() {
+    let from = egui::pos2(80.0, 90.0);
+    let to = egui::pos2(360.0, 220.0);
+    let pan_a = egui::vec2(0.0, 0.0);
+    let pan_b = egui::vec2(-180.0, 75.0);
+    let zoom = 1.35;
+    let project_a =
+        |point: egui::Pos2| egui::pos2((point.x + pan_a.x) * zoom, (point.y + pan_a.y) * zoom);
+    let project_b =
+        |point: egui::Pos2| egui::pos2((point.x + pan_b.x) * zoom, (point.y + pan_b.y) * zoom);
+    let a = bezier_curve_points(from, to)
+        .into_iter()
+        .map(project_a)
+        .collect::<Vec<_>>();
+    let b = bezier_curve_points(from, to)
+        .into_iter()
+        .map(project_b)
+        .collect::<Vec<_>>();
+    let expected_delta = (pan_b - pan_a) * zoom;
+
+    assert_eq!(a.len(), b.len());
+    for (left, right) in a.iter().zip(b.iter()) {
+        let delta = *right - *left;
+        assert!(
+            (delta - expected_delta).length() < 0.01,
+            "camera pan should translate the rendered curve without rerouting it: {delta:?}"
+        );
+    }
+}
+
+#[test]
 fn context_menu_absent_renders_real_frame_without_mutating_graph() {
     let mut graph = NodeGraph::new();
     let node_id = graph.add_node(StoryNode::Start, egui::pos2(80.0, 80.0));

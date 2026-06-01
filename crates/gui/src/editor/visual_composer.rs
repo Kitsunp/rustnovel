@@ -288,16 +288,6 @@ impl<'a> VisualComposerPanel<'a> {
                 action = Some(layer_action);
             }
         }
-        if ui.cursor().min.y < panel_clip.bottom() - 24.0 {
-            if let Some(edit_action) = overlay_editor::render_overlay_editor(
-                ui,
-                self.selected_authoring_node_id,
-                self.selected_authoring_node,
-            ) {
-                action = Some(edit_action);
-            }
-        }
-
         let visible_remaining = (panel_clip.bottom() - ui.cursor().min.y).max(0.0);
         let viewport_size = viewport::composer_viewport_size(
             egui::vec2(ui.available_width(), visible_remaining),
@@ -437,6 +427,17 @@ impl<'a> VisualComposerPanel<'a> {
                 self.layer_overrides,
                 &mut action,
             );
+        }
+
+        if ui.cursor().min.y < panel_clip.bottom() - 24.0 {
+            ui.add_space(4.0);
+            if let Some(edit_action) = overlay_editor::render_overlay_editor(
+                ui,
+                self.selected_authoring_node_id,
+                self.selected_authoring_node,
+            ) {
+                action = Some(edit_action);
+            }
         }
 
         if ui.cursor().min.y < panel_clip.bottom() - 12.0 {
@@ -620,6 +621,7 @@ impl<'a> VisualComposerPanel<'a> {
                     return;
                 }
                 egui::ScrollArea::vertical()
+                    .id_source("visual_composer_layers_scroll")
                     .max_height(max_height)
                     .show(ui, |ui| {
                         ui.set_max_width(ui.available_width().max(1.0));

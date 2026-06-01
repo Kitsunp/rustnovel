@@ -11,6 +11,10 @@ pub const ZOOM_DEFAULT: f32 = 1.0;
 pub const NODE_WIDTH: f32 = 140.0;
 pub const NODE_HEIGHT: f32 = 70.0;
 pub const NODE_VERTICAL_SPACING: f32 = 90.0;
+pub const CHOICE_HEADER_HEIGHT: f32 = 40.0;
+pub const CHOICE_OPTION_CELL_WIDTH: f32 = 124.0;
+pub const CHOICE_OPTION_ROW_HEIGHT: f32 = 38.0;
+pub const CHOICE_OPTION_BOTTOM_PAD: f32 = 10.0;
 
 pub trait StoryNodeVisualExt {
     fn icon(&self) -> &'static str;
@@ -68,12 +72,20 @@ impl StoryNodeVisualExt for StoryNode {
 #[inline]
 pub fn node_visual_height(node: &StoryNode) -> f32 {
     match node {
-        StoryNode::Choice { options, .. } => {
-            let header = 40.0;
-            let option_h = 30.0;
-            header + ((options.len() + 1).max(1) as f32 * option_h) + 10.0
+        StoryNode::Choice { .. } => {
+            CHOICE_HEADER_HEIGHT + CHOICE_OPTION_ROW_HEIGHT + CHOICE_OPTION_BOTTOM_PAD
         }
         _ => NODE_HEIGHT,
+    }
+}
+
+pub fn node_visual_width(node: &StoryNode) -> f32 {
+    match node {
+        StoryNode::Choice { options, .. } => {
+            let cells = (options.len() + 1).max(2) as f32;
+            (cells * CHOICE_OPTION_CELL_WIDTH).max(NODE_WIDTH)
+        }
+        _ => NODE_WIDTH,
     }
 }
 

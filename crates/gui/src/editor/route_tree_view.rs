@@ -36,6 +36,7 @@ impl<'a> RouteTreeView<'a> {
         self.render_summary(ui);
         ui.separator();
         egui::ScrollArea::vertical()
+            .id_source("route_tree_view_scroll")
             .max_height(self.max_height)
             .auto_shrink([false, false])
             .show(ui, |ui| {

@@ -34,7 +34,8 @@ fn workbench_diagnostic_report_json_contains_bilingual_fields() {
 
     assert!(issue["diagnostic_id"]
         .as_str()
-        .is_some_and(|id| id.starts_with("authoring-diagnostic-v2:GRAPH:VAL_SPEAKER_EMPTY:7:3")));
+        .is_some_and(|id| id.starts_with("authoring-diagnostic-v2:GRAPH:VAL_SPEAKER_EMPTY:node=7:ip=3")
+            && !id.contains(":na")));
     assert!(issue["target"].is_object());
     assert!(issue["evidence_trace"].is_object());
     assert!(issue["message_es"].as_str().is_some());
@@ -87,7 +88,7 @@ fn report_v2_import_preserves_target_field_path_and_stale_state() {
             },
         )
         .with_field_path("graph.nodes[12].options[1].target")
-        .with_blocked_by("authoring-diagnostic-v2:GRAPH:VAL_CHOICE_EMPTY:12:na:na")
+        .with_blocked_by("authoring-diagnostic-v2:GRAPH:VAL_CHOICE_EMPTY:node=12")
         .with_operation_id("op:import-preserve")
         .with_evidence_trace(),
     );
@@ -117,7 +118,7 @@ fn report_v2_import_preserves_target_field_path_and_stale_state() {
     );
     assert_eq!(
         issue.blocked_by.as_deref(),
-        Some("authoring-diagnostic-v2:GRAPH:VAL_CHOICE_EMPTY:12:na:na")
+        Some("authoring-diagnostic-v2:GRAPH:VAL_CHOICE_EMPTY:node=12")
     );
     let imported_envelope = issue.envelope_v2();
     assert_eq!(

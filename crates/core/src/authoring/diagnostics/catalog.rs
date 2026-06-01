@@ -89,6 +89,8 @@ fn spec_es(code: LintCode) -> Spec {
         LintCode::PlaceholderChoiceOption => ("Opcion placeholder", "Una opcion generada no fue editada.", "El texto sigue siendo marcador temporal.", "Reemplaza el placeholder por texto final.", "Texto final."),
         LintCode::ContractUnsupportedExport => ("Export no soportado", "Un nodo no puede exportarse fielmente.", "El contrato runtime/editor no cubre esa semantica.", "Convierte el nodo a una primitiva soportada o documenta capability.", "Nodo exportable."),
         LintCode::GenericEventUnchecked => ("Generic sin verificar", "Un evento generico requiere revision.", "El editor conserva payload que no interpreta por completo.", "Resuelve a un nodo tipado o acepta explicitamente el Generic.", "Evento revisado."),
+        LintCode::PhaseTraceOk => ("Fase completada", "Una fase del pipeline termino correctamente.", "Es una traza informativa del pipeline, no un fallo de dry-run.", "No requiere accion; usa la fase en el diagnostic_id para auditar el flujo.", "Fase identificada sin confundirse con dry-run."),
+        LintCode::PhaseTraceFailed => ("Fase fallida", "Una fase del pipeline fallo.", "La fase marcada no pudo completar el contrato esperado.", "Revisa la fase indicada y corrige el diagnostico causante.", "Pipeline sin fases fallidas."),
         LintCode::CompileError => ("Error de compilacion", "ScriptRaw no compila.", "La conversion a runtime genero contrato invalido.", "Corrige errores previos y vuelve a compilar.", "Script compilable."),
         LintCode::RuntimeInitError => ("Error runtime init", "El engine no pudo iniciar.", "Seguridad o limites rechazaron el runtime compilado.", "Revisa politicas, labels y recursos antes de ejecutar.", "Engine inicializado."),
         LintCode::DryRunUnreachableCompiled => ("Evento compilado inalcanzable", "Un event_ip compilado no se visita.", "StoryGraph no encuentra entrada hacia ese evento.", "Reconecta o elimina el evento inalcanzable.", "Eventos alcanzables."),
@@ -96,7 +98,7 @@ fn spec_es(code: LintCode) -> Spec {
         LintCode::DryRunRuntimeError => ("Error en dry-run", "La simulacion fallo al ejecutar.", "Un evento compilado fallo al avanzar.", "Usa el repro generado y corrige el event_ip marcado.", "Dry-run sin errores."),
         LintCode::DryRunParityMismatch => ("Diferencia preview/runtime", "Las firmas no coinciden.", "Editor y engine interpretan distinto la misma semantica.", "Migra la semantica al core o corrige el nodo.", "Firmas equivalentes."),
         LintCode::DryRunExtCallBlocked => ("ExtCall bloquea dry-run", "Se encontro una llamada externa que requiere host.", "La validacion headless no puede ejecutar plugins ni asumir exito.", "Declara y prueba la capability host o reemplaza por evento nativo.", "Capability ejecutable por host."),
-        LintCode::DryRunFinished => ("Dry-run terminado", "La ruta probada termino limpio.", "La simulacion alcanzo EndOfScript.", "Revisa cobertura de rutas para ramas alternativas.", "Fin limpio."),
+        LintCode::DryRunFinished => ("Dry-run terminado", "La ruta probada termino limpio.", "La simulacion alcanzo EndOfScript y el diagnostico marca stop_ip/ruta ejecutada.", "Usa event_ip, route y executed_steps del envelope para reproducir la ruta; ejecuta politicas alternativas si necesitas cobertura de ramas.", "Fin limpio con stop_ip y ruta trazables."),
         LintCode::FragmentPortStale => ("Puerto de fragment obsoleto", "Un puerto de fragment ya no coincide con las conexiones.", "Las conexiones externas cambiaron despues de crear el fragment.", "Refresca los puertos del fragment.", "Puertos sincronizados."),
         LintCode::FragmentNodeMissing => ("Nodo faltante en fragment", "Un fragment referencia un nodo inexistente.", "El nodo fue eliminado o el documento esta corrupto.", "Quita el nodo del fragment o recrea el fragment.", "Fragment con nodos existentes."),
         LintCode::FragmentOwnershipConflict => ("Conflicto de ownership de fragment", "Un nodo pertenece a mas de un fragment.", "Los fragments son contenedores estrictos.", "Deja el nodo en un solo fragment o desagrupa uno.", "Ownership unico."),
@@ -104,6 +106,24 @@ fn spec_es(code: LintCode) -> Spec {
         LintCode::SubgraphCallInvalid => ("SubgraphCall invalido", "Una llamada de subgrafo no resuelve.", "El fragment o sus puertos no existen.", "Selecciona un fragment y puertos validos.", "Llamada resoluble."),
         LintCode::FragmentRecursion => ("Recursion de fragment", "Un fragment se llama a si mismo directa o indirectamente.", "El flattening determinista no permite recursion.", "Rompe el ciclo de llamadas entre fragments.", "Grafo de fragments aciclico."),
         LintCode::FragmentLabelCollision => ("Colision de labels de fragment", "Dos labels internos colisionan.", "El namespace determinista no es unico.", "Renombra fragments o nodos implicados.", "Labels internos unicos."),
+    };
+    let (why, consequence, steps) = match code {
+        LintCode::DryRunFinished => (
+            "No fallo; es una traza informativa que registra donde termino la ruta ejecutada.",
+            "Si se confunde con un error, el editor puede reportar un falso problema de runtime.",
+            &["Usar event_ip, route y executed_steps para reproducir la ruta.", "Ejecutar politicas alternativas solo si necesitas cobertura de ramas."],
+        ),
+        LintCode::PhaseTraceOk => (
+            "No fallo; es una marca de avance del pipeline para explicar que fase termino.",
+            "Si se reutiliza como DRY_FINISHED, el reporte pierde identidad y parece un resultado de simulacion.",
+            &["Leer el campo phase/code del diagnostic_id.", "Usar la fase marcada para auditar el orden del pipeline."],
+        ),
+        LintCode::PhaseTraceFailed => (
+            "La fase marcada fallo antes de completar el pipeline.",
+            "Si se clasifica como runtime init generico, el reporte puede ocultar la fase real que bloqueo el flujo.",
+            &["Abrir la fase indicada por el diagnostic_id.", "Corregir el diagnostico causante y volver a validar."],
+        ),
+        _ => (why, consequence, steps),
     };
     Spec { title, what, root, why, consequence, fix, steps, expected }
 }
@@ -143,6 +163,8 @@ fn spec_en(code: LintCode) -> Spec {
         LintCode::PlaceholderChoiceOption => ("Placeholder option", "A generated option was not edited.", "Text still contains a temporary marker.", "Replace the placeholder with final text.", "Final text."),
         LintCode::ContractUnsupportedExport => ("Unsupported export contract", "A node cannot export faithfully.", "Runtime/editor contract does not cover this semantic.", "Convert to a supported primitive or document capability.", "Exportable node."),
         LintCode::GenericEventUnchecked => ("Unchecked Generic event", "A generic event needs review.", "The editor preserves payload it cannot fully interpret.", "Resolve to a typed node or explicitly accept the Generic.", "Reviewed event."),
+        LintCode::PhaseTraceOk => ("Phase completed", "A pipeline phase completed successfully.", "This is an informational pipeline trace, not a dry-run failure.", "No action required; use the phase in the diagnostic_id to audit the flow.", "Phase identified without being confused with dry-run."),
+        LintCode::PhaseTraceFailed => ("Phase failed", "A pipeline phase failed.", "The marked phase could not complete the expected contract.", "Inspect the indicated phase and fix the causal diagnostic.", "Pipeline without failed phases."),
         LintCode::CompileError => ("Compile error", "ScriptRaw does not compile.", "Runtime conversion produced an invalid contract.", "Fix earlier errors and compile again.", "Compilable script."),
         LintCode::RuntimeInitError => ("Runtime init error", "Engine could not start.", "Security or limits rejected the compiled runtime.", "Review policies, labels and resources before running.", "Initialized engine."),
         LintCode::DryRunUnreachableCompiled => ("Unreachable compiled event", "A compiled event_ip is not visited.", "StoryGraph finds no incoming route to that event.", "Reconnect or remove the unreachable event.", "Reachable events."),
@@ -150,7 +172,7 @@ fn spec_en(code: LintCode) -> Spec {
         LintCode::DryRunRuntimeError => ("Dry-run runtime error", "Simulation failed while executing.", "A compiled event failed when advanced.", "Use the generated repro and fix the marked event_ip.", "Dry-run without errors."),
         LintCode::DryRunParityMismatch => ("Preview/runtime mismatch", "Signatures do not match.", "Editor and engine interpret the same semantic differently.", "Move the semantic to core or fix the node.", "Equivalent signatures."),
         LintCode::DryRunExtCallBlocked => ("ExtCall blocks dry-run", "An external call requires a host.", "Headless validation cannot execute plugins or assume success.", "Declare and test the host capability or replace it with a native event.", "Host-executable capability."),
-        LintCode::DryRunFinished => ("Dry-run finished", "The tested route ended cleanly.", "Simulation reached EndOfScript.", "Review route coverage for alternate branches.", "Clean finish."),
+        LintCode::DryRunFinished => ("Dry-run finished", "The tested route ended cleanly.", "Simulation reached EndOfScript and the diagnostic records stop_ip/executed route.", "Use event_ip, route and executed_steps from the envelope to reproduce the route; run alternate policies when branch coverage matters.", "Clean finish with traceable stop_ip and route."),
         LintCode::FragmentPortStale => ("Stale fragment port", "A fragment port no longer matches connections.", "External connections changed after fragment creation.", "Refresh fragment ports.", "Synchronized ports."),
         LintCode::FragmentNodeMissing => ("Missing fragment node", "A fragment references a missing node.", "The node was deleted or the document is corrupt.", "Remove the node from the fragment or recreate it.", "Fragment with existing nodes."),
         LintCode::FragmentOwnershipConflict => ("Fragment ownership conflict", "A node belongs to more than one fragment.", "Fragments are strict containers.", "Keep the node in one fragment or ungroup one fragment.", "Single ownership."),
@@ -158,6 +180,24 @@ fn spec_en(code: LintCode) -> Spec {
         LintCode::SubgraphCallInvalid => ("Invalid SubgraphCall", "A subgraph call cannot resolve.", "The fragment or selected ports do not exist.", "Select a valid fragment and ports.", "Resolvable call."),
         LintCode::FragmentRecursion => ("Fragment recursion", "A fragment calls itself directly or indirectly.", "Deterministic flattening does not allow recursion.", "Break the call cycle between fragments.", "Acyclic fragment graph."),
         LintCode::FragmentLabelCollision => ("Fragment label collision", "Two internal labels collide.", "Deterministic namespace is not unique.", "Rename involved fragments or nodes.", "Unique internal labels."),
+    };
+    let (why, consequence, steps) = match code {
+        LintCode::DryRunFinished => (
+            "No failure occurred; this informational trace records where the executed route stopped.",
+            "If it is read as an error, the editor can report a false runtime problem.",
+            &["Use event_ip, route and executed_steps to reproduce the route.", "Run alternate policies only when branch coverage matters."],
+        ),
+        LintCode::PhaseTraceOk => (
+            "No failure occurred; this marks pipeline progress and explains which phase completed.",
+            "If it is reused as DRY_FINISHED, the report loses identity and looks like a simulation result.",
+            &["Read the phase/code fields from the diagnostic_id.", "Use the marked phase to audit pipeline order."],
+        ),
+        LintCode::PhaseTraceFailed => (
+            "The marked phase failed before the pipeline completed.",
+            "If it is classified as a generic runtime init issue, the report can hide the real blocking phase.",
+            &["Open the phase indicated by the diagnostic_id.", "Fix the causal diagnostic and validate again."],
+        ),
+        _ => (why, consequence, steps),
     };
     Spec { title, what, root, why, consequence, fix, steps, expected }
 }

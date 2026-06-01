@@ -109,6 +109,8 @@ impl EditorWorkbench {
         show_toast: bool,
     ) {
         self.node_graph = loaded_script.graph;
+        self.pending_graph_fit = true;
+        self.pending_graph_focus = None;
         self.operation_log = loaded_script.operation_log;
         self.verification_runs = loaded_script.verification_runs;
         self.composer_layer_overrides = loaded_script.composer_layer_overrides;

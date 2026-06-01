@@ -17,8 +17,8 @@ use visual_novel_engine::{
 };
 
 use super::node_types::{
-    node_visual_height, ContextMenu, StoryNode, NODE_HEIGHT, NODE_VERTICAL_SPACING, NODE_WIDTH,
-    ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN,
+    node_visual_height, node_visual_width, ContextMenu, StoryNode, NODE_HEIGHT,
+    NODE_VERTICAL_SPACING, NODE_WIDTH, ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN,
 };
 use super::script_sync;
 
@@ -40,6 +40,22 @@ pub struct GraphOperationHint {
     pub push_undo_snapshot: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GraphLayoutOrientation {
+    #[default]
+    Vertical,
+    Horizontal,
+}
+
+impl GraphLayoutOrientation {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Vertical => "Vertical",
+            Self::Horizontal => "Horizontal",
+        }
+    }
+}
+
 /// A node graph representing the story structure.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NodeGraph {
@@ -58,6 +74,9 @@ pub struct NodeGraph {
     /// Zoom level
     #[serde(default = "default_zoom")]
     pub zoom: f32,
+    /// Preferred direction used by Auto Layout.
+    #[serde(default)]
+    pub layout_orientation: GraphLayoutOrientation,
     /// Node being edited inline
     #[serde(skip)]
     pub editing: Option<u32>,
@@ -92,6 +111,7 @@ impl Clone for NodeGraph {
             selected_nodes: self.selected_nodes.clone(),
             pan: self.pan,
             zoom: self.zoom,
+            layout_orientation: self.layout_orientation,
             editing: self.editing,
             dragging_node: self.dragging_node,
             connecting_from: self.connecting_from,
@@ -113,6 +133,7 @@ impl Default for NodeGraph {
             selected_nodes: BTreeSet::new(),
             pan: egui::Vec2::ZERO,
             zoom: ZOOM_DEFAULT,
+            layout_orientation: GraphLayoutOrientation::Vertical,
             editing: None,
             dragging_node: None,
             connecting_from: None,
@@ -245,8 +266,10 @@ impl NodeGraph {
     /// Returns the node at the given graph position, if any.
     pub fn node_at_position(&self, graph_pos: egui::Pos2) -> Option<u32> {
         for (id, node, pos) in self.nodes() {
-            let node_rect =
-                egui::Rect::from_min_size(pos, egui::vec2(NODE_WIDTH, node_visual_height(&node)));
+            let node_rect = egui::Rect::from_min_size(
+                pos,
+                egui::vec2(node_visual_width(&node), node_visual_height(&node)),
+            );
             if node_rect.contains(graph_pos) {
                 return Some(id);
             }
@@ -437,7 +460,7 @@ impl NodeGraph {
             .filter_map(|(id, node, pos)| {
                 let node_rect = egui::Rect::from_min_size(
                     pos,
-                    egui::vec2(NODE_WIDTH, node_visual_height(&node)),
+                    egui::vec2(node_visual_width(&node), node_visual_height(&node)),
                 );
                 rect.intersects(node_rect).then_some(id)
             })

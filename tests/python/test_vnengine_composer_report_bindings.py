@@ -293,6 +293,7 @@ class ComposerReportBindingTests(unittest.TestCase):
         issue_envelopes = [json.loads(item) for item in report.issues()]
         self.assertEqual(len(issue_envelopes), report.issue_count)
         self.assertIn("diagnostic_id", issue_envelopes[0])
+        self.assertNotIn(":na", issue_envelopes[0]["diagnostic_id"])
         self.assertEqual(
             len(json.loads(report.issues_json())),
             len(issue_envelopes),

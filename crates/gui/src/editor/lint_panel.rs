@@ -123,10 +123,31 @@ impl<'a> LintPanel<'a> {
             "Found {} errors, {} warnings, {} infos.",
             error_count, warning_count, info_count
         ));
+        let report_text = validation_report_copy_text(self.issues, *self.language);
+        ui.horizontal(|ui| {
+            if ui.button("Copy report").clicked() {
+                ui.output_mut(|output| {
+                    output.copied_text = report_text.clone();
+                });
+            }
+            ui.label("Full report is selectable below.");
+        });
+        egui::CollapsingHeader::new("Copyable report")
+            .id_source("lint_copyable_report")
+            .default_open(false)
+            .show(ui, |ui| {
+                let mut copyable = report_text.clone();
+                ui.add(
+                    egui::TextEdit::multiline(&mut copyable)
+                        .desired_rows(8)
+                        .desired_width(f32::INFINITY),
+                );
+            });
         ui.separator();
 
         let issue_list_height = (ui.available_height() * 0.45).clamp(48.0, 220.0);
         egui::ScrollArea::vertical()
+            .id_source("lint_issue_list_scroll")
             .max_height(issue_list_height)
             .show(ui, |ui| {
                 for (idx, issue) in self.issues.iter().enumerate() {
@@ -151,12 +172,21 @@ impl<'a> LintPanel<'a> {
                     ))
                     .color(color);
 
-                    let resp = ui.selectable_label(selected, text);
+                    ui.horizontal(|ui| {
+                        let resp = ui.selectable_label(selected, text);
 
-                    if resp.clicked() {
-                        *self.selected_issue = Some(idx);
-                        *self.selected_node = self.graph.focus_node_for_issue(issue);
-                    }
+                        if resp.clicked() {
+                            *self.selected_issue = Some(idx);
+                            *self.selected_node = self.graph.focus_node_for_issue(issue);
+                        }
+                        if ui.small_button("Copy").clicked() {
+                            let issue_text =
+                                validation_report_issue_copy_text(issue, idx, *self.language);
+                            ui.output_mut(|output| {
+                                output.copied_text = issue_text;
+                            });
+                        }
+                    });
 
                     ui.separator();
                 }
@@ -165,13 +195,28 @@ impl<'a> LintPanel<'a> {
         if let Some(issue_idx) = *self.selected_issue {
             if let Some(issue) = self.issues.get(issue_idx) {
                 let explanation = issue.explanation(*self.language);
-                egui::CollapsingHeader::new("Error -> Cause -> Action")
+                egui::CollapsingHeader::new(issue_detail_heading(issue.severity))
                     .id_source("lint_issue_details")
                     .default_open(false)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             if ui.button("Ocultar detalle").clicked() {
                                 *self.selected_issue = None;
+                            }
+                            if ui.button("Copy issue").clicked() {
+                                let issue_text = validation_report_issue_copy_text(
+                                    issue,
+                                    issue_idx,
+                                    *self.language,
+                                );
+                                ui.output_mut(|output| {
+                                    output.copied_text = issue_text;
+                                });
+                            }
+                            if ui.button("Copy diagnostic ID").clicked() {
+                                ui.output_mut(|output| {
+                                    output.copied_text = issue.diagnostic_id();
+                                });
                             }
                         });
                         ui.label(format!("diagnostic_id: {}", issue.diagnostic_id()));
@@ -212,6 +257,22 @@ impl<'a> LintPanel<'a> {
                             );
                             ui.label(explanation.docs_ref);
                         });
+                        ui.separator();
+                        egui::CollapsingHeader::new("Copyable selected issue")
+                            .id_source("lint_copyable_selected_issue")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                let mut copyable = validation_report_issue_copy_text(
+                                    issue,
+                                    issue_idx,
+                                    *self.language,
+                                );
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut copyable)
+                                        .desired_rows(6)
+                                        .desired_width(f32::INFINITY),
+                                );
+                            });
                     });
                 ui.separator();
 
@@ -244,6 +305,87 @@ impl<'a> LintPanel<'a> {
         }
 
         response
+    }
+}
+
+pub fn validation_report_copy_text(issues: &[LintIssue], language: DiagnosticLanguage) -> String {
+    if issues.is_empty() {
+        return "Validation Report\nNo issues found.".to_string();
+    }
+    let mut out = String::from("Validation Report\n");
+    for (idx, issue) in issues.iter().enumerate() {
+        out.push('\n');
+        append_validation_issue_copy_text(&mut out, issue, idx, language);
+    }
+    out
+}
+
+pub fn validation_report_issue_copy_text(
+    issue: &LintIssue,
+    issue_index: usize,
+    language: DiagnosticLanguage,
+) -> String {
+    let mut out = String::new();
+    append_validation_issue_copy_text(&mut out, issue, issue_index, language);
+    out
+}
+
+fn append_validation_issue_copy_text(
+    out: &mut String,
+    issue: &LintIssue,
+    issue_index: usize,
+    language: DiagnosticLanguage,
+) {
+    let explanation = issue.explanation(language);
+    out.push_str(&format!(
+        "#{} {} [{}]\n",
+        issue_index + 1,
+        issue.severity.label(),
+        issue.diagnostic_id()
+    ));
+    out.push_str(&format!("diagnostic_id={}\n", issue.diagnostic_id()));
+    out.push_str(&format!(
+        "phase={} code={}\n",
+        issue.phase.label(),
+        issue.code.label()
+    ));
+    if let Some(node_id) = issue.node_id {
+        out.push_str(&format!("node_id={node_id}\n"));
+    }
+    if let Some(event_ip) = issue.event_ip {
+        out.push_str(&format!("event_ip={event_ip}\n"));
+    }
+    if let (Some(edge_from), Some(edge_to)) = (issue.edge_from, issue.edge_to) {
+        out.push_str(&format!("edge={edge_from}->{edge_to}\n"));
+    } else if let Some(edge_from) = issue.edge_from {
+        out.push_str(&format!("edge_from={edge_from}\n"));
+    } else if let Some(edge_to) = issue.edge_to {
+        out.push_str(&format!("edge_to={edge_to}\n"));
+    }
+    if let Some(asset_path) = &issue.asset_path {
+        out.push_str(&format!("asset={asset_path}\n"));
+    }
+    if let Some(blocked_by) = &issue.blocked_by {
+        out.push_str(&format!("blocked_by={blocked_by}\n"));
+    }
+    if let Some(target) = &issue.target {
+        out.push_str(&format!("target={}\n", target.stable_key()));
+    }
+    if let Some(field_path) = &issue.field_path {
+        out.push_str(&format!("field_path={}\n", field_path.value));
+    }
+    out.push_str(&format!("message={}\n", issue.localized_message(language)));
+    out.push_str(&format!("cause={}\n", explanation.root_cause));
+    out.push_str(&format!("why_failed={}\n", explanation.why_failed));
+    out.push_str(&format!("how_to_fix={}\n", explanation.how_to_fix));
+    out.push_str(&format!("docs={}\n", explanation.docs_ref));
+}
+
+fn issue_detail_heading(severity: LintSeverity) -> &'static str {
+    match severity {
+        LintSeverity::Error => "Error -> Cause -> Action",
+        LintSeverity::Warning => "Warning -> Cause -> Action",
+        LintSeverity::Info => "Info -> Meaning -> Action",
     }
 }
 

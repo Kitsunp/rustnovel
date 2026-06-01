@@ -1,5 +1,5 @@
 use super::*;
-use crate::editor::node_types::{node_visual_height, StoryNode, NODE_WIDTH};
+use crate::editor::node_types::{node_visual_height, node_visual_width, StoryNode, NODE_WIDTH};
 use eframe::egui;
 
 #[test]
@@ -77,6 +77,74 @@ fn node_at_position_respects_dynamic_choice_height() {
     let choice_height = node_visual_height(graph.get_node(choice).expect("choice node"));
     let probe = egui::pos2(100.0 + NODE_WIDTH * 0.5, 100.0 + choice_height - 4.0);
     assert_eq!(graph.node_at_position(probe), Some(choice));
+}
+
+#[test]
+fn choice_connection_ports_anchor_on_node_perimeter_for_vertical_and_horizontal_flow() {
+    let choice = StoryNode::Choice {
+        prompt: "Pick".to_string(),
+        options: vec!["Visit the court".to_string(), "Find the music".to_string()],
+    };
+    let pos = egui::pos2(100.0, 120.0);
+    let width = node_visual_width(&choice);
+    let height = node_visual_height(&choice);
+
+    let vertical_first = node_output_port_pos_on_side(pos, &choice, 0, ConnectionSide::Bottom);
+    let vertical_second = node_output_port_pos_on_side(pos, &choice, 1, ConnectionSide::Bottom);
+    assert_eq!(vertical_first.y, pos.y + height);
+    assert_eq!(vertical_second.y, pos.y + height);
+    assert!(vertical_first.x < vertical_second.x);
+
+    let horizontal_first = node_output_port_pos_on_side(pos, &choice, 0, ConnectionSide::Right);
+    let horizontal_second = node_output_port_pos_on_side(pos, &choice, 1, ConnectionSide::Right);
+    assert_eq!(horizontal_first.x, pos.x + width);
+    assert_eq!(horizontal_second.x, pos.x + width);
+    assert!(horizontal_first.y < horizontal_second.y);
+}
+
+#[test]
+fn choice_connection_anchor_follows_target_direction_without_changing_connection_count() {
+    let mut graph = NodeGraph::new();
+    let choice = graph.add_node(
+        StoryNode::Choice {
+            prompt: "Pick".to_string(),
+            options: vec!["Down".to_string(), "Right".to_string()],
+        },
+        egui::pos2(100.0, 120.0),
+    );
+    let down = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "D".to_string(),
+            text: "down".to_string(),
+        },
+        egui::pos2(120.0, 320.0),
+    );
+    let right = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "R".to_string(),
+            text: "right".to_string(),
+        },
+        egui::pos2(520.0, 140.0),
+    );
+    graph.connect_port(choice, 0, down);
+    graph.connect_port(choice, 1, right);
+
+    let choice_node = graph.get_node(choice).expect("choice node");
+    let choice_pos = graph
+        .nodes()
+        .find(|(id, _, _)| *id == choice)
+        .map(|(_, _, pos)| pos)
+        .expect("choice pos");
+    let choice_width = node_visual_width(choice_node);
+    let choice_height = node_visual_height(choice_node);
+    let down_anchor =
+        node_output_port_pos_towards(choice_pos, choice_node, 0, egui::pos2(190.0, 355.0));
+    let right_anchor =
+        node_output_port_pos_towards(choice_pos, choice_node, 1, egui::pos2(590.0, 175.0));
+
+    assert_eq!(graph.connection_count(), 2);
+    assert_eq!(down_anchor.y, choice_pos.y + choice_height);
+    assert_eq!(right_anchor.x, choice_pos.x + choice_width);
 }
 
 #[test]

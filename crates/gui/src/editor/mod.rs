@@ -51,7 +51,7 @@ pub use graph_panel::GraphPanel;
 pub use inspector_panel::{InspectorAction, InspectorPanel};
 pub use lint_panel::LintPanel;
 pub use node_editor::NodeEditorPanel;
-pub use node_graph::NodeGraph;
+pub use node_graph::{GraphLayoutOrientation, NodeGraph};
 pub use node_types::{ContextMenu, StoryNode, StoryNodeVisualExt, ToastKind, ToastState};
 pub use preview_policy::{BackgroundFit, ComposerPreviewMode};
 pub use route_tree_view::RouteTreeView;

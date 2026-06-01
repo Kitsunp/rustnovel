@@ -8,6 +8,7 @@ use visual_novel_engine::authoring::{
     build_authoring_report_fingerprint, composer::LayerOverride, OperationKind, OperationLogEntry,
     OperationStatus, VerificationRun,
 };
+use visual_novel_engine::runtime::{ChoiceOptionRaw, ChoiceRaw, DialogueRaw, EventRaw, ScriptRaw};
 use visual_novel_gui::editor::authoring_adapter::to_authoring_graph;
 use visual_novel_gui::editor::project_io::{
     load_project, load_script, save_authoring_document_with_metadata, save_script,
@@ -225,11 +226,88 @@ fn authoring_save_load_preserves_disconnected_draft_nodes() {
 
     let loaded = load_script(path).expect("load authoring document");
     assert_eq!(loaded.graph.len(), graph.len());
+    assert_eq!(loaded.graph.get_node_pos(start), Some(egui::pos2(0.0, 0.0)));
+    assert_eq!(
+        loaded.graph.get_node_pos(draft),
+        Some(egui::pos2(240.0, 100.0))
+    );
     assert!(matches!(
         loaded.graph.get_node(draft),
         Some(StoryNode::Dialogue { speaker, text })
             if speaker == "Draft" && text == "Disconnected but important"
     ));
+}
+
+#[test]
+fn raw_runtime_load_uses_topology_layout_without_saving_linear_bias() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("script.json");
+    let script = ScriptRaw::new(
+        vec![
+            EventRaw::Choice(ChoiceRaw {
+                prompt: "Route?".to_string(),
+                options: vec![
+                    ChoiceOptionRaw {
+                        text: "Left".to_string(),
+                        target: "left".to_string(),
+                    },
+                    ChoiceOptionRaw {
+                        text: "Right".to_string(),
+                        target: "right".to_string(),
+                    },
+                ],
+            }),
+            EventRaw::Dialogue(DialogueRaw {
+                speaker: "Left".to_string(),
+                text: "Left branch".to_string(),
+            }),
+            EventRaw::Jump {
+                target: "__end".to_string(),
+            },
+            EventRaw::Dialogue(DialogueRaw {
+                speaker: "Right".to_string(),
+                text: "Right branch".to_string(),
+            }),
+        ],
+        std::collections::BTreeMap::from([
+            ("start".to_string(), 0),
+            ("left".to_string(), 1),
+            ("right".to_string(), 3),
+            ("__end".to_string(), 4),
+        ]),
+    );
+    fs::write(&path, script.to_json().expect("script json")).expect("write raw script");
+
+    let loaded = load_script(path).expect("load raw runtime script");
+    let branch_positions = loaded
+        .graph
+        .nodes()
+        .filter_map(|(_, node, pos)| match node {
+            StoryNode::Dialogue { speaker, .. } if speaker == "Left" || speaker == "Right" => {
+                Some(pos)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let choice_pos = loaded
+        .graph
+        .nodes()
+        .find_map(|(_, node, pos)| matches!(node, StoryNode::Choice { .. }).then_some(pos))
+        .expect("choice position");
+
+    assert_eq!(branch_positions.len(), 2);
+    assert_ne!(
+        branch_positions[0].x, branch_positions[1].x,
+        "runtime imports without saved authoring layout should fan out sibling branches instead of hiding them in one line"
+    );
+    assert!(
+        branch_positions.iter().all(|pos| pos.y > choice_pos.y),
+        "runtime imports without saved authoring layout should follow the selected default vertical flow from the choice"
+    );
+    assert!(
+        !loaded.graph.is_modified(),
+        "import-time layout should be treated as loaded state, not an unsaved user edit"
+    );
 }
 
 #[test]

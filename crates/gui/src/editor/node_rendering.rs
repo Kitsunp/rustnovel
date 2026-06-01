@@ -14,8 +14,13 @@ mod inline;
 use inline::*;
 #[path = "node_rendering_edges.rs"]
 mod edges;
-pub use edges::bezier_control_points;
-pub use edges::draw_bezier_connection;
+pub use edges::{
+    bezier_control_points, bezier_curve_points, bezier_point, connection_bounds,
+    connection_bounds_projected, connection_intersects_viewport,
+    connection_intersects_viewport_projected, draw_bezier_connection, draw_story_connection,
+    draw_story_connection_projected, route_color, route_label_for_source, route_label_rect,
+    route_label_rect_for_source,
+};
 
 pub fn node_context_menu_size() -> egui::Vec2 {
     egui::vec2(230.0, 360.0)
@@ -256,6 +261,7 @@ fn render_canvas_context_menu(
                 ui.label(egui::RichText::new("Create node").strong());
                 ui.separator();
                 egui::ScrollArea::vertical()
+                    .id_source("node_canvas_palette_scroll")
                     .max_height(layout.list_max_height)
                     .auto_shrink([true, true])
                     .show(ui, |ui| {

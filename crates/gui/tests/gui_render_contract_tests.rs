@@ -154,6 +154,46 @@ fn editor_workbench_renders_real_egui_frames_inside_viewport_matrix() {
 }
 
 #[test]
+fn loaded_graph_pending_fit_uses_visible_graph_panel() {
+    let ctx = egui::Context::default();
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    workbench.mode = EditorMode::Editor;
+    workbench.show_graph = true;
+    workbench.show_inspector = false;
+    workbench.show_timeline = false;
+    workbench.show_asset_browser = false;
+    let node = workbench.node_graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".to_string(),
+            text: "Loaded far away".to_string(),
+        },
+        egui::pos2(2400.0, 1600.0),
+    );
+    workbench.pending_graph_fit = true;
+
+    let output = run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+
+    assert!(!output.shapes.is_empty());
+    assert!(!workbench.pending_graph_fit);
+    assert_ne!(
+        workbench.node_graph.pan(),
+        egui::Vec2::ZERO,
+        "loaded graphs should fit to the real node editor viewport instead of leaving the camera at empty space"
+    );
+    let pos = workbench.node_graph.get_node_pos(node).expect("node pos");
+    let screen_pos = (pos.to_vec2() + workbench.node_graph.pan()) * workbench.node_graph.zoom();
+    assert!(
+        screen_pos.x.is_finite()
+            && screen_pos.y.is_finite()
+            && screen_pos.x >= -1.0
+            && screen_pos.y >= -1.0
+            && screen_pos.x <= 1280.0
+            && screen_pos.y <= 720.0,
+        "pending fit should bring node into the visible editor frame, got {screen_pos:?}"
+    );
+}
+
+#[test]
 fn editor_workbench_splitters_resize_real_panels_end_to_end() {
     #[derive(Clone, Copy)]
     enum SplitterProbe {
@@ -597,6 +637,23 @@ fn visual_composer_panel_renders_real_responsive_rows_without_horizontal_escape(
             "visual composer requested horizontal space outside its dock at {width}x{height}: {:?}",
             ctx.used_rect()
         );
+        if height >= 500.0 {
+            let max_visible_shape_height = output
+                .shapes
+                .iter()
+                .map(|shape| {
+                    shape
+                        .shape
+                        .visual_bounding_rect()
+                        .intersect(shape.clip_rect)
+                        .height()
+                })
+                .fold(0.0, f32::max);
+            assert!(
+                max_visible_shape_height >= height * 0.35,
+                "selected choice controls should not push the visual composer stage into a tiny strip at {width}x{height}; max painted height was {max_visible_shape_height}"
+            );
+        }
     }
 }
 

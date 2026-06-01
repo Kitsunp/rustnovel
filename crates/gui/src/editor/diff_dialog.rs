@@ -184,51 +184,54 @@ impl DiffDialog {
                         ui.add_space(24.0);
                         ui.label(egui::RichText::new("Actual").monospace().strong());
                     });
-                    egui::ScrollArea::both().max_height(300.0).show(ui, |ui| {
-                        let full_width = ui.available_width();
-                        let marker_width = 18.0;
-                        let column_width = ((full_width - marker_width).max(240.0)) / 2.0;
-                        egui::Grid::new("diff_horizontal_grid")
-                            .striped(true)
-                            .num_columns(3)
-                            .spacing(egui::vec2(10.0, 2.0))
-                            .show(ui, |ui| {
-                                for row in &self.lines {
-                                    let (marker, color) = match row.kind {
-                                        DiffKind::Added => ("+", egui::Color32::GREEN),
-                                        DiffKind::Removed => ("-", egui::Color32::RED),
-                                        DiffKind::Modified => ("~", egui::Color32::YELLOW),
-                                        DiffKind::Context => (" ", egui::Color32::GRAY),
-                                        DiffKind::Elided => ("…", egui::Color32::GRAY),
-                                    };
-                                    let left = render_line_cell(row.left_no, &row.left_text);
-                                    let right = render_line_cell(row.right_no, &row.right_text);
+                    egui::ScrollArea::both()
+                        .id_source("diff_horizontal_scroll")
+                        .max_height(300.0)
+                        .show(ui, |ui| {
+                            let full_width = ui.available_width();
+                            let marker_width = 18.0;
+                            let column_width = ((full_width - marker_width).max(240.0)) / 2.0;
+                            egui::Grid::new("diff_horizontal_grid")
+                                .striped(true)
+                                .num_columns(3)
+                                .spacing(egui::vec2(10.0, 2.0))
+                                .show(ui, |ui| {
+                                    for row in &self.lines {
+                                        let (marker, color) = match row.kind {
+                                            DiffKind::Added => ("+", egui::Color32::GREEN),
+                                            DiffKind::Removed => ("-", egui::Color32::RED),
+                                            DiffKind::Modified => ("~", egui::Color32::YELLOW),
+                                            DiffKind::Context => (" ", egui::Color32::GRAY),
+                                            DiffKind::Elided => ("…", egui::Color32::GRAY),
+                                        };
+                                        let left = render_line_cell(row.left_no, &row.left_text);
+                                        let right = render_line_cell(row.right_no, &row.right_text);
 
-                                    ui.add_sized(
-                                        [column_width, 0.0],
-                                        egui::Label::new(
-                                            egui::RichText::new(left).monospace().color(color),
-                                        ),
-                                    );
-                                    ui.add_sized(
-                                        [marker_width, 0.0],
-                                        egui::Label::new(
-                                            egui::RichText::new(marker)
-                                                .monospace()
-                                                .strong()
-                                                .color(color),
-                                        ),
-                                    );
-                                    ui.add_sized(
-                                        [column_width, 0.0],
-                                        egui::Label::new(
-                                            egui::RichText::new(right).monospace().color(color),
-                                        ),
-                                    );
-                                    ui.end_row();
-                                }
-                            });
-                    });
+                                        ui.add_sized(
+                                            [column_width, 0.0],
+                                            egui::Label::new(
+                                                egui::RichText::new(left).monospace().color(color),
+                                            ),
+                                        );
+                                        ui.add_sized(
+                                            [marker_width, 0.0],
+                                            egui::Label::new(
+                                                egui::RichText::new(marker)
+                                                    .monospace()
+                                                    .strong()
+                                                    .color(color),
+                                            ),
+                                        );
+                                        ui.add_sized(
+                                            [column_width, 0.0],
+                                            egui::Label::new(
+                                                egui::RichText::new(right).monospace().color(color),
+                                            ),
+                                        );
+                                        ui.end_row();
+                                    }
+                                });
+                        });
 
                     ui.separator();
                     ui.label(

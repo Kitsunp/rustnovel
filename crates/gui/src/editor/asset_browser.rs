@@ -73,67 +73,69 @@ impl<'a> AssetBrowserPanel<'a> {
         });
         ui.separator();
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.collapsing("Backgrounds", |ui| {
-                if self.manifest.assets.backgrounds.is_empty() {
-                    ui.label("No backgrounds in manifest");
-                } else {
-                    self.render_grid(ui, "bg", &mut actions);
-                }
-            });
-
-            ui.collapsing("Characters", |ui| {
-                if self.manifest.assets.characters.is_empty() {
-                    ui.label("No characters in manifest");
-                } else {
-                    self.render_grid(ui, "char", &mut actions);
-                }
-            });
-
-            ui.collapsing("Audio", |ui| {
-                if self.manifest.assets.audio.is_empty() {
-                    ui.label("No audio in manifest");
-                } else {
-                    for (name, path) in &self.manifest.assets.audio {
-                        ui.horizontal(|ui| {
-                            let asset_path = normalize_asset_path(&path.to_string_lossy());
-                            let button = ui.add(egui::Button::new(format!("Audio {name}")));
-                            if button.drag_started() {
-                                let payload = format!("asset://audio/{asset_path}");
-                                ui.memory_mut(|mem| {
-                                    mem.data
-                                        .insert_temp(egui::Id::new("dragged_asset"), payload)
-                                });
-                            }
-                            button.on_hover_text(format!("Drag to scene\nPath: {:?}", path));
-                            let offset_ms = self.render_audio_position(ui, &asset_path);
-                            if ui.small_button("Preview").clicked() {
-                                actions.push(AssetBrowserAction::PreviewAudio {
-                                    path: asset_path.clone(),
-                                    offset_ms,
-                                });
-                            }
-                            if ui.small_button("Use").clicked() {
-                                actions.push(AssetBrowserAction::AssignToSelected {
-                                    kind: AssetImportKind::Audio,
-                                    name: name.clone(),
-                                    path: asset_path.clone(),
-                                });
-                            }
-                            if ui.small_button("Stop").clicked() {
-                                actions.push(AssetBrowserAction::StopAudio);
-                            }
-                            if ui.small_button("Remove").clicked() {
-                                actions.push(AssetBrowserAction::Remove {
-                                    kind: AssetImportKind::Audio,
-                                    name: name.clone(),
-                                });
-                            }
-                        });
+        egui::ScrollArea::vertical()
+            .id_source("asset_browser_main_scroll")
+            .show(ui, |ui| {
+                ui.collapsing("Backgrounds", |ui| {
+                    if self.manifest.assets.backgrounds.is_empty() {
+                        ui.label("No backgrounds in manifest");
+                    } else {
+                        self.render_grid(ui, "bg", &mut actions);
                     }
-                }
+                });
+
+                ui.collapsing("Characters", |ui| {
+                    if self.manifest.assets.characters.is_empty() {
+                        ui.label("No characters in manifest");
+                    } else {
+                        self.render_grid(ui, "char", &mut actions);
+                    }
+                });
+
+                ui.collapsing("Audio", |ui| {
+                    if self.manifest.assets.audio.is_empty() {
+                        ui.label("No audio in manifest");
+                    } else {
+                        for (name, path) in &self.manifest.assets.audio {
+                            ui.horizontal(|ui| {
+                                let asset_path = normalize_asset_path(&path.to_string_lossy());
+                                let button = ui.add(egui::Button::new(format!("Audio {name}")));
+                                if button.drag_started() {
+                                    let payload = format!("asset://audio/{asset_path}");
+                                    ui.memory_mut(|mem| {
+                                        mem.data
+                                            .insert_temp(egui::Id::new("dragged_asset"), payload)
+                                    });
+                                }
+                                button.on_hover_text(format!("Drag to scene\nPath: {:?}", path));
+                                let offset_ms = self.render_audio_position(ui, &asset_path);
+                                if ui.small_button("Preview").clicked() {
+                                    actions.push(AssetBrowserAction::PreviewAudio {
+                                        path: asset_path.clone(),
+                                        offset_ms,
+                                    });
+                                }
+                                if ui.small_button("Use").clicked() {
+                                    actions.push(AssetBrowserAction::AssignToSelected {
+                                        kind: AssetImportKind::Audio,
+                                        name: name.clone(),
+                                        path: asset_path.clone(),
+                                    });
+                                }
+                                if ui.small_button("Stop").clicked() {
+                                    actions.push(AssetBrowserAction::StopAudio);
+                                }
+                                if ui.small_button("Remove").clicked() {
+                                    actions.push(AssetBrowserAction::Remove {
+                                        kind: AssetImportKind::Audio,
+                                        name: name.clone(),
+                                    });
+                                }
+                            });
+                        }
+                    }
+                });
             });
-        });
 
         actions
     }

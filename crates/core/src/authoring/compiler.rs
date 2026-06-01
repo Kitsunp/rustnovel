@@ -315,6 +315,7 @@ pub fn compile_authoring_graph(
                         report.route_limit_hit = route_report.route_limit_hit;
                         report.depth_limit_hit = route_report.depth_limit_hit;
                     }
+                    append_route_enumeration_issues(&route_report, &mut issues);
 
                     let mut route_policies = vec![
                         ChoicePolicy::Strategy(ChoiceStrategy::Last),
@@ -421,23 +422,26 @@ fn append_route_dry_run_issues(
     ) {
         Ok(route_engine) => {
             let route_outcome = run_dry_run(route_engine, policy, DRY_RUN_MAX_STEPS);
-            let mut route_issues =
-                check_preview_runtime_parity(script, &route_outcome.report, policy);
-            if route_outcome.report.stop_reason == DryRunStopReason::RuntimeError {
-                let route_label = policy.label();
-                route_issues.push(
-                    LintIssue::error(
-                        None,
-                        ValidationPhase::DryRun,
-                        LintCode::DryRunRuntimeError,
-                        format!(
-                            "Dry Run route '{}' runtime error: {}",
-                            route_label, route_outcome.report.stop_message
-                        ),
-                    )
-                    .with_event_ip(route_outcome.report.failing_event_ip),
-                );
-            }
+            let route_label = policy.label();
+            let mut route_issues = route_outcome
+                .issues
+                .into_iter()
+                .filter_map(|mut issue| {
+                    if issue.code == LintCode::DryRunFinished {
+                        return None;
+                    }
+                    issue.message = format!("Dry Run route '{route_label}': {}", issue.message);
+                    if issue.blocked_by.is_none() {
+                        issue.blocked_by = Some(format!("route_policy={route_label}"));
+                    }
+                    Some(issue)
+                })
+                .collect::<Vec<_>>();
+            route_issues.extend(check_preview_runtime_parity(
+                script,
+                &route_outcome.report,
+                policy,
+            ));
 
             if let Some(report) = dry_run_report.as_mut() {
                 report.failing_event_ip = report
@@ -459,4 +463,56 @@ fn append_route_dry_run_issues(
             ));
         }
     }
+}
+
+fn append_route_enumeration_issues(
+    route_report: &RouteEnumerationReport,
+    issues: &mut Vec<LintIssue>,
+) {
+    for error in &route_report.errors {
+        issues.push(
+            LintIssue::error(
+                None,
+                ValidationPhase::DryRun,
+                LintCode::DryRunRuntimeError,
+                format!("Dry Run route enumeration error: {error}"),
+            )
+            .with_event_ip(route_error_event_ip(error))
+            .with_blocked_by("route_enumeration"),
+        );
+    }
+    if route_report.route_limit_hit {
+        issues.push(
+            LintIssue::warning(
+                None,
+                ValidationPhase::DryRun,
+                LintCode::DryRunStepLimit,
+                format!(
+                    "Dry Run route coverage hit the route limit after discovering {} route(s)",
+                    route_report.routes_discovered
+                ),
+            )
+            .with_blocked_by("route_enumeration"),
+        );
+    }
+    if route_report.depth_limit_hit {
+        issues.push(
+            LintIssue::warning(
+                None,
+                ValidationPhase::DryRun,
+                LintCode::DryRunStepLimit,
+                "Dry Run route coverage hit the choice depth or repeated-state limit",
+            )
+            .with_blocked_by("route_enumeration"),
+        );
+    }
+}
+
+fn route_error_event_ip(error: &str) -> Option<u32> {
+    let rest = error.split_once(" ip ")?.1;
+    let digits = rest
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    digits.parse().ok()
 }

@@ -62,6 +62,7 @@ impl EditorWorkbench {
             return;
         }
         egui::ScrollArea::vertical()
+            .id_source("fragments_panel_list_scroll")
             .max_height(120.0)
             .show(ui, |ui| {
                 for fragment in fragments {
