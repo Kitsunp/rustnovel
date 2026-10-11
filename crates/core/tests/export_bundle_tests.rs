@@ -149,6 +149,39 @@ fn assert_no_legacy_export_warning_fields(value: &serde_json::Value) {
 }
 
 #[test]
+fn export_bundle_does_not_interpolate_unmaterializable_runtime_in_launcher() {
+    let (_tmp, project_root) = build_project_fixture();
+    let runtime_name = "$(touch pwned)";
+    let runtime_dir = project_root.join("runtime");
+    fs::create_dir_all(&runtime_dir).expect("runtime dir");
+    fs::write(runtime_dir.join(runtime_name), b"not an elf executable").expect("runtime artifact");
+
+    let output_root = project_root.join("dist_shell_injection");
+    let report = export_bundle(ExportBundleSpec {
+        project_root,
+        output_root: output_root.clone(),
+        target_platform: ExportTargetPlatform::Linux,
+        entry_script: None,
+        runtime_artifact: Some(PathBuf::from(format!("runtime/{runtime_name}"))),
+        integrity: BundleIntegrity::None,
+        output_layout_version: 1,
+        hmac_key: None,
+    })
+    .expect("an unmaterializable runtime should not reach the launcher");
+
+    assert!(
+        report.executable.is_none(),
+        "an unmaterializable runtime must not be selected as executable"
+    );
+    let launcher = fs::read_to_string(output_root.join("launch.sh")).expect("launcher");
+    assert!(launcher.contains("Runtime artifact missing in bundle"));
+    assert!(
+        !launcher.contains(runtime_name),
+        "launcher must not interpolate the runtime filename"
+    );
+}
+
+#[test]
 fn export_package_flow_reports_manifest_hashes_and_hmac_agree() {
     let (_tmp, project_root) = build_project_fixture();
     let runtime_dir = project_root.join("runtime");

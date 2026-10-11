@@ -353,11 +353,7 @@ fn export_bundle_materialized(
         &output_root,
         runtime_artifact.as_ref(),
     )?;
-    let launch_target = executable_rel.as_deref().or_else(|| {
-        runtime_artifact
-            .as_ref()
-            .map(|runtime| runtime.rel_path.as_str())
-    });
+    let launch_target = executable_rel.as_deref();
     let launcher_rel = write_launcher(spec.target_platform, &output_root, launch_target)?;
 
     let integrity_scope = "bundle_file_manifest_v2_signed_manifest_covers_payload_files";
