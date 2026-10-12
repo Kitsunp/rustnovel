@@ -226,6 +226,23 @@ fn keyboard_undo_redo_restore_graph_and_leave_typed_operation_hint() {
             .kind,
         "redo"
     );
+
+    // In a workbench the same shortcuts request a document action; they must
+    // never restore a graph-only snapshot before its metadata can be restored.
+    use crate::editor::node_editor::NodeEditorHistoryAction;
+    let content = serde_json::to_value(graph.authoring_graph()).unwrap();
+    for (redo, expected) in [(false, NodeEditorHistoryAction::Undo), (true, NodeEditorHistoryAction::Redo)] {
+        let mut request = None;
+        let mut panel = NodeEditorPanel::for_document(&mut graph, true, true, &mut request);
+        assert!(if redo { panel.apply_redo_shortcut() } else { panel.apply_undo_shortcut() });
+        assert_eq!(request, Some(expected));
+        assert_eq!(serde_json::to_value(graph.authoring_graph()).unwrap(), content);
+    }
+    let mut request = None;
+    let mut panel = NodeEditorPanel::for_document(&mut graph, false, false, &mut request);
+    assert!(!panel.apply_undo_shortcut());
+    assert!(!panel.apply_redo_shortcut());
+    assert!(request.is_none());
 }
 
 #[test]

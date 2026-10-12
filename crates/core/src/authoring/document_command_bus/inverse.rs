@@ -8,6 +8,10 @@ impl AuthoringDocumentSession {
     ) -> Result<(), String> {
         match delta {
             AuthoringDocumentDelta::Graph(delta) => self.apply_inverse_graph_delta(delta),
+            AuthoringDocumentDelta::GraphReplaced { before } => {
+                self.document.graph = before.as_ref().clone();
+                Ok(())
+            }
             AuthoringDocumentDelta::LayerVisibleChanged {
                 object_id, before, ..
             }
@@ -35,17 +39,24 @@ impl AuthoringDocumentSession {
                 }
                 Ok(())
             }
+            AuthoringDocumentDelta::ComposerOverridesReset {
+                before_layers,
+                before_background_fits,
+            } => {
+                self.document
+                    .composer_layer_overrides
+                    .clone_from(before_layers);
+                self.document
+                    .composer_background_fit_overrides
+                    .clone_from(before_background_fits);
+                Ok(())
+            }
             AuthoringDocumentDelta::Reverted { reverted } => self.apply_inverse_delta(reverted),
         }
     }
 
     fn apply_inverse_graph_delta(&mut self, delta: &AuthoringDelta) -> Result<(), String> {
-        let graph = std::mem::take(&mut self.document.graph);
-        let mut graph_bus = AuthoringCommandBus::new(graph);
-        let result = graph_bus.apply_inverse_delta(delta);
-        let (graph, _, _) = graph_bus.into_parts();
-        self.document.graph = graph;
-        result
+        AuthoringCommandBus::revert_graph_unlogged(&mut self.document.graph, delta)
     }
 }
 

@@ -169,7 +169,9 @@ pub fn run_authoring_command(command: AuthoringCommand) -> Result<()> {
             &args.project,
             args.project_root.as_deref(),
             args.output.as_deref(),
-        ),
+            false,
+        )
+        .map(|_| ()),
         AuthoringCommand::ApplyCommand(args) => run_apply_command(args),
         AuthoringCommand::Explain(args) => explain_diagnostic(&args),
         AuthoringCommand::Fragments { command } => run_fragment_command(command),
@@ -183,12 +185,13 @@ pub fn validate_authoring_script(
     path: &Path,
     project_root: Option<&Path>,
     output: Option<&Path>,
-) -> Result<()> {
+    json_output: bool,
+) -> Result<Option<serde_json::Value>> {
     let report = build_validation_report(path, project_root)?;
 
     if let Some(output) = output {
         write_report(output, &report)?;
-    } else {
+    } else if !json_output {
         print_report(&report);
     }
 
@@ -198,7 +201,11 @@ pub fn validate_authoring_script(
             report.error_count
         );
     }
-    Ok(())
+    Ok(if json_output {
+        Some(serde_json::to_value(report)?)
+    } else {
+        None
+    })
 }
 
 fn run_apply_command(args: ApplyCommandArgs) -> Result<()> {

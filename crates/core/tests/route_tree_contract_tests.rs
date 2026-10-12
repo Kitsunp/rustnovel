@@ -101,4 +101,84 @@ fn resolve_visual_at_ip_replays_visual_state_for_preview() {
     let compiled = branching_script().compile().expect("compile");
     let visual = resolve_visual_at_ip(&compiled, 3, VisualResolveStrategy::LinearReplay);
     assert_eq!(visual.background.as_deref(), Some("bg/room.png"));
+
+    let script = ScriptRaw::from_json(r#"{
+        "script_schema_version":"1.0",
+        "events":[
+            {"type":"scene","music":"old.ogg","characters":[]},
+            {"type":"audio_action","channel":"bgm","action":"play","asset":"new.ogg","volume":0.3,"loop_playback":false,"fade_duration_ms":750},
+            {"type":"audio_action","channel":"sfx","action":"play","asset":"click.ogg"},
+            {"type":"audio_action","channel":"voice","action":"play","asset":"line.ogg"},
+            {"type":"audio_action","channel":"bgm","action":"fade_out","fade_duration_ms":300},
+            {"type":"audio_action","channel":"bgm","action":"play","asset":"last.ogg"},
+            {"type":"audio_action","channel":"bgm","action":"stop"},
+            {"type":"scene","music":"scene.ogg","characters":[]},
+            {"type":"patch","music":null}
+        ],
+        "labels":{"start":0}
+    }"#).unwrap();
+    let mut engine = Engine::new(
+        script,
+        SecurityPolicy::default(),
+        ResourceLimiter::default(),
+    )
+    .unwrap();
+    let script_id = visual_novel_engine::compute_script_id(&engine.script().to_binary().unwrap());
+    for (ip, expected) in [
+        Some("old.ogg"),
+        Some("new.ogg"),
+        Some("new.ogg"),
+        Some("new.ogg"),
+        None,
+        Some("last.ogg"),
+        None,
+        Some("scene.ogg"),
+        None,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (audio, _) = engine.step().unwrap();
+        assert_eq!(
+            engine.visual_state().music.as_deref(),
+            expected,
+            "runtime ip={ip}"
+        );
+        let visual = engine.resolve_visual_at_ip(ip as u32);
+        assert_eq!(&visual, engine.visual_state(), "preview ip={ip}");
+        if ip == 1 {
+            assert!(
+                matches!(&audio[..], [AudioCommand::PlayBgm { path, r#loop: false, volume: Some(volume), fade_in, .. }] if path.as_ref() == "new.ogg" && *volume == 0.3 && fade_in.as_millis() == 750)
+            );
+        }
+        let save = visual_novel_engine::SaveData::new(script_id, engine.state().clone());
+        let bytes = save
+            .to_authenticated_binary(visual_novel_engine::AUTH_SAVE_KEY)
+            .unwrap();
+        let loaded = visual_novel_engine::SaveData::from_any_binary(
+            &bytes,
+            visual_novel_engine::AUTH_SAVE_KEY,
+        )
+        .unwrap();
+        let mut restored = Engine::from_compiled(
+            engine.script().clone(),
+            SecurityPolicy::default(),
+            ResourceLimiter::default(),
+        )
+        .unwrap();
+        restored.load_save_data(loaded).unwrap();
+        assert_eq!(
+            restored.visual_state(),
+            engine.visual_state(),
+            "saved ip={ip}"
+        );
+        let commands = restored.take_audio_commands();
+        match (&commands[2], expected) {
+            (AudioCommand::PlayBgm { path, .. }, Some(expected)) => {
+                assert_eq!(path.as_ref(), expected)
+            }
+            (AudioCommand::StopBgm { .. }, None) => {}
+            _ => panic!("wrong restored music at ip={ip}: {commands:?}"),
+        }
+    }
 }

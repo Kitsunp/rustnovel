@@ -149,27 +149,27 @@ impl EditorWorkbench {
         Ok(format!("Applied fix '{}'", candidate.fix_id))
     }
 
+    pub fn can_revert_last_fix(&self) -> bool {
+        self.last_fix_command_index.is_some()
+            && self.last_fix_command_index == self.authoring_session.last_undo_command_index()
+            && self.authoring_session_matches_fields()
+    }
+
     pub fn revert_last_fix(&mut self) -> bool {
-        let Some(previous_graph) = self.last_fix_snapshot.take() else {
+        if !self.can_revert_last_fix() {
+            if self.last_fix_command_index.is_some() {
+                self.toast = Some(ToastState::warning(
+                    "Undo later edits before reverting this quick-fix",
+                ));
+            }
             return false;
-        };
-        let before = self.current_authoring_fingerprint();
-        self.node_graph = previous_graph;
-        self.node_graph.mark_modified();
-        self.rebuild_authoring_session_from_fields();
-        if let Err(err) = self.sync_graph_to_script() {
-            self.toast = Some(ToastState::warning(format!(
-                "Quick-fix revert restored graph; runtime preview sync failed: {err}"
-            )));
         }
-        self.record_editor_operation_now(
-            "revert",
-            "Reverted last quick-fix snapshot",
-            Some("graph".to_string()),
-            None,
-            None,
-            before,
-        );
+        if !self.apply_document_history_command(
+            visual_novel_engine::authoring::AuthoringDocumentCommand::RevertLast,
+        ) {
+            return false;
+        }
+        self.last_fix_snapshot = None;
         true
     }
 
@@ -236,6 +236,7 @@ impl EditorWorkbench {
         let operation_id = outcome.operation.operation_id.clone();
         self.last_operation_fingerprint = self.current_authoring_fingerprint();
         self.last_fix_snapshot = Some(before_graph);
+        self.last_fix_command_index = self.authoring_session.last_undo_command_index();
         self.quick_fix_audit.push(QuickFixAuditEntry {
             operation_id: operation_id.clone(),
             diagnostic_id: issue.diagnostic_id(),

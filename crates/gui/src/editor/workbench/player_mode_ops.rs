@@ -1,26 +1,34 @@
 use super::*;
 use std::collections::{BTreeMap, HashMap};
 impl EditorWorkbench {
+    pub(super) fn clear_runtime_preview(&mut self) {
+        self.engine = None;
+        self.scene = visual_novel_engine::SceneState::default();
+        self.composer_entity_owners.clear();
+        self.selected_entity = None;
+        self.player_audio_backend = None;
+        self.player_audio_root = None;
+        self.timeline = visual_novel_engine::Timeline::new(60);
+        self.current_time = 0.0;
+        self.is_playing = false;
+        self.player_state = crate::editor::player_ui::PlayerSessionState::default();
+    }
+
     pub fn prepare_player_mode(&mut self) -> bool {
         if self.node_graph.is_empty() {
-            self.engine = None;
+            self.clear_runtime_preview();
             self.current_script = None;
-            self.scene.clear();
-            self.composer_entity_owners.clear();
-            self.selected_entity = None;
             self.toast = Some(ToastState::warning(
                 "Abre o crea un proyecto antes de iniciar el modo Player",
             ));
             return false;
         }
 
-        if self.engine.is_none() {
-            if let Err(err) = self.sync_graph_to_script() {
-                self.toast = Some(ToastState::error(format!(
-                    "No se pudo preparar el Player: {err}"
-                )));
-                return false;
-            }
+        if let Err(err) = self.sync_graph_to_script() {
+            self.toast = Some(ToastState::error(format!(
+                "No se pudo preparar el Player: {err}"
+            )));
+            return false;
         }
         {
             let Some(engine) = self.engine.as_mut() else {

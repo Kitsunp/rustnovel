@@ -60,7 +60,9 @@ fn builtin_drawer_renders_png_images_and_visible_text() {
     assert_eq!(pixel(&frame, 160, 12, 12)[0], 220);
     assert!(
         frame
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .skip(160 * 50)
             .take(160 * 25)
             .any(|pixel| pixel[0] > 180 && pixel[1] > 180 && pixel[2] > 180),

@@ -128,6 +128,7 @@ pub struct EditorWorkbench {
     pub imported_report_stale: bool,
     pub imported_report_untrusted: bool,
     pub last_fix_snapshot: Option<NodeGraph>,
+    last_fix_command_index: Option<usize>,
     pub quick_fix_audit: Vec<QuickFixAuditEntry>,
     pub operation_log: Vec<visual_novel_engine::authoring::OperationLogEntry>,
     pub verification_runs: Vec<visual_novel_engine::authoring::VerificationRun>,
@@ -284,6 +285,7 @@ impl EditorWorkbench {
             imported_report_stale: false,
             imported_report_untrusted: false,
             last_fix_snapshot: None,
+            last_fix_command_index: None,
             quick_fix_audit: Vec::new(),
             operation_log: Vec::new(),
             verification_runs: Vec::new(),
@@ -452,6 +454,18 @@ impl EditorWorkbench {
     }
 
     pub fn reset_layout_state(&mut self, ctx: &egui::Context) {
+        if !self.composer_layer_overrides.is_empty()
+            || !self.composer_background_fit_overrides.is_empty()
+        {
+            if let Err(error) = self.apply_authoring_document_command(
+                visual_novel_engine::authoring::AuthoringDocumentCommand::ResetComposerOverrides,
+            ) {
+                self.toast = Some(ToastState::error(format!(
+                    "No se pudo restablecer el layout: {error}"
+                )));
+                return;
+            }
+        }
         self.show_graph = true;
         self.show_inspector = true;
         self.show_timeline = true;
@@ -463,9 +477,6 @@ impl EditorWorkbench {
         self.composer_stage_fit = crate::editor::StageFit::default();
         self.composer_preview_mode = crate::editor::ComposerPreviewMode::default();
         self.composer_default_background_fit = crate::editor::BackgroundFit::default();
-        self.composer_background_fit_overrides.clear();
-        self.composer_layer_overrides.clear();
-        self.rebuild_authoring_session_from_fields();
         self.selected_entity = None;
         self.sync_workspace_layout_from_flags();
         self.layout_generation = self.layout_generation.wrapping_add(1);

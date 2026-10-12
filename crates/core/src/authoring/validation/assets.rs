@@ -123,13 +123,26 @@ pub fn is_unsafe_asset_ref(path: &str) -> bool {
         return false;
     }
     let lower = path.to_ascii_lowercase();
-    path.starts_with('/')
+    let reserved_component = path.split(['/', '\\']).any(|part| {
+        let name = part.split('.').next().unwrap_or(part).to_ascii_uppercase();
+        matches!(name.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || (name.len() == 4
+                && (name.starts_with("COM") || name.starts_with("LPT"))
+                && name.as_bytes()[3].is_ascii_digit()
+                && name.as_bytes()[3] != b'0')
+            || (part.ends_with('.') || part.ends_with(' '))
+    });
+    path.contains(':')
+        || path.chars().any(|c| c.is_control())
+        || reserved_component
+        || path.starts_with('/')
         || path.starts_with('\\')
         || path.contains('\\')
         || lower.contains("://")
         || lower.contains("%2e")
         || lower.contains("%2f")
         || lower.contains("%5c")
+        || lower.contains("%00")
         || path.chars().nth(1).is_some_and(|second| {
             second == ':' && path.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
         })

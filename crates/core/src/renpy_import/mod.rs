@@ -35,6 +35,12 @@ pub fn import_renpy_project(options: ImportRenpyOptions) -> VnResult<ImportRepor
     for file in &files {
         state.parse_file(file)?;
     }
+    if !state.duplicate_labels.is_empty() {
+        return Err(invalid_import(format!(
+            "duplicate Ren'Py labels: {}",
+            state.duplicate_labels.join(", ")
+        )));
+    }
 
     if state.events.is_empty() {
         state.push_ext_call(

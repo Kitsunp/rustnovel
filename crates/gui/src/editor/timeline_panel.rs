@@ -210,7 +210,7 @@ impl<'a> TimelinePanel<'a> {
                     painter.rect_stroke(
                         lane_rect,
                         2.0,
-                        egui::Stroke::new(1.0, egui::Color32::from_gray(58)),
+                        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(58)),
                     );
                     let label_clip = egui::Rect::from_min_max(
                         row_rect.min,
@@ -232,7 +232,7 @@ impl<'a> TimelinePanel<'a> {
                             egui::pos2(playhead_x, lane_rect.top()),
                             egui::pos2(playhead_x, lane_rect.bottom()),
                         ],
-                        egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 180, 255)),
+                        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(120, 180, 255)),
                     );
                     for keyframe in track.keyframes() {
                         let x = keyframe_marker_x(lane_rect, keyframe.time, duration);

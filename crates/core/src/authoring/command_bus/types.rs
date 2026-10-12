@@ -1,8 +1,8 @@
 use serde::Serialize;
 
 use super::super::{
-    AuthoringPosition, GraphConnection, GraphFragment, GraphStack, LintIssue, OperationLogEntry,
-    StoryNode, VerificationRun,
+    AuthoringPosition, GraphConnection, GraphFragment, GraphMutationUndo, GraphStack, LintIssue,
+    NodeRemovalContext, OperationLogEntry, StoryNode, VerificationRun,
 };
 
 #[derive(Clone, Debug)]
@@ -96,6 +96,7 @@ pub enum AuthoringCommand {
         scale: Option<f32>,
     },
     RevertLast,
+    RedoLast,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -110,6 +111,7 @@ pub enum AuthoringDelta {
         node: StoryNode,
         position: AuthoringPosition,
         connections: Vec<GraphConnection>,
+        context: NodeRemovalContext,
     },
     Connected {
         connection: GraphConnection,
@@ -134,11 +136,14 @@ pub enum AuthoringDelta {
         from: u32,
         from_port: usize,
         to: u32,
+        undo: GraphMutationUndo,
     },
     NodeEdited {
         node_id: u32,
         before: StoryNode,
         after: StoryNode,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        removed_connections: Vec<(usize, GraphConnection)>,
     },
     FragmentCreated {
         fragment: GraphFragment,
@@ -181,6 +186,7 @@ pub enum AuthoringDelta {
         fix_id: String,
         before_sha256: String,
         after_sha256: String,
+        undo: GraphMutationUndo,
     },
     AssetImported {
         path: String,

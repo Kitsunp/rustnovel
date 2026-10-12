@@ -71,6 +71,12 @@ pub(super) fn theme_validate_command(theme_path: &Path) -> Result<Option<serde_j
     let theme: UiTheme = serde_json::from_str(&raw)
         .with_context(|| format!("parse theme {}", theme_path.display()))?;
     let report = validate_ui_theme(&theme);
+    if !report.valid {
+        anyhow::bail!(
+            "theme validation failed: {}",
+            serde_json::to_string(&report)?
+        );
+    }
     Ok(Some(serde_json::to_value(report)?))
 }
 
@@ -250,6 +256,10 @@ pub(super) fn trace_script(
             }
             return Err(err).with_context(|| format!("trace advance failed at step {step}"));
         }
+    }
+    if !partial && engine.state().position as usize != engine.script().events.len() {
+        partial = true;
+        stopped_reason = Some(format!("step limit reached: {steps}"));
     }
     let envelope = TraceEnvelope {
         trace_format_version: 1,

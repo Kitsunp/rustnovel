@@ -136,9 +136,7 @@ impl EditorWorkbench {
                         panel_rect.width(),
                     ));
                     self.apply_pending_graph_view(panel_rect.size());
-                    let mut panel =
-                        NodeEditorPanel::new(&mut self.node_graph, &mut self.undo_stack);
-                    panel.ui(ui);
+                    self.render_document_node_editor(ui);
                 });
             }
             if let Some(splitter) = dock.graph_splitter {
@@ -313,19 +311,13 @@ impl EditorWorkbench {
                             .resizable(true)
                             .show(viewport_ctx, |ui| {
                                 self.apply_pending_graph_view(ui.available_size());
-                                let mut panel = NodeEditorPanel::new(
-                                    &mut self.node_graph,
-                                    &mut self.undo_stack,
-                                );
-                                panel.ui(ui);
+                                self.render_document_node_editor(ui);
                             });
                     }
                     egui::ViewportClass::Immediate | egui::ViewportClass::Root => {
                         egui::CentralPanel::default().show(viewport_ctx, |ui| {
                             self.apply_pending_graph_view(ui.available_size());
-                            let mut panel =
-                                NodeEditorPanel::new(&mut self.node_graph, &mut self.undo_stack);
-                            panel.ui(ui);
+                            self.render_document_node_editor(ui);
                         });
                         if viewport_ctx.input(|i| i.viewport().close_requested()) {
                             detached_closed = true;
@@ -339,6 +331,32 @@ impl EditorWorkbench {
             if self.node_graph.is_modified() && self.node_graph.dragging_node.is_none() {
                 self.commit_modified_graph(graph_before_detached_interaction);
             }
+        }
+    }
+
+    fn render_document_node_editor(&mut self, ui: &mut egui::Ui) {
+        use crate::editor::node_editor::NodeEditorHistoryAction;
+        let pending_graph_edit = !self
+            .authoring_session
+            .document()
+            .graph
+            .has_same_content(self.node_graph.authoring_graph());
+        let mut request = None;
+        NodeEditorPanel::for_document(
+            &mut self.node_graph,
+            self.authoring_session.undo_delta_count() > 0 || pending_graph_edit,
+            self.authoring_session.redo_delta_count() > 0 && !pending_graph_edit,
+            &mut request,
+        )
+        .ui(ui);
+        match request {
+            Some(NodeEditorHistoryAction::Undo) => {
+                self.apply_graph_undo();
+            }
+            Some(NodeEditorHistoryAction::Redo) => {
+                self.apply_graph_redo();
+            }
+            None => {}
         }
     }
 

@@ -234,6 +234,7 @@ fn stage_image_cache_aliases_extensionless_requests_to_resolved_texture() {
     let first = painter
         .resolve_image_texture(&ctx, "backgrounds/room")
         .expect("extensionless image should resolve");
+    let _ = ctx.run(Default::default(), |_| {});
     let second = painter
         .resolve_image_texture(&ctx, "backgrounds/room")
         .expect("alias should hit cache");
@@ -252,4 +253,22 @@ fn stage_image_cache_aliases_extensionless_requests_to_resolved_texture() {
         crate::editor::PreviewQuality::Draft,
         "assets/backgrounds/room.png"
     )));
+
+    let inactive = ctx.load_texture(
+        "inactive",
+        egui::ColorImage::new([1, 1], egui::Color32::BLACK),
+        egui::TextureOptions::LINEAR,
+    );
+    let inactive_id = inactive.id();
+    for alias in 0..513 {
+        image_cache.insert(format!("inactive-{alias}"), inactive.clone());
+    }
+    drop(inactive);
+    let output = ctx.run(Default::default(), |ctx| {
+        resource_service.trim_texture_cache(&mut image_cache, ctx.frame_nr());
+    });
+    assert_eq!(image_cache.len(), 2, "the stage cache hit protects both active aliases");
+    assert!(image_cache.values().all(|texture| texture.id() == first));
+    assert!(output.textures_delta.free.contains(&inactive_id));
+    assert!(!output.textures_delta.free.contains(&first));
 }

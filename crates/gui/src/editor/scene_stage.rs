@@ -197,14 +197,14 @@ impl<'a> SceneStagePainter<'a> {
                 ui.painter().rect_stroke(
                     rect.expand(3.0),
                     0.0,
-                    egui::Stroke::new(2.0, egui::Color32::from_rgb(120, 220, 255)),
+                    egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(120, 220, 255)),
                 );
             }
             if is_selected && !is_background {
                 ui.painter().rect_stroke(
                     rect.expand(2.0),
                     0.0,
-                    egui::Stroke::new(2.0, egui::Color32::YELLOW),
+                    egui::Stroke::new(2.0_f32, egui::Color32::YELLOW),
                 );
             }
             self.paint_entity(ui, &entity.kind, rect, is_selected);
@@ -270,7 +270,7 @@ impl<'a> SceneStagePainter<'a> {
         ui.painter().rect_stroke(
             geometry.stage_rect,
             0.0,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(110)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(110)),
         );
 
         if is_empty {
@@ -369,7 +369,17 @@ impl<'a> SceneStagePainter<'a> {
         let project_root = self.project_root?;
         let request_cache_key =
             scene_stage_cache_key(project_root, self.preview_quality, &asset_path);
+        crate::editor::image_asset_cache::prune_image_cache_versions(
+            self.image_cache,
+            &request_cache_key,
+        );
+        crate::editor::image_asset_cache::prune_image_cache_versions(
+            self.image_failures,
+            &request_cache_key,
+        );
         if let Some(texture) = self.image_cache.get(&request_cache_key) {
+            self.resource_service
+                .record_texture_use(texture.id(), ctx.frame_nr());
             return Some(texture.id());
         }
         if let Some(should_retry) = self
@@ -402,8 +412,15 @@ impl<'a> SceneStagePainter<'a> {
         };
         let cache_key =
             scene_stage_cache_key(project_root, self.preview_quality, &resolved_asset_path);
+        crate::editor::image_asset_cache::prune_image_cache_versions(self.image_cache, &cache_key);
+        crate::editor::image_asset_cache::prune_image_cache_versions(
+            self.image_failures,
+            &cache_key,
+        );
         if let Some(texture) = self.image_cache.get(&cache_key) {
             let texture = texture.clone();
+            self.resource_service
+                .record_texture_use(texture.id(), ctx.frame_nr());
             if request_cache_key != cache_key {
                 self.image_cache.insert(request_cache_key, texture.clone());
             }
@@ -424,6 +441,7 @@ impl<'a> SceneStagePainter<'a> {
             self.preview_quality.texture_options(),
         );
         let id = texture.id();
+        self.resource_service.record_texture_use(id, ctx.frame_nr());
         if request_cache_key != cache_key {
             self.image_cache.insert(request_cache_key, texture.clone());
         }

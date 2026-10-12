@@ -99,8 +99,7 @@ impl NodeGraph {
                 .map(|fragment| fragment.node_ids.clone())
                 .unwrap_or_default()
         } else {
-            self.nodes
-                .iter()
+            self.nodes()
                 .filter_map(|(node_id, _, _)| {
                     self.fragment_for_node(*node_id)
                         .is_none()
@@ -184,11 +183,7 @@ impl NodeGraph {
     pub fn validate_fragments(&self) -> Vec<LintIssue> {
         let mut issues = Vec::new();
         let mut ownership = BTreeMap::<u32, String>::new();
-        let existing_nodes = self
-            .nodes
-            .iter()
-            .map(|(id, _, _)| *id)
-            .collect::<HashSet<_>>();
+        let existing_nodes = self.nodes().map(|(id, _, _)| *id).collect::<HashSet<_>>();
         for (fragment_id, fragment) in &self.fragments {
             self.validate_fragment_container(
                 fragment_id,
@@ -198,7 +193,7 @@ impl NodeGraph {
                 &mut issues,
             );
         }
-        for (node_id, node, _) in &self.nodes {
+        for (node_id, node, _) in self.nodes() {
             self.validate_subgraph_call_node(*node_id, node, &mut issues);
         }
         self.validate_fragment_recursion(&mut issues);

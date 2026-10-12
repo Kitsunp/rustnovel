@@ -1,6 +1,8 @@
 mod catalog;
 mod trace;
 
+pub(super) use trace::normalize_trace_part;
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};

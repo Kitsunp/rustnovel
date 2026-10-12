@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{VnError, VnResult};
 use crate::event::{
-    CharacterPlacementCompiled, ScenePatchCompiled, SceneUpdateCompiled,
+    AudioActionCompiled, CharacterPlacementCompiled, ScenePatchCompiled, SceneUpdateCompiled,
     SetCharacterPositionCompiled, SharedStr,
 };
 
@@ -19,6 +19,19 @@ pub struct VisualState {
 }
 
 impl VisualState {
+    /// Keeps the saved scene's music path in sync with explicit BGM actions.
+    pub(crate) fn apply_audio_action(&mut self, action: &AudioActionCompiled) {
+        match (action.channel, action.action) {
+            (0, 0) => {
+                if let Some(asset) = &action.asset {
+                    self.music = Some(asset.clone());
+                }
+            }
+            (0, 1 | 2) => self.music = None,
+            _ => {}
+        }
+    }
+
     /// Applies a scene update to the visual state.
     ///
     /// Note: Scene events preserve existing values when fields are None.

@@ -62,13 +62,14 @@ impl EditorWorkbench {
                 .max_height(report_body_height)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    let can_revert_fix = self.can_revert_last_fix();
                     let lint_response = LintPanel::new(
                         &self.validation_issues,
                         &mut self.selected_node,
                         &mut self.selected_issue,
                         &mut self.diagnostic_language,
                         &self.node_graph,
-                        self.last_fix_snapshot.is_some(),
+                        can_revert_fix,
                     )
                     .ui(ui);
                     self.handle_lint_panel_actions(lint_response.actions);

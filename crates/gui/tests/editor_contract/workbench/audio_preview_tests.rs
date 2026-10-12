@@ -10,6 +10,7 @@ struct AudioProbeState {
     bgm_with_offset: Vec<(String, bool, Option<f32>, u128)>,
     sfx: Vec<(String, Option<f32>)>,
     stop_bgm: usize,
+    bgm_fades: Vec<Option<Duration>>,
 }
 
 #[derive(Clone)]
@@ -49,6 +50,17 @@ impl visual_novel_runtime::Audio for AudioProbe {
             start_at.as_millis(),
         ));
         Ok(())
+    }
+
+    fn play_music_with_transition(
+        &mut self,
+        id: &str,
+        loop_playback: bool,
+        volume: Option<f32>,
+        fade_in: Option<Duration>,
+    ) -> Result<(), String> {
+        self.state.borrow_mut().bgm_fades.push(fade_in);
+        self.play_music_with_options(id, loop_playback, volume)
     }
 
     fn stop_music(&mut self) -> Result<(), String> {
@@ -110,9 +122,28 @@ fn editor_audio_preview_uses_backend_and_mix_controls() {
     workbench.player_state.sfx_muted = true;
     workbench.play_editor_audio_preview("sfx", "audio/click.ogg", None, false);
 
+    let snapshot = state.borrow();
+    assert_eq!(snapshot.sfx.len(), 1);
+    assert_eq!(snapshot.sfx[0], ("audio/click.ogg".to_string(), Some(0.0)));
+    drop(snapshot);
+    workbench.apply_player_audio_commands(vec![
+        visual_novel_engine::runtime::AudioCommand::PlayBgm {
+            resource: visual_novel_engine::AssetId::from_path("audio/load.ogg"),
+            path: "audio/load.ogg".into(),
+            r#loop: false,
+            volume: Some(0.6),
+            fade_in: Duration::from_millis(750),
+        },
+    ]);
     let state = state.borrow();
-    assert_eq!(state.sfx.len(), 1);
-    assert_eq!(state.sfx[0], ("audio/click.ogg".to_string(), Some(0.0)));
+    assert_eq!(
+        state.bgm.last().unwrap(),
+        &("audio/load.ogg".to_string(), false, Some(0.3))
+    );
+    assert_eq!(
+        state.bgm_fades.last(),
+        Some(&Some(Duration::from_millis(750)))
+    );
 }
 
 #[test]

@@ -106,6 +106,21 @@ pub(super) fn write_launcher(
     output_root: &Path,
     runtime_rel: Option<&str>,
 ) -> VnResult<String> {
+    if let Some(runtime) = runtime_rel {
+        let safe = !runtime.is_empty()
+            && !runtime.starts_with('/')
+            && !runtime
+                .split('/')
+                .any(|component| component.is_empty() || component == "." || component == "..")
+            && runtime
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | ' '));
+        if !safe {
+            return Err(invalid_bundle(
+                "runtime launcher path contains unsafe characters",
+            ));
+        }
+    }
     match target {
         ExportTargetPlatform::Windows => {
             let launcher_path = output_root.join("launch.bat");
