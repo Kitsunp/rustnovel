@@ -90,13 +90,16 @@ pub(super) fn materialize_executable(
         ExportTargetPlatform::Linux | ExportTargetPlatform::Macos => return Ok(None),
     };
     let executable_out = output_root.join(executable_rel);
-    fs::copy(&runtime.output_path, &executable_out).map_err(|e| {
-        invalid_bundle(format!(
-            "copy executable '{}' -> '{}': {e}",
-            runtime.output_path.display(),
-            executable_out.display()
-        ))
-    })?;
+    let _ = fs::remove_file(&executable_out);
+    if fs::hard_link(&runtime.output_path, &executable_out).is_err() {
+        fs::copy(&runtime.output_path, &executable_out).map_err(|e| {
+            invalid_bundle(format!(
+                "copy executable '{}' -> '{}': {e}",
+                runtime.output_path.display(),
+                executable_out.display()
+            ))
+        })?;
+    }
     make_executable(&executable_out)?;
     Ok(Some(executable_rel.to_string()))
 }

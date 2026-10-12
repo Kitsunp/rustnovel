@@ -188,6 +188,26 @@ impl EditorWorkbench {
         if self.export_wizard.entry_script.trim().is_empty() {
             if let Some(manifest) = self.manifest.as_ref() {
                 self.export_wizard.entry_script = manifest.settings.entry_point.clone();
+            } else if let Some(path) = self.pending_save_path.as_ref() {
+                if let Some(name) = path.file_name() {
+                    self.export_wizard.entry_script = name.to_string_lossy().to_string();
+                }
+            }
+        }
+        if self.export_wizard.runtime_artifact.trim().is_empty() {
+            let candidates = [
+                std::path::PathBuf::from("target/release/vn_player.exe"),
+                std::path::PathBuf::from("target/release/vn_player"),
+                std::path::PathBuf::from("target/debug/vn_player.exe"),
+                std::path::PathBuf::from("target/debug/vn_player"),
+            ];
+            for candidate in candidates {
+                if candidate.is_file() {
+                    if let Ok(canon) = candidate.canonicalize() {
+                        self.export_wizard.runtime_artifact = canon.to_string_lossy().to_string();
+                        break;
+                    }
+                }
             }
         }
         self.show_export_wizard = true;
@@ -349,6 +369,20 @@ impl EditorWorkbench {
                     .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
             })
             .ok_or_else(|| "load/save a project first so project_root is known".to_string())?;
+        let manifest_path = project_root.join("project.vnm");
+        if !manifest_path.is_file() {
+            let mut manifest = visual_novel_engine::ProjectManifest::new("Visual Novel Game", "Author");
+            if let Some(entry) = &self.pending_save_path {
+                if let Some(name) = entry.file_name() {
+                    manifest.settings.entry_point = name.to_string_lossy().to_string();
+                }
+            } else if let Some(entry) = self.export_wizard.entry_script.trim().split(['/', '\\']).last() {
+                if !entry.is_empty() {
+                    manifest.settings.entry_point = entry.to_string();
+                }
+            }
+            let _ = manifest.save(&manifest_path);
+        }
         let output_root = self.export_wizard.output_root.trim();
         if output_root.is_empty() {
             return Err("choose an output folder".to_string());
