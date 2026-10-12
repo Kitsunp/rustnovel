@@ -342,9 +342,6 @@ fn export_bundle_materialized(
         &project_root,
         &runtime_dir,
     )?;
-    let runtime_artifact_rel = runtime_artifact
-        .as_ref()
-        .map(|runtime| runtime.rel_path.clone());
     let runtime_artifact_sha256 = runtime_artifact
         .as_ref()
         .map(|runtime| runtime.sha256.clone());
@@ -353,6 +350,18 @@ fn export_bundle_materialized(
         &output_root,
         runtime_artifact.as_ref(),
     )?;
+    let runtime_artifact_rel = match (&executable_rel, &runtime_artifact) {
+        (Some(executable), Some(runtime)) => {
+            // The top-level executable is the runtime; do not ship its second copy.
+            fs::remove_file(&runtime.output_path).map_err(|err| {
+                invalid_bundle(format!("remove duplicate runtime artifact: {err}"))
+            })?;
+            Some(executable.clone())
+        }
+        _ => runtime_artifact
+            .as_ref()
+            .map(|runtime| runtime.rel_path.clone()),
+    };
     let launch_target = executable_rel.as_deref();
     let launcher_rel = write_launcher(spec.target_platform, &output_root, launch_target)?;
 

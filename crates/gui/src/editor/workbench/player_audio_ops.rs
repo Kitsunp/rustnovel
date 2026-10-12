@@ -210,7 +210,7 @@ impl EditorWorkbench {
         }
     }
 
-    fn apply_editor_bgm_preview_command_from_offset(
+    pub(super) fn apply_editor_bgm_preview_command_from_offset(
         &mut self,
         path: &str,
         volume: Option<f32>,
@@ -256,8 +256,9 @@ impl EditorWorkbench {
 
     fn record_player_audio_result(&mut self, result: Result<(), String>) {
         if let Err(err) = result {
-            self.player_state.last_audio_error =
-                Some(format!("Audio preview command failed: {err}"));
+            let message = format!("Audio preview command failed: {err}");
+            self.toast = Some(ToastState::error(message.clone()));
+            self.player_state.last_audio_error = Some(message);
         }
     }
 
@@ -291,7 +292,11 @@ impl EditorWorkbench {
                 kind, raw_path
             ))
         } else {
-            None
+            // Resolving an asset does not repair an unavailable audio device.
+            self.player_state.last_audio_error.take().filter(|message| {
+                message.starts_with("Audio output unavailable")
+                    || message.starts_with("Asset store unavailable")
+            })
         };
         playback_path
     }

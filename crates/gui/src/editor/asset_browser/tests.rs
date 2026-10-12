@@ -1,6 +1,86 @@
 use super::*;
 
 #[test]
+fn audio_slider_tracks_playback_wraps_and_seeks_on_release() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("tone.ogg"),
+        include_bytes!("../../../../runtime/tests/fixtures/tone.ogg"),
+    )
+    .unwrap();
+    let manifest = ProjectManifest::new("Test", "Author");
+    let mut cache = HashMap::new();
+    let mut failures = HashMap::new();
+    let mut resources = EditorResourceService::new();
+    let ctx = egui::Context::default();
+    let mut render = |position_ms, events| {
+        let mut result = (0, false);
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(140.0, 100.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    result = AssetBrowserPanel::new(
+                        &manifest,
+                        Some(dir.path()),
+                        &mut cache,
+                        &mut failures,
+                        &mut resources,
+                    )
+                    .with_audio_playback(Some(visual_novel_runtime::MusicPlayback {
+                        path: "tone.ogg",
+                        position: std::time::Duration::from_millis(position_ms),
+                        looping: true,
+                    }))
+                    .render_audio_position(ui, "tone.ogg");
+                });
+            },
+        );
+        result
+    };
+    assert_eq!(render(50, vec![]), (50, false));
+    assert_eq!(render(150, vec![]), (150, false));
+    let wrapped = render(350, vec![]);
+    assert!((99..=100).contains(&wrapped.0));
+    let point = egui::pos2(110.0, 17.0);
+    let _ = render(
+        150,
+        vec![
+            egui::Event::PointerMoved(point),
+            egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+    );
+    let sought = render(
+        155,
+        vec![egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    assert!(
+        sought.1,
+        "releasing the slider must issue a seek: {sought:?}"
+    );
+    assert!(
+        sought.0 > 180,
+        "must keep the chosen position until release: {sought:?}"
+    );
+}
+
+#[test]
 fn clipped_cards_skip_uploads_and_visible_cache_hits_protect_the_texture() {
     let dir = tempfile::tempdir().unwrap();
     image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]))

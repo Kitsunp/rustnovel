@@ -225,7 +225,7 @@ fn export_package_flow_reports_manifest_hashes_and_hmac_agree() {
         serde_json::to_value(&report).expect("report json")
     );
     assert_eq!(package_report["target_platform"], "windows");
-    assert_eq!(package_report["runtime_artifact"], "runtime/vn-runtime.exe");
+    assert_eq!(package_report["runtime_artifact"], "game.exe");
     assert_eq!(
         package_report["runtime_artifact_sha256"],
         sha256_hex(&runtime_bytes)
@@ -293,7 +293,7 @@ fn export_package_flow_reports_manifest_hashes_and_hmac_agree() {
     assert!(manifest_files
         .iter()
         .any(|entry| entry["path"] == "game.exe"));
-    assert!(manifest_files
+    assert!(!manifest_files
         .iter()
         .any(|entry| entry["path"] == "runtime/vn-runtime.exe"));
     assert!(manifest_files.iter().any(|entry| {
@@ -919,10 +919,11 @@ fn export_bundle_windows_runtime_exe_creates_top_level_executable() {
     })
     .expect("bundle export with runtime exe");
 
-    assert_eq!(
-        report.runtime_artifact.as_deref(),
-        Some("runtime/vn-runtime.exe")
+    assert!(
+        !out.join("runtime/vn-runtime.exe").exists(),
+        "native executable bundles must contain only one copy of the player"
     );
+    assert_eq!(report.runtime_artifact.as_deref(), Some("game.exe"));
     assert_eq!(report.executable.as_deref(), Some("game.exe"));
     assert_eq!(
         fs::read(out.join("game.exe")).expect("game exe"),

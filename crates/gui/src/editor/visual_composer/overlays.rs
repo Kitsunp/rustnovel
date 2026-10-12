@@ -78,6 +78,43 @@ pub fn render_runtime_overlay(
             return;
         }
     };
+    render_overlay_source(ui, geometry, source, action);
+}
+
+/// Inspection clicks locate authoring nodes without consuming runtime events.
+pub fn render_authoring_overlay(
+    ui: &mut egui::Ui,
+    geometry: crate::editor::scene_stage::StageGeometry,
+    node_id: u32,
+    node: &StoryNode,
+    layer_overrides: &HashMap<String, LayerOverride>,
+    action: &mut Option<VisualComposerAction>,
+) {
+    let Some(source) = authoring_overlay_source(Some(node), layer_overrides) else {
+        return;
+    };
+    let mut interaction = None;
+    render_overlay_source(ui, geometry, source, &mut interaction);
+    match interaction {
+        Some(VisualComposerAction::TestAdvance) => {
+            *action = Some(VisualComposerAction::SelectNode(node_id))
+        }
+        Some(VisualComposerAction::TestChoose(option_index)) => {
+            *action = Some(VisualComposerAction::InspectChoice {
+                node_id,
+                option_index,
+            })
+        }
+        _ => {}
+    }
+}
+
+fn render_overlay_source(
+    ui: &mut egui::Ui,
+    geometry: crate::editor::scene_stage::StageGeometry,
+    source: OverlaySource,
+    action: &mut Option<VisualComposerAction>,
+) {
     match source {
         OverlaySource::Dialogue { speaker, text } => {
             render_dialogue_overlay(ui, geometry, speaker.as_str(), text.as_str(), action);
@@ -112,15 +149,10 @@ pub fn selected_overlay_source(
             .map_err(|err| format!("runtime overlay current event unavailable: {err}"))?;
         Ok(runtime_overlay_source(&event, layer_overrides))
     };
-    if preview_mode.uses_runtime_state() {
+    if preview_mode.uses_runtime_state() && preview_mode != ComposerPreviewMode::SelectedRoute {
         runtime().map(|source| source.or_else(authoring))
     } else {
-        let source = authoring();
-        if source.is_some() {
-            Ok(source)
-        } else {
-            runtime()
-        }
+        Ok(authoring())
     }
 }
 

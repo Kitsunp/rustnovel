@@ -1,5 +1,5 @@
 use super::*;
-use std::collections::{BTreeMap, HashMap};
+
 impl EditorWorkbench {
     pub(super) fn clear_runtime_preview(&mut self) {
         self.engine = None;
@@ -10,6 +10,7 @@ impl EditorWorkbench {
         self.player_audio_root = None;
         self.timeline = visual_novel_engine::Timeline::new(60);
         self.current_time = 0.0;
+        self.timeline_fractional_ticks = 0.0;
         self.is_playing = false;
         self.player_state = crate::editor::player_ui::PlayerSessionState::default();
     }
@@ -54,6 +55,9 @@ impl EditorWorkbench {
         true
     }
     pub fn refresh_scene_from_engine_preview(&mut self) {
+        use visual_novel_engine::authoring::composer::{compose_scene_snapshot, StageLayerKind};
+        use visual_novel_engine::{runtime::CharacterPlacementCompiled, EntityKind};
+
         if self.composer_preview_mode == crate::editor::ComposerPreviewMode::IsolatedNode {
             self.refresh_scene_from_selected_node();
             return;
@@ -62,28 +66,75 @@ impl EditorWorkbench {
             self.refresh_scene_from_selected_node();
             return;
         };
-        let target_ip = self
-            .selected_node
-            .and_then(|node_id| self.node_graph.event_ip_for_node(node_id));
-        if target_ip.is_none()
-            && self
-                .selected_node
-                .and_then(|node_id| self.node_graph.get_node(node_id))
-                .is_some_and(|node| !node.is_marker())
-        {
+        let selected = self.selected_node.or(self.node_graph.selected);
+        if selected.is_some_and(|id| self.node_graph.event_ip_for_node(id).is_none()) {
             self.refresh_scene_from_selected_node();
             return;
         }
-        let visual = Self::preview_visual_for_target(engine, target_ip);
-        let script_hints = Self::preview_script_hints(engine, target_ip, &self.node_graph);
-        let snapshot = Self::scene_from_visual_state(
-            &visual,
-            script_hints.audio_hint,
-            script_hints.owner_hints,
-            &self.node_graph,
+        let snapshot = compose_scene_snapshot(
+            self.node_graph.authoring_graph(),
+            selected,
+            None,
+            Some(engine),
+            None,
+            None,
         );
-        self.scene = snapshot.scene;
-        self.composer_entity_owners = snapshot.owners;
+        let mut visual = visual_novel_engine::runtime::VisualState::default();
+        let mut sources = Vec::new();
+        let mut music = None;
+        for object in &snapshot.objects {
+            if let Some(name) = &object.character_name {
+                visual.characters.push(CharacterPlacementCompiled {
+                    name: name.as_str().into(),
+                    expression: object.expression.as_deref().map(Into::into),
+                    x: object.x,
+                    y: object.y,
+                    scale: object.scale,
+                    ..Default::default()
+                });
+                sources.push(object.source_node_id);
+            } else if object.kind == StageLayerKind::Background {
+                visual.background = object.asset_path.as_deref().map(Into::into);
+                sources.insert(0, object.source_node_id);
+            } else if object.kind == StageLayerKind::DebugTrace && object.asset_path.is_some() {
+                music = Some(object);
+            }
+        }
+        self.scene = crate::editor::scene_stage::scene_from_visual_state(&visual);
+        self.composer_entity_owners = self
+            .scene
+            .iter()
+            .zip(sources)
+            .filter_map(|(entity, source)| source.map(|node| (entity.id.raw(), node)))
+            .collect();
+        if let Some(music) = music {
+            let (volume, looping) = music
+                .source_node_id
+                .and_then(|id| self.node_graph.get_node(id))
+                .and_then(|node| match node {
+                    crate::editor::StoryNode::AudioAction {
+                        volume,
+                        loop_playback,
+                        ..
+                    } => Some((volume.unwrap_or(1.0), loop_playback.unwrap_or(true))),
+                    _ => None,
+                })
+                .unwrap_or((1.0, true));
+            let mut transform = visual_novel_engine::Transform::at(12, 12);
+            transform.z_order = 500;
+            if let Some(id) = self.scene.spawn_with_transform(
+                transform,
+                EntityKind::Audio(visual_novel_engine::AudioData {
+                    path: music.asset_path.as_deref().unwrap_or_default().into(),
+                    volume: (volume.clamp(0.0, 1.0) * 1000.0) as u32,
+                    looping,
+                }),
+            ) {
+                if let Some(owner) = music.source_node_id {
+                    self.composer_entity_owners.insert(id.raw(), owner);
+                }
+            }
+        }
         if self.selected_entity.is_some_and(|id| {
             self.scene
                 .get(visual_novel_engine::EntityId::new(id))
@@ -92,327 +143,4 @@ impl EditorWorkbench {
             self.selected_entity = None;
         }
     }
-
-    fn preview_visual_for_target(
-        engine: &Engine,
-        target_ip: Option<u32>,
-    ) -> visual_novel_engine::runtime::VisualState {
-        let mut preview = if target_ip.is_some() {
-            Engine::from_compiled(
-                engine.script().clone(),
-                engine.policy().clone(),
-                engine.limits(),
-            )
-            .unwrap_or_else(|_| engine.clone())
-        } else {
-            engine.clone()
-        };
-        let max_steps = target_ip
-            .map(|ip| (ip as usize).saturating_add(64))
-            .unwrap_or(256usize)
-            .min(4096);
-        for _ in 0..max_steps {
-            let current_ip = preview.state().position;
-            if let Some(target) = target_ip {
-                if current_ip > target {
-                    break;
-                }
-            }
-            let Ok(event) = preview.current_event() else {
-                break;
-            };
-            let advanced_ok = match &event {
-                visual_novel_engine::runtime::EventCompiled::ExtCall { .. } => {
-                    preview.resume().is_ok()
-                }
-                visual_novel_engine::runtime::EventCompiled::Choice(choice) => {
-                    if target_ip.is_none() || choice.options.is_empty() {
-                        false
-                    } else {
-                        preview.choose(0).is_ok()
-                    }
-                }
-                visual_novel_engine::runtime::EventCompiled::Dialogue(_)
-                | visual_novel_engine::runtime::EventCompiled::Scene(_)
-                | visual_novel_engine::runtime::EventCompiled::Patch(_)
-                | visual_novel_engine::runtime::EventCompiled::SetCharacterPosition(_)
-                | visual_novel_engine::runtime::EventCompiled::Transition(_)
-                | visual_novel_engine::runtime::EventCompiled::Jump { .. }
-                | visual_novel_engine::runtime::EventCompiled::SetFlag { .. }
-                | visual_novel_engine::runtime::EventCompiled::SetVar { .. }
-                | visual_novel_engine::runtime::EventCompiled::JumpIf { .. }
-                | visual_novel_engine::runtime::EventCompiled::AudioAction(_) => {
-                    preview.step().is_ok()
-                }
-            };
-            if !advanced_ok {
-                break;
-            }
-            if target_ip.is_none() {
-                match event {
-                    visual_novel_engine::runtime::EventCompiled::Scene(_)
-                    | visual_novel_engine::runtime::EventCompiled::Patch(_)
-                    | visual_novel_engine::runtime::EventCompiled::SetCharacterPosition(_)
-                    | visual_novel_engine::runtime::EventCompiled::Dialogue(_) => break,
-                    _ => {}
-                }
-            } else if let Some(target) = target_ip {
-                if preview.state().position > target {
-                    break;
-                }
-            }
-        }
-        preview.visual_state().clone()
-    }
-    fn scene_from_visual_state(
-        visual: &visual_novel_engine::runtime::VisualState,
-        audio_hint: AudioPreviewHint,
-        mut owner_hints: PreviewOwnerHints,
-        graph: &crate::editor::node_graph::NodeGraph,
-    ) -> PreviewSceneSnapshot {
-        let mut scene = visual_novel_engine::SceneState::new();
-        let mut owners = HashMap::new();
-        if let Some(background) = &visual.background {
-            let mut transform = visual_novel_engine::Transform::at(0, 0);
-            transform.z_order = -100;
-            if let Some(entity_id) = scene.spawn_with_transform(
-                transform,
-                visual_novel_engine::EntityKind::Image(visual_novel_engine::ImageData {
-                    path: background.clone(),
-                    tint: None,
-                }),
-            ) {
-                let owner = owner_hints
-                    .background_owner
-                    .or_else(|| graph.first_node_referencing_asset(background.as_ref()));
-                if let Some(owner_id) = owner {
-                    owners.insert(entity_id.raw(), owner_id);
-                }
-            }
-        }
-        for (index, character) in visual.characters.iter().enumerate() {
-            let default_x = 220 + (index as i32) * 180;
-            let default_y = 260;
-            let mut transform = visual_novel_engine::Transform::at(
-                character.x.unwrap_or(default_x),
-                character.y.unwrap_or(default_y),
-            );
-            transform.z_order = index as i32;
-            let scale = character.scale.unwrap_or(1.0).clamp(0.1, 4.0);
-            transform.scale = (scale * 1000.0) as u32;
-            if let Some(entity_id) = scene.spawn_with_transform(
-                transform,
-                visual_novel_engine::EntityKind::Character(visual_novel_engine::CharacterData {
-                    name: character.name.clone(),
-                    expression: character.expression.clone(),
-                }),
-            ) {
-                let owner = pop_character_owner(
-                    &mut owner_hints,
-                    character.name.as_ref(),
-                    character.expression.as_deref(),
-                )
-                .or_else(|| {
-                    character
-                        .expression
-                        .as_ref()
-                        .and_then(|expr| graph.first_node_referencing_asset(expr.as_ref()))
-                });
-                if let Some(owner_id) = owner {
-                    owners.insert(entity_id.raw(), owner_id);
-                }
-            }
-        }
-        let preview_music = match audio_hint {
-            AudioPreviewHint::Unknown => visual.music.clone(),
-            AudioPreviewHint::Resolved(value) => value,
-        };
-        if let Some(music) = &preview_music {
-            let mut transform = visual_novel_engine::Transform::at(12, 12);
-            transform.z_order = 500;
-            if let Some(entity_id) = scene.spawn_with_transform(
-                transform,
-                visual_novel_engine::EntityKind::Audio(visual_novel_engine::AudioData {
-                    path: music.clone(),
-                    volume: 1000,
-                    looping: true,
-                }),
-            ) {
-                let owner = owner_hints
-                    .music_owner
-                    .or_else(|| graph.first_node_referencing_asset(music.as_ref()));
-                if let Some(owner_id) = owner {
-                    owners.insert(entity_id.raw(), owner_id);
-                }
-            }
-        }
-
-        PreviewSceneSnapshot { scene, owners }
-    }
-    fn preview_script_hints(
-        engine: &Engine,
-        target_ip: Option<u32>,
-        graph: &crate::editor::node_graph::NodeGraph,
-    ) -> PreviewScriptHints {
-        let upper_bound = target_ip.unwrap_or(engine.state().position);
-        let mut owner_hints = PreviewOwnerHints::default();
-        let mut current_audio = None;
-        let mut audio_resolved = false;
-        for (idx, event) in engine.script().events.iter().enumerate() {
-            let ip = idx as u32;
-            if ip > upper_bound {
-                break;
-            }
-            let owner = graph.node_for_event_ip(ip);
-            match event {
-                visual_novel_engine::runtime::EventCompiled::Scene(scene) => {
-                    if scene.background.is_some() {
-                        owner_hints.background_owner = owner;
-                    }
-                    if let Some(music) = &scene.music {
-                        audio_resolved = true;
-                        current_audio = Some(music.clone());
-                        owner_hints.music_owner = owner;
-                    }
-                    if let Some(owner_id) = owner {
-                        for character in &scene.characters {
-                            push_character_owner(
-                                &mut owner_hints,
-                                character.name.as_ref(),
-                                character.expression.as_deref(),
-                                owner_id,
-                            );
-                        }
-                    }
-                }
-                visual_novel_engine::runtime::EventCompiled::Patch(patch) => {
-                    if patch.background.is_some() {
-                        owner_hints.background_owner = owner;
-                    }
-                    if let Some(music) = &patch.music {
-                        audio_resolved = true;
-                        current_audio = Some(music.clone());
-                        owner_hints.music_owner = owner;
-                    }
-                    if let Some(owner_id) = owner {
-                        for character in &patch.add {
-                            push_character_owner(
-                                &mut owner_hints,
-                                character.name.as_ref(),
-                                character.expression.as_deref(),
-                                owner_id,
-                            );
-                        }
-                        for character in &patch.update {
-                            push_character_owner(
-                                &mut owner_hints,
-                                character.name.as_ref(),
-                                character.expression.as_deref(),
-                                owner_id,
-                            );
-                        }
-                    }
-                    for removed_name in &patch.remove {
-                        remove_character_owner_name(&mut owner_hints, removed_name.as_ref());
-                    }
-                }
-                visual_novel_engine::runtime::EventCompiled::AudioAction(action)
-                    if action.channel == 0 =>
-                {
-                    audio_resolved = true;
-                    owner_hints.music_owner = owner;
-                    match action.action {
-                        0 => {
-                            if let Some(asset) = &action.asset {
-                                current_audio = Some(asset.clone());
-                            }
-                        }
-                        1 | 2 => current_audio = None,
-                        _ => {}
-                    }
-                }
-                visual_novel_engine::runtime::EventCompiled::SetCharacterPosition(pos) => {
-                    if let Some(owner_id) = owner {
-                        push_character_owner(&mut owner_hints, pos.name.as_ref(), None, owner_id);
-                    }
-                }
-                visual_novel_engine::runtime::EventCompiled::Dialogue(_) => {}
-                _ => {}
-            }
-        }
-
-        PreviewScriptHints {
-            owner_hints,
-            audio_hint: if audio_resolved {
-                AudioPreviewHint::Resolved(current_audio)
-            } else {
-                AudioPreviewHint::Unknown
-            },
-        }
-    }
-}
-
-struct PreviewSceneSnapshot {
-    scene: visual_novel_engine::SceneState,
-    owners: HashMap<u32, u32>,
-}
-
-#[derive(Default)]
-struct PreviewOwnerHints {
-    background_owner: Option<u32>,
-    music_owner: Option<u32>,
-    character_owners: BTreeMap<String, std::collections::VecDeque<u32>>,
-}
-
-struct PreviewScriptHints {
-    owner_hints: PreviewOwnerHints,
-    audio_hint: AudioPreviewHint,
-}
-
-enum AudioPreviewHint {
-    Unknown,
-    Resolved(Option<visual_novel_engine::runtime::SharedStr>),
-}
-
-fn preview_character_key(name: &str, expression: Option<&str>) -> String {
-    format!("{}|{}", name.trim(), expression.unwrap_or("").trim())
-}
-
-fn push_character_owner(
-    hints: &mut PreviewOwnerHints,
-    name: &str,
-    expression: Option<&str>,
-    owner_id: u32,
-) {
-    hints
-        .character_owners
-        .entry(preview_character_key(name, expression))
-        .or_default()
-        .push_back(owner_id);
-}
-
-fn pop_character_owner(
-    hints: &mut PreviewOwnerHints,
-    name: &str,
-    expression: Option<&str>,
-) -> Option<u32> {
-    let key = preview_character_key(name, expression);
-    if let Some(queue) = hints.character_owners.get_mut(&key) {
-        if let Some(owner) = queue.pop_front() {
-            return Some(owner);
-        }
-    }
-
-    let fallback_key = preview_character_key(name, None);
-    hints
-        .character_owners
-        .get_mut(&fallback_key)
-        .and_then(std::collections::VecDeque::pop_front)
-}
-
-fn remove_character_owner_name(hints: &mut PreviewOwnerHints, name: &str) {
-    let prefix = format!("{}|", name.trim());
-    hints
-        .character_owners
-        .retain(|key, _| !key.starts_with(&prefix));
 }

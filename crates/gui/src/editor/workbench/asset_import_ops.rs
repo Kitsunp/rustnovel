@@ -133,6 +133,12 @@ impl EditorWorkbench {
             ));
         }
 
+        if let Some(existing) =
+            existing_manifest_asset(manifest, kind, &canonical_root, &canonical_source)?
+        {
+            return Ok(existing.to_string_lossy().replace('\\', "/"));
+        }
+
         let rel_path = if canonical_source.starts_with(&canonical_root) {
             canonical_source
                 .strip_prefix(&canonical_root)
@@ -312,6 +318,9 @@ impl EditorWorkbench {
             }
             _ => return Err("selected node does not support that asset field".to_string()),
         }
+        if self.node_graph.get_node(node_id) == Some(&replacement) {
+            return Ok(());
+        }
         self.apply_node_replacement_with_command_bus(node_id, replacement)?;
 
         self.queue_editor_operation_with_values(
@@ -331,9 +340,37 @@ impl EditorWorkbench {
         name: &str,
         path: &str,
     ) -> Result<u32, String> {
+        let accepts_asset = |id: &u32| {
+            self.node_graph.get_node(*id).is_some_and(|node| {
+                matches!(node, StoryNode::Scene { .. } | StoryNode::ScenePatch(_))
+                    || (kind == AssetImportKind::Audio
+                        && matches!(node, StoryNode::AudioAction { .. }))
+            })
+        };
+        let visible_owner = |audio: bool| {
+            self.scene
+                .iter()
+                .filter(|entity| {
+                    if audio {
+                        matches!(entity.kind, visual_novel_engine::EntityKind::Audio(_))
+                    } else {
+                        matches!(entity.kind, visual_novel_engine::EntityKind::Image(_))
+                    }
+                })
+                .filter_map(|entity| self.composer_entity_owners.get(&entity.id.raw()).copied())
+                .find(accepts_asset)
+        };
         let node_id = self
-            .selected_node
-            .or(self.node_graph.selected)
+            .node_graph
+            .selected
+            .or(self.selected_node)
+            .filter(accepts_asset)
+            .or_else(|| {
+                (kind == AssetImportKind::Audio)
+                    .then(|| visible_owner(true))
+                    .flatten()
+            })
+            .or_else(|| visible_owner(false))
             .ok_or_else(|| "select a scene, patch, or audio node first".to_string())?;
         let node = self
             .node_graph

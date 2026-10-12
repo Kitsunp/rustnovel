@@ -80,6 +80,9 @@ pub struct NodeGraph {
     /// Node being edited inline
     #[serde(skip)]
     pub editing: Option<u32>,
+    /// Deferred request to inspect a node's composed scene in the workbench.
+    #[serde(skip)]
+    pub composer_inspection_request: Option<u32>,
     /// Node being dragged (robust interaction)
     #[serde(skip)]
     pub dragging_node: Option<u32>,
@@ -113,6 +116,7 @@ impl Clone for NodeGraph {
             zoom: self.zoom,
             layout_orientation: self.layout_orientation,
             editing: self.editing,
+            composer_inspection_request: self.composer_inspection_request,
             dragging_node: self.dragging_node,
             connecting_from: self.connecting_from,
             connecting_sticky: self.connecting_sticky,
@@ -135,6 +139,7 @@ impl Default for NodeGraph {
             zoom: ZOOM_DEFAULT,
             layout_orientation: GraphLayoutOrientation::Vertical,
             editing: None,
+            composer_inspection_request: None,
             dragging_node: None,
             connecting_from: None,
             connecting_sticky: false,

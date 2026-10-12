@@ -1,6 +1,97 @@
 use super::*;
 
 #[test]
+fn authoring_overlay_mouse_clicks_inspect_nodes_instead_of_advancing_runtime() {
+    use eframe::egui;
+    let stage = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 360.0));
+    let geometry = crate::editor::scene_stage::stage_geometry(
+        stage,
+        (640.0, 360.0),
+        crate::editor::StageFit::Fill,
+    );
+    for node in [
+        StoryNode::Dialogue {
+            speaker: "Ava".into(),
+            text: "Inspect this dialogue".into(),
+        },
+        StoryNode::Choice {
+            prompt: "Where now?".into(),
+            options: vec!["Library".into(), "Garden".into()],
+        },
+    ] {
+        let ctx = egui::Context::default();
+        let render = |events| {
+            let mut action = None;
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(stage),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::none())
+                        .show(ctx, |ui| {
+                            render_authoring_overlay(
+                                ui,
+                                geometry,
+                                42,
+                                &node,
+                                &HashMap::new(),
+                                &mut action,
+                            );
+                        });
+                },
+            );
+            (output, action)
+        };
+        // Locate the painted content rather than assuming fixed button coordinates.
+        let (output, action) = render(Vec::new());
+        assert!(action.is_none());
+        let label = if matches!(node, StoryNode::Choice { .. }) {
+            "Garden"
+        } else {
+            "Inspect this dialogue"
+        };
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::epaint::Shape::Text(text) = &shape.shape {
+                    (text.galley.text() == label).then(|| text.visual_bounding_rect().center())
+                } else {
+                    None
+                }
+            })
+            .expect("inspected content must actually be rendered");
+        for pressed in [true, false] {
+            let (_, action) = render(vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+            if pressed {
+                assert!(action.is_none(), "inspection should activate on release");
+            } else if matches!(node, StoryNode::Choice { .. }) {
+                assert!(matches!(
+                    action,
+                    Some(VisualComposerAction::InspectChoice {
+                        node_id: 42,
+                        option_index: 1
+                    })
+                ));
+            } else {
+                assert!(matches!(action, Some(VisualComposerAction::SelectNode(42))));
+            }
+        }
+    }
+}
+
+#[test]
 fn choice_layout_grows_rows_for_long_options_without_panel_overflow() {
     let stage = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 360.0));
     let options = vec![
@@ -104,7 +195,11 @@ fn dialogue_layout_scales_chrome_with_stage_size() {
 
 #[test]
 fn dialogue_overlay_rect_stays_inside_stage_across_stage_sizes() {
-    for size in [egui::vec2(1280.0, 720.0), egui::vec2(320.0, 180.0), egui::vec2(120.0, 72.0)] {
+    for size in [
+        egui::vec2(1280.0, 720.0),
+        egui::vec2(320.0, 180.0),
+        egui::vec2(120.0, 72.0),
+    ] {
         let stage = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
         let rect = dialogue_overlay_rect(stage);
 
@@ -185,7 +280,7 @@ fn selected_authoring_choice_overlay_takes_precedence_over_stale_runtime_dialogu
 }
 
 #[test]
-fn hidden_authoring_choice_overlay_falls_back_to_runtime_overlay() {
+fn hidden_authoring_choice_overlay_does_not_reveal_unrelated_runtime_dialogue() {
     let script = visual_novel_engine::runtime::ScriptRaw::new(
         vec![visual_novel_engine::runtime::EventRaw::Dialogue(
             visual_novel_engine::runtime::DialogueRaw {
@@ -214,22 +309,25 @@ fn hidden_authoring_choice_overlay_falls_back_to_runtime_overlay() {
         },
     );
 
-    let source = selected_overlay_source(
-        Some(&engine),
-        Some(&selected),
+    for mode in [
         ComposerPreviewMode::IsolatedNode,
-        &overrides,
-    )
-    .expect("overlay selection should not hide runtime errors")
-    .expect("runtime fallback overlay");
-
-    assert_eq!(
-        source,
-        OverlaySource::Dialogue {
-            speaker: "Runtime".to_string(),
-            text: "Visible runtime dialogue".to_string()
-        }
-    );
+        ComposerPreviewMode::SelectedRoute,
+    ] {
+        assert_eq!(
+            selected_overlay_source(Some(&engine), Some(&selected), mode, &overrides).unwrap(),
+            None
+        );
+        assert_eq!(
+            selected_overlay_source(
+                Some(&engine),
+                Some(&StoryNode::Start),
+                mode,
+                &HashMap::new()
+            )
+            .unwrap(),
+            None
+        );
+    }
 }
 
 #[test]
@@ -358,6 +456,18 @@ fn runtime_and_authoring_choice_options_are_never_merged() {
             options: vec!["Selected A".to_string(), "Selected B".to_string()],
         }
     );
+    let selected_route_source = selected_overlay_source(
+        Some(&engine),
+        Some(&selected),
+        ComposerPreviewMode::SelectedRoute,
+        &HashMap::new(),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        selected_route_source, isolated_source,
+        "inspecting a selected route must show its options, not another runtime choice"
+    );
 }
 
 #[test]
@@ -391,5 +501,8 @@ fn runtime_preview_overlay_reports_engine_error_instead_of_authoring_fallback() 
     )
     .expect_err("runtime preview should surface exhausted runtime instead of falling back");
 
-    assert!(err.contains("runtime overlay current event unavailable"), "{err}");
+    assert!(
+        err.contains("runtime overlay current event unavailable"),
+        "{err}"
+    );
 }
