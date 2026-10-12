@@ -49,6 +49,7 @@ impl visual_novel_runtime::Audio for AudioProbe {
             volume,
             start_at.as_millis(),
         ));
+
         Ok(())
     }
 
@@ -83,6 +84,61 @@ impl visual_novel_runtime::Audio for AudioProbe {
 }
 
 struct FailingAudioProbe;
+
+#[test]
+fn composer_previews_inherited_music_and_exposes_audio_failures() {
+    use crate::editor::{visual_composer::VisualComposerAction, StoryNode};
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    let start = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::Pos2::ZERO);
+    let scene = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: None,
+            music: Some("music/theme.ogg".into()),
+            characters: Vec::new(),
+        },
+        egui::pos2(0.0, 100.0),
+    );
+    let line = workbench.node_graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Ava".into(),
+            text: "Music inherited".into(),
+        },
+        egui::pos2(0.0, 200.0),
+    );
+    workbench.node_graph.connect(start, scene);
+    workbench.node_graph.connect(scene, line);
+    workbench.node_graph.set_single_selection(Some(line));
+    workbench.selected_node = Some(line);
+    let state = Rc::new(RefCell::new(AudioProbeState::default()));
+    workbench.player_audio_backend = Some(Box::new(AudioProbe {
+        state: state.clone(),
+    }));
+    workbench.player_state.bgm_volume = 0.5;
+    workbench.start_composer_runtime_preview_from_selection();
+    assert_eq!(
+        state.borrow().bgm,
+        vec![("music/theme.ogg".into(), true, Some(0.5))]
+    );
+    workbench.handle_composer_actions(vec![VisualComposerAction::StopAudio], Some(line));
+    assert_eq!(state.borrow().stop_bgm, 1);
+    workbench.player_audio_backend = Some(Box::new(FailingAudioProbe));
+    workbench.handle_composer_actions(vec![VisualComposerAction::PreviewAudio], Some(line));
+    assert!(workbench
+        .player_state
+        .last_audio_error
+        .as_deref()
+        .unwrap()
+        .contains("backend rejected"));
+    assert!(workbench
+        .toast
+        .as_ref()
+        .unwrap()
+        .message
+        .contains("backend rejected"));
+}
 
 impl visual_novel_runtime::Audio for FailingAudioProbe {
     fn play_music(&mut self, id: &str) -> Result<(), String> {
@@ -187,11 +243,18 @@ fn editor_audio_preview_from_offset_routes_seekable_bgm_without_affecting_sfx() 
         false,
         Duration::from_millis(500),
     );
+    workbench.handle_asset_browser_actions(vec![crate::editor::AssetBrowserAction::PreviewAudio {
+        path: "audio/theme.ogg".into(),
+        offset_ms: 0,
+    }]);
 
     let state = state.borrow();
     assert_eq!(
         state.bgm_with_offset,
-        vec![("audio/theme.ogg".to_string(), false, Some(0.4), 1250)]
+        vec![
+            ("audio/theme.ogg".to_string(), false, Some(0.4), 1250),
+            ("audio/theme.ogg".to_string(), true, Some(0.5), 0)
+        ]
     );
     assert_eq!(state.sfx, vec![("audio/click.ogg".to_string(), Some(1.0))]);
 }

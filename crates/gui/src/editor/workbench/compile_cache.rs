@@ -142,7 +142,7 @@ fn hash_referenced_asset_state(
     hex_lower(&hasher.finalize())
 }
 
-fn sha256_file(path: &Path) -> Result<String, std::io::Error> {
+pub(super) fn sha256_file(path: &Path) -> Result<String, std::io::Error> {
     let mut file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];

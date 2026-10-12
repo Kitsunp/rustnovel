@@ -49,6 +49,7 @@ impl<'a> TimelinePanel<'a> {
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         self.render_transport(ui);
+        ui.small("Animation preview — tracks are not saved or exported yet.");
         ui.separator();
         self.render_keyframe_controls(ui);
         ui.separator();
@@ -91,13 +92,12 @@ impl<'a> TimelinePanel<'a> {
         let mut time_float = *self.current_time as f32;
         ui.horizontal(|ui| {
             let slider_width = ui.available_width().max(96.0);
-            if ui
-                .add_sized(
-                    [slider_width, ui.spacing().interact_size.y],
-                    egui::Slider::new(&mut time_float, 0.0..=duration as f32).show_value(false),
-                )
-                .changed()
-            {
+            ui.spacing_mut().slider_width = slider_width;
+            let response = ui.add_sized(
+                [slider_width, ui.spacing().interact_size.y],
+                egui::Slider::new(&mut time_float, 0.0..=duration as f32).show_value(false),
+            );
+            if response.changed() {
                 *self.current_time = time_float.round() as u32;
                 self.timeline.seek(*self.current_time);
             }
@@ -180,6 +180,9 @@ impl<'a> TimelinePanel<'a> {
         }
         if let Some(message) = feedback {
             ui.label(message);
+        }
+        if property == PropertyType::Rotation {
+            ui.small("Rotation tracks are not displayed in the Composer yet.");
         }
     }
 

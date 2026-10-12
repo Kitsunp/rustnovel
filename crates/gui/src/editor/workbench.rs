@@ -107,6 +107,7 @@ pub struct EditorWorkbench {
     // Timeline/Playback
     pub timeline: visual_novel_engine::Timeline,
     pub current_time: f32,
+    timeline_fractional_ticks: f64,
     pub is_playing: bool,
     pub player_state: crate::editor::player_ui::PlayerSessionState,
 
@@ -268,6 +269,7 @@ impl EditorWorkbench {
             composer_layer_overrides: std::collections::HashMap::new(),
             timeline: visual_novel_engine::Timeline::new(60), // 60 ticks per second
             current_time: 0.0,
+            timeline_fractional_ticks: 0.0,
             is_playing: false,
             player_state: crate::editor::player_ui::PlayerSessionState::default(),
             engine: None,
@@ -334,22 +336,48 @@ impl EditorWorkbench {
     }
 
     pub fn update(&mut self, dt: usize) {
-        if self.is_playing {
-            let delta_ticks = u32::try_from(dt).unwrap_or(u32::MAX).max(1);
+        if self.is_playing && dt > 0 {
+            let delta_ticks = u32::try_from(dt).unwrap_or(u32::MAX);
             self.timeline.advance(delta_ticks);
             self.current_time = self.timeline.current_time() as f32;
-            if self.timeline.current_time() > self.timeline.duration() {
-                self.current_time = 0.0;
-                self.timeline.seek(0);
+            if self.timeline.current_time() >= self.timeline.duration() {
+                self.timeline.seek(self.timeline.duration());
+                self.current_time = self.timeline.current_time() as f32;
+                self.timeline_fractional_ticks = 0.0;
                 self.is_playing = false;
             }
         }
     }
 
     pub fn update_seconds(&mut self, dt_seconds: f32) {
-        let ticks_per_second = self.timeline.ticks_per_second.max(1) as f32;
-        let ticks = (dt_seconds.max(0.0) * ticks_per_second).round().max(1.0) as usize;
-        self.update(ticks);
+        if !self.is_playing || !dt_seconds.is_finite() || dt_seconds <= 0.0 {
+            return;
+        }
+        self.timeline_fractional_ticks +=
+            f64::from(dt_seconds) * f64::from(self.timeline.ticks_per_second.max(1));
+        let ticks = self.timeline_fractional_ticks.floor();
+        self.timeline_fractional_ticks -= ticks;
+        self.update(ticks as usize);
+    }
+
+    /// Evaluate the scratch timeline on a copy, leaving authored poses intact.
+    pub fn composer_animated_scene(&self) -> visual_novel_engine::SceneState {
+        use visual_novel_engine::PropertyType;
+        let mut scene = self.scene.clone();
+        for (id, property, value) in self.timeline.evaluate_at(self.current_time as u32) {
+            let Some(entity) = scene.get_mut(id) else {
+                continue;
+            };
+            match property {
+                PropertyType::PositionX => entity.transform.x = value,
+                PropertyType::PositionY => entity.transform.y = value,
+                PropertyType::ZOrder => entity.transform.z_order = value,
+                PropertyType::Scale => entity.transform.scale = value.max(0) as u32,
+                PropertyType::Opacity => entity.transform.opacity = value.clamp(0, 1000) as u32,
+                PropertyType::Rotation => {}
+            }
+        }
+        scene
     }
 
     fn layout_prefs_path() -> std::path::PathBuf {

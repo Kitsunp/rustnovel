@@ -23,6 +23,79 @@ fn character(name: &str, image: &str) -> CharacterPlacementRaw {
 }
 
 #[test]
+fn selected_route_reconstructs_the_second_branch_without_leaking_first_branch_assets() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let choice = graph.add_node(
+        StoryNode::Choice {
+            prompt: "Route".into(),
+            options: vec!["A".into(), "B".into()],
+        },
+        pos(0.0, 100.0),
+    );
+    let first = graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("first.png".into()),
+            music: Some("first.ogg".into()),
+            characters: vec![character("Ava", "first_ava.png")],
+        },
+        pos(-200.0, 200.0),
+    );
+    let second = graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("second.png".into()),
+            music: Some("second.ogg".into()),
+            characters: vec![character("Ava", "second_ava.png")],
+        },
+        pos(200.0, 200.0),
+    );
+    let line = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Ava".into(),
+            text: "Second branch".into(),
+        },
+        pos(200.0, 300.0),
+    );
+    let end = graph.add_node(StoryNode::End, pos(0.0, 400.0));
+    graph.connect(start, choice);
+    graph.connect_port(choice, 0, first);
+    graph.connect_port(choice, 1, second);
+    graph.connect(first, end);
+    graph.connect(second, line);
+    graph.connect(line, end);
+    let engine = Engine::new(
+        graph.to_script(),
+        SecurityPolicy::default(),
+        ResourceLimiter::default(),
+    )
+    .unwrap();
+    let original_position = engine.state().position;
+    let (preview, visited) = composer::preview_scene_route(&engine, &graph, Some(line));
+    assert_eq!(
+        preview.visual_state().background.as_deref(),
+        Some("second.png")
+    );
+    assert_eq!(preview.visual_state().music.as_deref(), Some("second.ogg"));
+    assert!(!visited.contains(&graph.event_ip_for_node(first).unwrap()));
+    assert_eq!(
+        engine.state().position,
+        original_position,
+        "inspection must not consume runtime state"
+    );
+    let snapshot =
+        composer::compose_scene_snapshot(&graph, Some(line), None, Some(&engine), None, None);
+    let character = snapshot
+        .objects
+        .iter()
+        .find(|object| object.character_name.as_deref() == Some("Ava"))
+        .unwrap();
+    assert_eq!(character.asset_path.as_deref(), Some("second_ava.png"));
+    assert_eq!(character.source_node_id, Some(second));
+}
+
+#[test]
 fn composer_snapshot_uses_provenance_for_duplicate_characters() {
     let mut graph = NodeGraph::new();
     let scene = graph.add_node(

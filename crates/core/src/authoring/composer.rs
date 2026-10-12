@@ -2,6 +2,7 @@ mod objects;
 mod overlays;
 mod presentation;
 mod preview;
+mod route;
 mod runtime_objects;
 mod types;
 
@@ -9,7 +10,7 @@ use crate::localization::LocalizationCatalog;
 use crate::runtime::Engine;
 
 use super::NodeGraph;
-use objects::{collect_authoring_objects, preview_engine_for_selection};
+use objects::collect_authoring_objects;
 use overlays::{
     overlay_layer_objects, overlay_source_for_authoring_node, overlays_from_authoring_node,
     overlays_from_event,
@@ -22,6 +23,7 @@ pub use objects::{
 };
 pub use presentation::build_presentation_snapshot;
 pub use preview::ComposerPreviewSession;
+pub use route::preview_scene_route;
 pub use types::{
     list_stage_layers, BackgroundFit, ComposerOverlay, ComposerSnapshot, LayerOverride,
     LayeredSceneObject, PresentationLayout, PresentationRect, PresentationSnapshot,
@@ -37,11 +39,19 @@ pub fn compose_scene_snapshot(
     catalog: Option<&LocalizationCatalog>,
 ) -> ComposerSnapshot {
     let (stage_width, stage_height) = stage_resolution.unwrap_or((1280, 720));
-    let preview_engine =
-        engine.map(|engine| preview_engine_for_selection(engine, graph, selected_node_id));
-    let snapshot_engine = preview_engine.as_ref().or(engine);
+    let preview_engine = engine.map(|engine| preview_scene_route(engine, graph, selected_node_id));
+    let snapshot_engine = preview_engine.as_ref().map(|(engine, _)| engine).or(engine);
     let mut objects = snapshot_engine
-        .map(|engine| collect_visual_objects(graph, engine))
+        .map(|engine| {
+            collect_visual_objects(
+                graph,
+                engine,
+                preview_engine
+                    .as_ref()
+                    .filter(|_| selected_node_id.is_some())
+                    .map(|(_, ips)| ips.as_slice()),
+            )
+        })
         .unwrap_or_default();
     if objects.is_empty() {
         collect_authoring_objects(graph, selected_node_id, &mut objects);

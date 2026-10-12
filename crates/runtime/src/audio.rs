@@ -1,7 +1,7 @@
 use std::io::Cursor;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rodio::{Decoder, OutputStream, Sink, Source};
 use visual_novel_engine::LruCache;
@@ -9,6 +9,14 @@ use visual_novel_engine::LruCache;
 use crate::AssetStore;
 
 pub type AudioResult<T = ()> = Result<T, String>;
+
+/// Transport position estimated from the backend's monotonic playback clock.
+#[derive(Clone, Copy, Debug)]
+pub struct MusicPlayback<'a> {
+    pub path: &'a str,
+    pub position: Duration,
+    pub looping: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AudioCapabilities {
@@ -36,6 +44,9 @@ impl AudioCapabilities {
 
 /// Audio trait for runtime playback backends.
 pub trait Audio {
+    fn music_playback(&self) -> Option<MusicPlayback<'_>> {
+        None
+    }
     fn capabilities(&self) -> AudioCapabilities {
         AudioCapabilities::SILENT
     }
@@ -95,6 +106,9 @@ pub trait Audio {
 }
 
 impl<T: Audio + ?Sized> Audio for Box<T> {
+    fn music_playback(&self) -> Option<MusicPlayback<'_>> {
+        (**self).music_playback()
+    }
     fn capabilities(&self) -> AudioCapabilities {
         (**self).capabilities()
     }
@@ -170,6 +184,7 @@ pub struct RodioBackend {
     assets: Arc<dyn AssetStore + Send + Sync>,
     audio_cache: LruCache<String>,
     current_bgm: Option<String>,
+    bgm_playback: Option<(Instant, Duration, bool)>,
     sfx_sinks: Vec<Arc<Sink>>,
     voice_sink: Option<Arc<Sink>>,
 }
@@ -193,6 +208,7 @@ impl RodioBackend {
             assets,
             audio_cache: LruCache::new(Self::AUDIO_CACHE_BUDGET_BYTES),
             current_bgm: None,
+            bgm_playback: None,
             sfx_sinks: Vec::new(),
             voice_sink: None,
         })
@@ -294,9 +310,42 @@ impl RodioBackend {
         self.voice_sink = Some(sink);
         Ok(())
     }
+
+    fn start_music(
+        &mut self,
+        id: &str,
+        loop_playback: bool,
+        volume: Option<f32>,
+        fade_in: Option<Duration>,
+        start_at: Duration,
+    ) -> AudioResult {
+        let source = self.decode_audio_source(id, Duration::ZERO)?;
+        let source: Box<dyn Source<Item = f32> + Send> = if loop_playback {
+            Box::new(source.repeat_infinite())
+        } else {
+            source
+        };
+        // Repeat the full track, then seek; repeating the skipped source loops only its tail.
+        let source = Box::new(source.skip_duration(start_at));
+        self.play_source(source, true, false, volume, fade_in)?;
+        self.current_bgm = Some(id.to_string());
+        self.bgm_playback = Some((Instant::now(), start_at, loop_playback));
+        Ok(())
+    }
 }
 
 impl Audio for RodioBackend {
+    fn music_playback(&self) -> Option<MusicPlayback<'_>> {
+        if self.bgm_sink.empty() {
+            return None;
+        }
+        let (started, offset, looping) = self.bgm_playback?;
+        Some(MusicPlayback {
+            path: self.current_bgm.as_deref()?,
+            position: offset.saturating_add(started.elapsed()),
+            looping,
+        })
+    }
     fn capabilities(&self) -> AudioCapabilities {
         AudioCapabilities::RODIO
     }
@@ -321,14 +370,7 @@ impl Audio for RodioBackend {
         volume: Option<f32>,
         start_at: Duration,
     ) -> AudioResult {
-        if self.current_bgm.as_deref() == Some(id) && !self.bgm_sink.empty() && start_at.is_zero() {
-            return Ok(());
-        }
-
-        let source = self.decode_audio_source(id, start_at)?;
-        self.play_source(source, true, loop_playback, volume, None)?;
-        self.current_bgm = Some(id.to_string());
-        Ok(())
+        self.start_music(id, loop_playback, volume, None, start_at)
     }
 
     fn play_music_with_transition(
@@ -338,25 +380,31 @@ impl Audio for RodioBackend {
         volume: Option<f32>,
         fade_in: Option<Duration>,
     ) -> AudioResult {
-        if self.current_bgm.as_deref() == Some(id) && !self.bgm_sink.empty() {
+        if self.current_bgm.as_deref() == Some(id)
+            && !self.bgm_sink.empty()
+            && self
+                .bgm_playback
+                .is_some_and(|(_, _, looping)| looping == loop_playback)
+        {
+            if let Some(volume) = volume {
+                self.bgm_sink.set_volume(volume.clamp(0.0, 1.0));
+            }
             return Ok(());
         }
-
-        let source = self.decode_audio_source(id, Duration::ZERO)?;
-        self.play_source(source, true, loop_playback, volume, fade_in)?;
-        self.current_bgm = Some(id.to_string());
-        Ok(())
+        self.start_music(id, loop_playback, volume, fade_in, Duration::ZERO)
     }
 
     fn stop_music(&mut self) -> AudioResult {
         self.bgm_sink.stop();
         self.current_bgm = None;
+        self.bgm_playback = None;
         Ok(())
     }
 
     fn stop_music_with_fade(&mut self, fade_out: Option<Duration>) -> AudioResult {
         fade_sink_to_stop(self.bgm_sink.clone(), fade_out);
         self.current_bgm = None;
+        self.bgm_playback = None;
         Ok(())
     }
 
@@ -469,9 +517,32 @@ impl Audio for SilentAudio {
 }
 
 pub fn audio_duration(assets: &dyn AssetStore, id: &str) -> Result<Option<Duration>, String> {
-    let data = assets.load_bytes(id)?;
-    let cursor = Cursor::new(data);
+    let data: Arc<[u8]> = assets.load_bytes(id)?.into();
+    let cursor = Cursor::new(Arc::clone(&data));
     let decoder =
         Decoder::new(cursor).map_err(|e| format!("Failed to decode audio '{id}': {e}"))?;
-    Ok(decoder.total_duration())
+    if let Some(duration) = decoder.total_duration() {
+        return Ok(Some(duration));
+    }
+    if !data.starts_with(b"OggS") {
+        return Ok(None);
+    }
+    let sample_rate = decoder.sample_rate();
+    let mut reader = ogg::reading::PacketReader::new(Cursor::new(data));
+    let mut stream = None;
+    let mut granule = 0;
+    while let Some(packet) = reader
+        .read_packet()
+        .map_err(|err| format!("Failed to read Ogg metadata '{id}': {err}"))?
+    {
+        if stream.is_some_and(|serial| serial != packet.stream_serial()) {
+            return Ok(None); // Chained/multiplexed streams need individual sample rates.
+        }
+        stream = Some(packet.stream_serial());
+        if packet.absgp_page() != u64::MAX {
+            granule = granule.max(packet.absgp_page());
+        }
+    }
+    Ok((sample_rate > 0 && granule > 0)
+        .then(|| Duration::from_secs_f64(granule as f64 / sample_rate as f64)))
 }

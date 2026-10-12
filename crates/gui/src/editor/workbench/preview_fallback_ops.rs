@@ -168,8 +168,12 @@ fn spawn_character_patch_entity(
 ) {
     let default_x = 220 + (index as i32) * 180;
     let default_y = 260;
-    let mut transform = visual_novel_engine::Transform::at(default_x, default_y);
+    let mut transform = visual_novel_engine::Transform::at(
+        character.x.unwrap_or(default_x),
+        character.y.unwrap_or(default_y),
+    );
     transform.z_order = index as i32;
+    transform.scale = (character.scale.unwrap_or(1.0).clamp(0.1, 4.0) * 1000.0) as u32;
     if let Some(entity_id) = scene.spawn_with_transform(
         transform,
         visual_novel_engine::EntityKind::Character(visual_novel_engine::CharacterData {

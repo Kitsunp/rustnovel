@@ -42,8 +42,7 @@ impl EditorWorkbench {
                     }
                 }
                 crate::editor::AssetBrowserAction::PreviewAudio { path, offset_ms } => {
-                    self.play_editor_audio_preview_from_offset(
-                        "bgm",
+                    self.apply_editor_bgm_preview_command_from_offset(
                         &path,
                         None,
                         true,
@@ -65,10 +64,23 @@ impl EditorWorkbench {
         for action in actions {
             match action {
                 crate::editor::visual_composer::VisualComposerAction::SelectNode(nid) => {
-                    self.node_graph.set_single_selection(Some(nid));
-                    self.selected_node = Some(nid);
-                    self.selected_entity = None;
-                    self.pending_graph_focus = Some(nid);
+                    self.select_composer_node_for_inspection(nid);
+                }
+                crate::editor::visual_composer::VisualComposerAction::InspectChoice {
+                    node_id,
+                    option_index,
+                } => {
+                    let target = self
+                        .node_graph
+                        .connections()
+                        .find(|edge| edge.from == node_id && edge.from_port == option_index)
+                        .map(|edge| edge.to);
+                    if let Some(target) = target {
+                        self.select_composer_node_for_inspection(target);
+                    } else {
+                        self.toast =
+                            Some(ToastState::warning("This choice option is not connected"));
+                    }
                 }
                 crate::editor::visual_composer::VisualComposerAction::CreateNode { node, pos } => {
                     self.add_composer_created_node(node, pos);
@@ -147,6 +159,16 @@ impl EditorWorkbench {
                 crate::editor::visual_composer::VisualComposerAction::TestFromSelection => {
                     self.start_composer_runtime_preview_from_node(composer_selected_node);
                 }
+                crate::editor::visual_composer::VisualComposerAction::PreviewAudio => {
+                    if !self.preview_composer_audio() {
+                        self.toast = Some(ToastState::warning("No audio in the inspected scene"));
+                    }
+                }
+                crate::editor::visual_composer::VisualComposerAction::StopAudio => {
+                    for channel in ["bgm", "sfx", "voice"] {
+                        self.stop_editor_audio_preview(channel);
+                    }
+                }
                 crate::editor::visual_composer::VisualComposerAction::TestRestart => {
                     self.restart_composer_runtime_preview();
                 }
@@ -191,6 +213,24 @@ impl EditorWorkbench {
         }
     }
 
+    fn select_composer_node_for_inspection(&mut self, node_id: u32) {
+        if self.node_graph.get_node(node_id).is_none() {
+            return;
+        }
+        if self.composer_entity_owners.is_empty() {
+            self.composer_entity_owners = self.build_entity_node_map();
+        }
+        if self
+            .selected_entity
+            .is_some_and(|id| self.composer_entity_owners.get(&id) != Some(&node_id))
+        {
+            self.selected_entity = None;
+        }
+        self.node_graph.set_single_selection(Some(node_id));
+        self.selected_node = Some(node_id);
+        self.pending_graph_focus = Some(node_id);
+    }
+
     fn handle_layer_visibility_changed(&mut self, object_id: String, visible: bool) {
         self.apply_document_command(
             visual_novel_engine::authoring::AuthoringDocumentCommand::SetLayerVisible {
@@ -230,9 +270,10 @@ impl EditorWorkbench {
         &mut self,
         command: visual_novel_engine::authoring::AuthoringDocumentCommand,
     ) {
-        let Ok(_) = self.apply_authoring_document_command(command) else {
+        if let Err(err) = self.apply_authoring_document_command(command) {
+            self.toast = Some(ToastState::error(format!("Composer edit failed: {err}")));
             return;
-        };
+        }
         self.node_graph.mark_modified();
     }
 }

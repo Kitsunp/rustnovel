@@ -28,7 +28,6 @@ impl EditorWorkbench {
                     .show(ctx, |ui| {
                         let mut current_time_u32 = self.current_time as u32;
                         let mut is_playing = self.is_playing;
-
                         TimelinePanel::new(
                             &mut self.timeline,
                             &mut current_time_u32,
@@ -36,9 +35,11 @@ impl EditorWorkbench {
                         )
                         .with_selected_entity(self.selected_entity)
                         .ui(ui);
-
                         self.current_time = current_time_u32 as f32;
                         self.is_playing = is_playing;
+                        if !is_playing {
+                            self.timeline_fractional_ticks = 0.0;
+                        }
                     });
             self.layout_overrides.timeline_height = super::layout::dragged_panel_override(
                 self.layout_overrides.timeline_height,
@@ -95,6 +96,11 @@ impl EditorWorkbench {
                                 &mut self.composer_image_failures,
                                 &mut self.resource_service,
                             )
+                            .with_audio_playback(
+                                self.player_audio_backend
+                                    .as_ref()
+                                    .and_then(|audio| audio.music_playback()),
+                            )
                             .ui(ui),
                         );
                     } else {
@@ -137,6 +143,7 @@ impl EditorWorkbench {
                     ));
                     self.apply_pending_graph_view(panel_rect.size());
                     self.render_document_node_editor(ui);
+                    composer_preview_mode = self.composer_preview_mode;
                 });
             }
             if let Some(splitter) = dock.graph_splitter {
@@ -172,18 +179,10 @@ impl EditorWorkbench {
                     .and_then(|node_id| self.node_graph.get_node(node_id).cloned());
                 let mut composer_background_fit =
                     self.composer_background_fit_for_node(composer_selected_node);
-                let presentation_snapshot =
-                    visual_novel_engine::authoring::composer::build_presentation_snapshot(
-                        self.node_graph.authoring_graph(),
-                        composer_selected_node,
-                        stage_resolution,
-                        self.engine.as_ref(),
-                        Some(&self.player_locale),
-                        Some(&self.localization_catalog),
-                    );
+                let mut animated_scene = self.composer_animated_scene();
                 let mut composer = crate::editor::visual_composer::VisualComposerPanel::new(
                     crate::editor::visual_composer::VisualComposerPanelParams {
-                        scene: &mut self.scene,
+                        scene: &mut animated_scene,
                         engine: &self.engine,
                         project_root: self.project_root.as_deref(),
                         stage_resolution,
@@ -199,14 +198,20 @@ impl EditorWorkbench {
                         active_event_node_id,
                         selected_authoring_node_id: composer_selected_node,
                         selected_authoring_node: selected_authoring_node.as_ref(),
-                        presentation_snapshot: Some(&presentation_snapshot),
+                        // Layers must describe the same entities and IDs that are
+                        // painted and edited, including isolated/animated previews.
+                        presentation_snapshot: None,
                     },
-                );
+                )
+                .with_authoring_graph(self.node_graph.authoring_graph(), &entity_owners);
                 if let Some(act) = composer.ui(ui, &entity_owners) {
                     composer_actions.push(act);
                 }
 
                 crate::editor::node_rendering::render_toast(ui, &mut self.toast);
+                if let Some(error) = &self.player_state.last_audio_error {
+                    ui.colored_label(egui::Color32::LIGHT_RED, error);
+                }
             });
 
             if let Some(splitter) = dock.inspector_splitter {
@@ -349,6 +354,9 @@ impl EditorWorkbench {
             &mut request,
         )
         .ui(ui);
+        if let Some(node_id) = self.node_graph.composer_inspection_request.take() {
+            self.inspect_composer_scene(node_id);
+        }
         match request {
             Some(NodeEditorHistoryAction::Undo) => {
                 self.apply_graph_undo();
@@ -368,7 +376,12 @@ impl EditorWorkbench {
             match self.selected_node {
                 Some(requested) if self.node_graph.get_node(requested).is_some() => {
                     self.node_graph.set_single_selection(Some(requested));
-                    self.selected_entity = None;
+                    if self
+                        .selected_entity
+                        .is_some_and(|id| self.composer_entity_owners.get(&id) != Some(&requested))
+                    {
+                        self.selected_entity = None;
+                    }
                 }
                 Some(_) => {
                     self.selected_node = self.node_graph.selected;

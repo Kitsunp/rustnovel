@@ -87,6 +87,38 @@ pub fn scene_entity_object_id(
     stable_entity_object_id(source_node_id, &kind, &source_field_path, index)
 }
 
+/// Bind rendered instances to the document's existing, persistent layer IDs.
+pub fn authoring_entity_object_ids(
+    scene: &SceneState,
+    owners: &HashMap<u32, u32>,
+    graph: &visual_novel_engine::authoring::NodeGraph,
+) -> HashMap<u32, String> {
+    let mut objects = visual_novel_engine::authoring::composer::list_layered_objects(graph, None);
+    let mut ids = HashMap::new();
+    for entity in scene.iter_sorted() {
+        let owner = owners.get(&entity.id.raw()).copied();
+        let matched = objects.iter().position(|object| {
+            object.source_node_id == owner
+                && match &entity.kind {
+                    EntityKind::Character(character) => {
+                        object.character_name.as_deref() == Some(character.name.as_ref())
+                            && (object.expression.is_none()
+                                || object.expression.as_deref() == character.expression.as_deref())
+                    }
+                    EntityKind::Image(image) => {
+                        object.kind == StageLayerKind::Background
+                            && object.asset_path.as_deref() == Some(image.path.as_ref())
+                    }
+                    _ => false,
+                }
+        });
+        if let Some(index) = matched {
+            ids.insert(entity.id.raw(), objects.remove(index).object_id);
+        }
+    }
+    ids
+}
+
 fn scene_entity_parts(
     entity: &Entity,
     index: usize,

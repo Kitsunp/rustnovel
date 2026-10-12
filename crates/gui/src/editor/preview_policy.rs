@@ -6,9 +6,9 @@ pub use visual_novel_engine::authoring::composer::BackgroundFit;
 #[serde(rename_all = "snake_case")]
 pub enum ComposerPreviewMode {
     IsolatedNode,
-    #[default]
     RuntimeInherited,
     RuntimeFromStart,
+    #[default]
     SelectedRoute,
 }
 

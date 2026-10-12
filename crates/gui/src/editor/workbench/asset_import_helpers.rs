@@ -2,6 +2,52 @@ use std::path::{Path, PathBuf};
 
 use crate::editor::{AssetFieldTarget, AssetImportKind};
 
+pub fn existing_manifest_asset(
+    manifest: &visual_novel_engine::manifest::ProjectManifest,
+    kind: AssetImportKind,
+    project_root: &Path,
+    source: &Path,
+) -> Result<Option<PathBuf>, String> {
+    let paths: Box<dyn Iterator<Item = &PathBuf> + '_> = match kind {
+        AssetImportKind::Background => Box::new(manifest.assets.backgrounds.values()),
+        AssetImportKind::Character => {
+            Box::new(manifest.assets.characters.values().map(|asset| &asset.path))
+        }
+        AssetImportKind::Audio => Box::new(manifest.assets.audio.values()),
+    };
+    let source_len = source.metadata().map_err(|err| err.to_string())?.len();
+    let mut source_hash = None;
+    for path in paths {
+        let Ok(relative) = vnengine_assets::sanitize_rel_path(path) else {
+            continue;
+        };
+        let Ok(candidate) = project_root.join(&relative).canonicalize() else {
+            continue;
+        };
+        if !candidate.starts_with(project_root) || !candidate.is_file() {
+            continue;
+        }
+        if candidate == source {
+            return Ok(Some(relative));
+        }
+        if candidate.metadata().map_err(|err| err.to_string())?.len() != source_len {
+            continue;
+        }
+        let hash = match &source_hash {
+            Some(hash) => hash,
+            None => source_hash.insert(
+                super::super::compile_cache::sha256_file(source).map_err(|err| err.to_string())?,
+            ),
+        };
+        if &super::super::compile_cache::sha256_file(&candidate).map_err(|err| err.to_string())?
+            == hash
+        {
+            return Ok(Some(relative));
+        }
+    }
+    Ok(None)
+}
+
 pub fn pick_asset_file(kind: AssetImportKind, project_root: Option<&Path>) -> Option<PathBuf> {
     let mut dialog = rfd::FileDialog::new()
         .set_title(kind.dialog_title())

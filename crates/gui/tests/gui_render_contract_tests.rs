@@ -71,6 +71,323 @@ fn run_panel_frame(
     })
 }
 
+#[test]
+fn timeline_scrubbing_moves_the_actual_composer_without_editing_the_authored_pose() {
+    let ctx = egui::Context::default();
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    workbench.show_timeline = false;
+    workbench.show_graph = false;
+    workbench.show_inspector = false;
+    workbench.show_asset_browser = false;
+    let id = workbench
+        .scene
+        .spawn_with_transform(
+            visual_novel_engine::Transform::at(20, 40),
+            visual_novel_engine::EntityKind::Character(visual_novel_engine::CharacterData {
+                name: "Animated Ava".into(),
+                expression: None,
+            }),
+        )
+        .unwrap();
+    for (time, value) in [(0, 20), (60, 320)] {
+        add_keyframe(
+            &mut workbench.timeline,
+            id.raw(),
+            PropertyType::PositionX,
+            time,
+            value,
+        )
+        .unwrap();
+    }
+    let mut label_x = Vec::new();
+    for time in [0, 60, 0] {
+        workbench.timeline.seek(time);
+        workbench.current_time = time as f32;
+        let output = run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+        let x = output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::epaint::Shape::Text(text) = &shape.shape {
+                    (text.galley.text() == "Animated Ava").then_some(text.pos.x)
+                } else {
+                    None
+                }
+            })
+            .expect("Composer must paint the animated character");
+        label_x.push(x);
+        assert_eq!(workbench.scene.get(id).unwrap().transform.x, 20);
+    }
+    assert!(
+        label_x[1] > label_x[0] + 100.0,
+        "scrubbing must move the rendered character"
+    );
+    assert!(
+        (label_x[2] - label_x[0]).abs() < 1.0,
+        "rewinding must restore the preview pose"
+    );
+}
+
+#[test]
+fn composer_pointer_drag_persists_through_sync_and_authoring_save() {
+    let ctx = egui::Context::default();
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    workbench.show_timeline = false;
+    workbench.show_graph = false;
+    workbench.show_inspector = false;
+    workbench.show_asset_browser = false;
+    let start = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::Pos2::ZERO);
+    let scene = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("room.png".into()),
+            music: None,
+            characters: vec![visual_novel_engine::runtime::CharacterPlacementRaw {
+                name: "Drag me".into(),
+                expression: None,
+                position: None,
+                x: Some(20),
+                y: Some(40),
+                scale: None,
+            }],
+        },
+        egui::pos2(0.0, 120.0),
+    );
+    workbench.node_graph.connect(start, scene);
+    workbench.node_graph.set_single_selection(Some(scene));
+    workbench.selected_node = Some(scene);
+    workbench.sync_graph_to_script().unwrap();
+    run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+    let output = run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+    let from = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            if let egui::epaint::Shape::Text(text) = &shape.shape {
+                (text.galley.text() == "Drag me").then_some(text.pos + text.galley.size() * 0.5)
+            } else {
+                None
+            }
+        })
+        .expect("character must be painted");
+    run_workbench_frame(
+        &ctx,
+        &mut workbench,
+        1280.0,
+        720.0,
+        vec![
+            egui::Event::PointerMoved(from),
+            pointer_button_event(from, egui::PointerButton::Primary, true),
+        ],
+    );
+    let to = from + egui::vec2(80.0, 25.0);
+    run_workbench_frame(
+        &ctx,
+        &mut workbench,
+        1280.0,
+        720.0,
+        vec![egui::Event::PointerMoved(to)],
+    );
+    run_workbench_frame(
+        &ctx,
+        &mut workbench,
+        1280.0,
+        720.0,
+        vec![pointer_button_event(
+            to,
+            egui::PointerButton::Primary,
+            false,
+        )],
+    );
+    let StoryNode::Scene { characters, .. } = workbench.node_graph.get_node(scene).unwrap() else {
+        panic!("scene")
+    };
+    assert!(
+        characters[0].x.unwrap() > 20,
+        "pointer drag must reach the authoring graph"
+    );
+    let moved_x = characters[0].x;
+    workbench.sync_graph_to_script().unwrap();
+    assert_eq!(
+        workbench
+            .scene
+            .iter()
+            .find_map(|entity| match &entity.kind {
+                visual_novel_engine::EntityKind::Character(_) => Some(entity.transform.x),
+                _ => None,
+            }),
+        moved_x
+    );
+    // The missing-image fixture intentionally uses the stage fallback; keep its
+    // validation window from covering the layer controls being tested.
+    workbench.show_validation = false;
+    let output = run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+    let lock_point = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            if let egui::epaint::Shape::Text(text) = &shape.shape {
+                let center = text.pos + text.galley.size() * 0.5;
+                (text.galley.text() == "Lock" && shape.clip_rect.contains(center)).then_some(center)
+            } else {
+                None
+            }
+        })
+        .expect("character layer must expose its lock");
+    for pressed in [true, false] {
+        run_workbench_frame(
+            &ctx,
+            &mut workbench,
+            1280.0,
+            720.0,
+            vec![
+                egui::Event::PointerMoved(lock_point),
+                pointer_button_event(lock_point, egui::PointerButton::Primary, pressed),
+            ],
+        );
+    }
+    let object_id = visual_novel_engine::authoring::composer::list_layered_objects(
+        workbench.node_graph.authoring_graph(),
+        Some(scene),
+    )
+    .into_iter()
+    .find(|object| object.character_name.as_deref() == Some("Drag me"))
+    .unwrap()
+    .object_id;
+    assert!(
+        workbench
+            .composer_layer_overrides
+            .get(&object_id)
+            .is_some_and(|entry| entry.locked),
+        "layer controls must use the same object ID as the interactive stage"
+    );
+    let output = run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+    let locked_from = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            if let egui::epaint::Shape::Text(text) = &shape.shape {
+                (text.galley.text() == "Drag me").then_some(text.pos + text.galley.size() * 0.5)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    let locked_to = locked_from + egui::vec2(40.0, 15.0);
+    for events in [
+        vec![
+            egui::Event::PointerMoved(locked_from),
+            pointer_button_event(locked_from, egui::PointerButton::Primary, true),
+        ],
+        vec![egui::Event::PointerMoved(locked_to)],
+        vec![pointer_button_event(
+            locked_to,
+            egui::PointerButton::Primary,
+            false,
+        )],
+    ] {
+        run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, events);
+    }
+    let StoryNode::Scene { characters, .. } = workbench.node_graph.get_node(scene).unwrap() else {
+        panic!("scene")
+    };
+    assert_eq!(characters[0].x, moved_x, "locked layers must not move");
+    let path = std::env::temp_dir().join(format!(
+        "composer-drag-{}.vnauthoring",
+        uuid::Uuid::new_v4()
+    ));
+    workbench.execute_save(&path, "");
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let document =
+        visual_novel_engine::authoring::AuthoringDocument::from_json(&saved.to_string()).unwrap();
+    let StoryNode::Scene { characters, .. } = document.graph.get_node(scene).unwrap() else {
+        panic!("saved scene")
+    };
+    assert_eq!(characters[0].x, moved_x);
+    assert!(
+        document
+            .composer_layer_overrides
+            .get(&object_id)
+            .unwrap()
+            .locked
+    );
+}
+
+#[test]
+fn graph_double_click_opens_the_composed_scene_without_a_property_popup() {
+    let ctx = egui::Context::default();
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    workbench.show_timeline = false;
+    workbench.show_graph = true;
+    workbench.node_editor_window_open = false;
+    workbench.show_inspector = false;
+    workbench.show_asset_browser = false;
+    workbench.composer_preview_mode = ComposerPreviewMode::IsolatedNode;
+    let start = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::Pos2::ZERO);
+    let scene = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("room.png".into()),
+            music: None,
+            characters: Vec::new(),
+        },
+        egui::pos2(0.0, 160.0),
+    );
+    workbench.node_graph.connect(start, scene);
+    workbench.sync_graph_to_script().unwrap();
+    run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+    let output = run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+    let point = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            if let egui::epaint::Shape::Text(text) = &shape.shape {
+                text.galley
+                    .text()
+                    .ends_with(" Scene")
+                    .then_some(text.pos + text.galley.size() * 0.5)
+            } else {
+                None
+            }
+        })
+        .expect("graph must paint a Scene node");
+    for _ in 0..2 {
+        run_workbench_frame(
+            &ctx,
+            &mut workbench,
+            1280.0,
+            720.0,
+            vec![
+                egui::Event::PointerMoved(point),
+                pointer_button_event(point, egui::PointerButton::Primary, true),
+            ],
+        );
+        run_workbench_frame(
+            &ctx,
+            &mut workbench,
+            1280.0,
+            720.0,
+            vec![pointer_button_event(
+                point,
+                egui::PointerButton::Primary,
+                false,
+            )],
+        );
+    }
+    assert_eq!(workbench.selected_node, Some(scene));
+    assert_eq!(
+        workbench.composer_preview_mode,
+        ComposerPreviewMode::SelectedRoute
+    );
+    assert_eq!(workbench.node_graph.editing, None);
+    assert!(workbench.scene.iter().any(|entity| matches!(&entity.kind, visual_novel_engine::EntityKind::Image(image) if image.path.as_ref() == "room.png")));
+}
+
 fn assert_rect_finite(label: &str, rect: egui::Rect) {
     assert!(
         rect.min.x.is_finite()

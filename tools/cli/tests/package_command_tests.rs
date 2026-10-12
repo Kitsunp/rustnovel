@@ -225,7 +225,7 @@ fn package_command_json_execute_matches_written_report_manifest_and_compat_flow(
         "CLI JSON payload must be the same report written to disk"
     );
     assert_eq!(package_report["target_platform"], "windows");
-    assert_eq!(package_report["runtime_artifact"], "runtime/vn-runtime.exe");
+    assert_eq!(package_report["runtime_artifact"], "game.exe");
     assert_eq!(
         package_report["runtime_artifact_sha256"],
         sha256_hex(&runtime_bytes)
@@ -280,7 +280,7 @@ fn package_command_json_execute_matches_written_report_manifest_and_compat_flow(
     assert!(manifest_files
         .iter()
         .any(|entry| entry["path"] == "game.exe"));
-    assert!(manifest_files
+    assert!(!manifest_files
         .iter()
         .any(|entry| entry["path"] == "runtime/vn-runtime.exe"));
     assert!(manifest_files.iter().any(|entry| {

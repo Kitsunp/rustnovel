@@ -20,3 +20,18 @@ pub use assets::{
 };
 pub use editor::{run_editor, run_editor_with_project, EditorMode, EditorWorkbench};
 pub use persist::{load_state_from, save_state_to, PersistError, UserPreferences};
+
+/// Keep startup failures visible when a Windows application has no console.
+pub fn report_startup_error(message: &str, interactive: bool) {
+    eprintln!("{message}");
+    #[cfg(windows)]
+    if interactive {
+        rfd::MessageDialog::new()
+            .set_title("RustNovel could not start")
+            .set_description(message)
+            .set_level(rfd::MessageLevel::Error)
+            .show();
+    }
+    #[cfg(not(windows))]
+    let _ = interactive;
+}

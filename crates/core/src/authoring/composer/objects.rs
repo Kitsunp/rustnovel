@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::event::{CharacterPlacementRaw, EventCompiled, ScenePatchRaw};
-use crate::runtime::Engine;
+use crate::event::{CharacterPlacementRaw, ScenePatchRaw};
 
 use super::super::{NodeGraph, StoryNode};
 use super::{compose_scene_snapshot, LayerOverride, LayeredSceneObject, StageLayerKind};
@@ -58,7 +57,7 @@ pub fn set_scene_object_pose(
     y: Option<i32>,
     scale: Option<f32>,
 ) -> bool {
-    let Some((node_id, index)) = parse_character_object_id(object_id) else {
+    let Some((node_id, index, update)) = parse_character_object_id(object_id) else {
         return false;
     };
     let Some(node) = graph.get_node_mut(node_id) else {
@@ -66,6 +65,17 @@ pub fn set_scene_object_pose(
     };
     match node {
         StoryNode::Scene { characters, .. } => set_character_pose(characters, index, x, y, scale),
+        StoryNode::ScenePatch(ScenePatchRaw {
+            update: characters, ..
+        }) if update => {
+            let Some(character) = characters.get_mut(index) else {
+                return false;
+            };
+            character.x = x;
+            character.y = y;
+            character.scale = scale;
+            true
+        }
         StoryNode::ScenePatch(ScenePatchRaw { add, .. }) => {
             set_character_pose(add, index, x, y, scale)
         }
@@ -86,57 +96,6 @@ pub(super) fn collect_authoring_objects(
     }
 }
 
-pub(super) fn preview_engine_for_selection(
-    engine: &Engine,
-    graph: &NodeGraph,
-    selected_node_id: Option<u32>,
-) -> Engine {
-    let Some(target_ip) = selected_node_id.and_then(|node_id| graph.event_ip_for_node(node_id))
-    else {
-        return engine.clone();
-    };
-    let mut preview = Engine::from_compiled(
-        engine.script().clone(),
-        engine.policy().clone(),
-        engine.limits(),
-    )
-    .unwrap_or_else(|_| engine.clone());
-    let max_steps = (target_ip as usize).saturating_add(64).min(4096);
-    for _ in 0..max_steps {
-        let current_ip = preview.state().position;
-        if current_ip > target_ip {
-            break;
-        }
-        let Ok(event) = preview.current_event() else {
-            break;
-        };
-        let advanced_ok = match &event {
-            EventCompiled::ExtCall { .. } => preview.resume().is_ok(),
-            EventCompiled::Choice(choice) => {
-                if choice.options.is_empty() {
-                    false
-                } else {
-                    preview.choose(0).is_ok()
-                }
-            }
-            EventCompiled::Dialogue(_)
-            | EventCompiled::Scene(_)
-            | EventCompiled::Patch(_)
-            | EventCompiled::SetCharacterPosition(_)
-            | EventCompiled::Transition(_)
-            | EventCompiled::Jump { .. }
-            | EventCompiled::SetFlag { .. }
-            | EventCompiled::SetVar { .. }
-            | EventCompiled::JumpIf { .. }
-            | EventCompiled::AudioAction(_) => preview.step().is_ok(),
-        };
-        if !advanced_ok || preview.state().position > target_ip {
-            break;
-        }
-    }
-    preview
-}
-
 fn collect_node_objects(node_id: u32, node: &StoryNode, objects: &mut Vec<LayeredSceneObject>) {
     match node {
         StoryNode::Scene {
@@ -154,6 +113,47 @@ fn collect_node_objects(node_id: u32, node: &StoryNode, objects: &mut Vec<Layere
                 objects.push(background_object(node_id, background));
             }
             collect_characters(node_id, "patch.add", &patch.add, objects);
+            let updates = patch
+                .update
+                .iter()
+                .map(|character| CharacterPlacementRaw {
+                    name: character.name.clone(),
+                    expression: character.expression.clone(),
+                    position: character.position.clone(),
+                    x: character.x,
+                    y: character.y,
+                    scale: character.scale,
+                })
+                .collect::<Vec<_>>();
+            collect_characters(node_id, "patch.update", &updates, objects);
+        }
+        StoryNode::CharacterPlacement { name, x, y, scale } => {
+            collect_characters(
+                node_id,
+                "position",
+                &[CharacterPlacementRaw {
+                    name: name.clone(),
+                    x: Some(*x),
+                    y: Some(*y),
+                    scale: *scale,
+                    ..Default::default()
+                }],
+                objects,
+            );
+        }
+        StoryNode::Generic(crate::event::EventRaw::SetCharacterPosition(position)) => {
+            collect_characters(
+                node_id,
+                "position",
+                &[CharacterPlacementRaw {
+                    name: position.name.clone(),
+                    x: Some(position.x),
+                    y: Some(position.y),
+                    scale: position.scale,
+                    ..Default::default()
+                }],
+                objects,
+            );
         }
         _ => {}
     }
@@ -191,7 +191,11 @@ fn collect_characters(
         objects.push(LayeredSceneObject {
             object_id: stable_object_id(
                 node_id,
-                "character",
+                if field == "patch.update" {
+                    "character_update"
+                } else {
+                    "character"
+                },
                 &format!("{}:{}", name, expression.as_deref().unwrap_or("")),
                 index,
             ),
@@ -224,13 +228,17 @@ fn stable_object_id(node_id: u32, kind: &str, value: &str, index: usize) -> Stri
     format!("node:{node_id}:{kind}:{index}:{}", token.trim_matches('_'))
 }
 
-fn parse_character_object_id(object_id: &str) -> Option<(u32, usize)> {
+fn parse_character_object_id(object_id: &str) -> Option<(u32, usize, bool)> {
     let mut parts = object_id.split(':');
     (parts.next()? == "node").then_some(())?;
     let node_id = parts.next()?.parse().ok()?;
-    (parts.next()? == "character").then_some(())?;
+    let update = match parts.next()? {
+        "character" => false,
+        "character_update" => true,
+        _ => return None,
+    };
     let index = parts.next()?.parse().ok()?;
-    Some((node_id, index))
+    Some((node_id, index, update))
 }
 
 fn set_character_pose(

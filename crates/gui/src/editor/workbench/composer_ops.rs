@@ -3,6 +3,68 @@ use crate::editor::StoryNode;
 use visual_novel_engine::runtime::EventCompiled;
 
 impl EditorWorkbench {
+    pub fn inspect_composer_scene(&mut self, node_id: u32) {
+        if self.node_graph.get_node(node_id).is_none() {
+            return;
+        }
+        self.node_graph.editing = None;
+        self.node_graph.set_single_selection(Some(node_id));
+        self.selected_node = Some(node_id);
+        self.selected_entity = None;
+        self.composer_preview_mode = crate::editor::ComposerPreviewMode::SelectedRoute;
+        if let Err(err) = self.sync_graph_to_script() {
+            // Incomplete graphs remain inspectable through the isolated fallback.
+            self.refresh_scene_from_selected_node();
+            self.toast = Some(ToastState::warning(format!("Scene inspection: {err}")));
+        }
+    }
+
+    pub fn preview_composer_audio(&mut self) -> bool {
+        if let Some(StoryNode::AudioAction {
+            channel,
+            action,
+            asset,
+            volume,
+            loop_playback,
+            ..
+        }) = self
+            .node_graph
+            .selected
+            .or(self.selected_node)
+            .and_then(|id| self.node_graph.get_node(id))
+            .cloned()
+        {
+            if action == "stop" || action == "pause" {
+                self.stop_editor_audio_preview(&channel);
+                return true;
+            }
+            if let Some(asset) = asset {
+                self.play_editor_audio_preview(
+                    &channel,
+                    &asset,
+                    volume,
+                    loop_playback.unwrap_or(true),
+                );
+                return true;
+            }
+        }
+        let audio = self.scene.iter().find_map(|entity| match &entity.kind {
+            visual_novel_engine::EntityKind::Audio(audio) => Some(audio.clone()),
+            _ => None,
+        });
+        if let Some(audio) = audio {
+            self.play_editor_audio_preview(
+                "bgm",
+                audio.path.as_ref(),
+                Some(audio.volume as f32 / 1000.0),
+                audio.looping,
+            );
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn add_composer_created_node(&mut self, node: StoryNode, pos: eframe::egui::Pos2) -> u32 {
         let source = self.node_graph.selected;
         let new_id = self.node_graph.add_node(node, pos);
@@ -170,7 +232,7 @@ impl EditorWorkbench {
 
     pub fn start_composer_runtime_preview_from_selection(&mut self) {
         self.start_composer_runtime_preview_from_node(
-            self.selected_node.or(self.node_graph.selected),
+            self.node_graph.selected.or(self.selected_node),
         );
     }
 
@@ -255,10 +317,16 @@ impl EditorWorkbench {
         match result {
             Ok(audio_commands) => {
                 self.player_state.reset_for_restart(0.0);
+                let has_audio_commands = !audio_commands.is_empty();
                 self.apply_composer_audio_commands(audio_commands);
                 self.refresh_scene_from_engine_preview();
+                if !has_audio_commands {
+                    self.preview_composer_audio();
+                }
                 self.select_current_composer_runtime_node();
-                self.toast = Some(ToastState::success("Composer test ready"));
+                if self.player_state.last_audio_error.is_none() {
+                    self.toast = Some(ToastState::success("Composer test ready"));
+                }
             }
             Err(err) => {
                 self.toast = Some(ToastState::error(format!(

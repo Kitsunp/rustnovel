@@ -480,7 +480,8 @@ impl<'a> NodeEditorPanel<'a> {
                     self.graph.editing = Some(id);
                 }
             } else {
-                self.graph.editing = Some(id);
+                self.graph.set_single_selection(Some(id));
+                self.graph.composer_inspection_request = Some(id);
             }
         }
     }

@@ -15,6 +15,7 @@ pollster = "0.4"
 bytemuck = { version = "1.14", features = ["derive"] }
 
 rodio = "0.17"
+ogg = "0.8"
 vnengine_assets = { path = "../assets" }
 
 [target.'cfg(windows)'.dependencies]

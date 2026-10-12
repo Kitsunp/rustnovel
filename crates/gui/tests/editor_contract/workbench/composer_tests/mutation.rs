@@ -1,6 +1,59 @@
 use super::*;
 
 #[test]
+fn composer_moves_a_patch_update_without_adding_a_duplicate_character() {
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    workbench.composer_preview_mode = crate::editor::ComposerPreviewMode::IsolatedNode;
+    let patch = workbench.node_graph.add_node(
+        StoryNode::ScenePatch(visual_novel_engine::runtime::ScenePatchRaw {
+            update: vec![visual_novel_engine::runtime::CharacterPatchRaw {
+                name: "Ava".into(),
+                expression: Some("ava.png".into()),
+                x: Some(250),
+                y: Some(130),
+                scale: Some(1.2),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }),
+        egui::Pos2::ZERO,
+    );
+    workbench.selected_node = Some(patch);
+    workbench.refresh_scene_from_selected_node();
+    let entity = workbench.scene.iter().next().unwrap();
+    assert_eq!(
+        (
+            entity.transform.x,
+            entity.transform.y,
+            entity.transform.scale
+        ),
+        (250, 130, 1200)
+    );
+    assert!(workbench.apply_composer_node_mutation(
+        patch,
+        crate::editor::visual_composer::ComposerNodeMutation::CharacterPosition {
+            name: "Ava".into(),
+            expression: Some("ava.png".into()),
+            source_instance_index: 0,
+            x: 420,
+            y: 180,
+            scale: Some(1.4),
+        }
+    ));
+    let StoryNode::ScenePatch(patch) = workbench.node_graph.get_node(patch).unwrap() else {
+        panic!("patch")
+    };
+    assert!(
+        patch.add.is_empty(),
+        "moving an update must not add another character"
+    );
+    assert_eq!(
+        (patch.update[0].x, patch.update[0].y, patch.update[0].scale),
+        (Some(420), Some(180), Some(1.4))
+    );
+}
+
+#[test]
 fn composer_scene_patch_character_image_position_survives_sync() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);
@@ -259,11 +312,17 @@ fn composer_drag_operation_records_node_before_after_values() {
         Some(visual_novel_engine::authoring::OperationKind::ComposerObjectMoved)
     ));
     let object_id = visual_novel_engine::authoring::composer::list_layered_objects(
-        workbench.node_graph.authoring_graph(), Some(scene),
-    ).into_iter().find(|object| object.character_name.as_deref() == Some("Ava"))
-        .expect("character layer").object_id;
-    assert_eq!(entry.field_paths.first().map(|path| path.value.as_str()),
-        Some(format!("composer.objects[{object_id}]").as_str()));
+        workbench.node_graph.authoring_graph(),
+        Some(scene),
+    )
+    .into_iter()
+    .find(|object| object.character_name.as_deref() == Some("Ava"))
+    .expect("character layer")
+    .object_id;
+    assert_eq!(
+        entry.field_paths.first().map(|path| path.value.as_str()),
+        Some(format!("composer.objects[{object_id}]").as_str())
+    );
     assert!(entry
         .before_value
         .as_deref()
@@ -485,11 +544,13 @@ fn composer_choice_target_matches_authoring_command_bus_connect_and_logs_connect
     let mut expected_bus =
         visual_novel_engine::authoring::AuthoringCommandBus::new(before_authoring);
     let expected_outcome = expected_bus
-        .apply(visual_novel_engine::authoring::AuthoringCommand::SetChoiceOptionTarget {
-            node_id: choice,
-            option_index: 0,
-            target_node_id: Some(new_target),
-        })
+        .apply(
+            visual_novel_engine::authoring::AuthoringCommand::SetChoiceOptionTarget {
+                node_id: choice,
+                option_index: 0,
+                target_node_id: Some(new_target),
+            },
+        )
         .expect("core command bus should reconnect the choice option");
 
     assert!(workbench.apply_composer_node_mutation(
@@ -518,7 +579,13 @@ fn composer_choice_target_matches_authoring_command_bus_connect_and_logs_connect
         .operation_log
         .last()
         .expect("choice target connection should be logged");
-    assert_eq!(entry.operation_kind, expected_outcome.operation.operation_kind);
-    assert_eq!(entry.operation_kind_v2, expected_outcome.operation.operation_kind_v2);
+    assert_eq!(
+        entry.operation_kind,
+        expected_outcome.operation.operation_kind
+    );
+    assert_eq!(
+        entry.operation_kind_v2,
+        expected_outcome.operation.operation_kind_v2
+    );
     assert_eq!(entry.field_paths, expected_outcome.operation.field_paths);
 }

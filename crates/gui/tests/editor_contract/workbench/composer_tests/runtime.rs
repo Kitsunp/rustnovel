@@ -72,7 +72,7 @@ fn composer_runtime_preview_uses_live_graph_selection_when_workbench_selection_i
     workbench.node_graph.set_single_selection(Some(second));
     workbench.selected_node = Some(first);
 
-    workbench.start_composer_runtime_preview_from_node(workbench.node_graph.selected);
+    workbench.start_composer_runtime_preview_from_selection();
 
     let event = workbench
         .engine
@@ -132,6 +132,26 @@ fn composer_runtime_preview_can_start_from_selected_choice_and_choose_route() {
         visual_novel_engine::runtime::EventCompiled::Choice(choice)
             if choice.prompt.as_ref() == "Where now?" && choice.options.len() == 2
     ));
+
+    workbench.handle_composer_actions(
+        vec![
+            crate::editor::visual_composer::VisualComposerAction::InspectChoice {
+                node_id: choice,
+                option_index: 1,
+            },
+        ],
+        Some(choice),
+    );
+    assert_eq!(workbench.node_graph.selected, Some(garden));
+    assert_eq!(workbench.selected_node, Some(garden));
+    assert_eq!(workbench.pending_graph_focus, Some(garden));
+    assert!(
+        matches!(
+            workbench.engine.as_ref().unwrap().current_event().unwrap(),
+            visual_novel_engine::runtime::EventCompiled::Choice(_)
+        ),
+        "inspecting a route must not consume the running choice"
+    );
 
     workbench.advance_composer_runtime_preview(Some(1));
     let event = workbench

@@ -28,7 +28,7 @@ use winit::{
 
 pub use self::assets::{AssetStore, MemoryAssetStore};
 pub use self::audio::{
-    audio_duration, Audio, AudioCapabilities, AudioResult, RodioBackend, SilentAudio,
+    audio_duration, Audio, AudioCapabilities, AudioResult, MusicPlayback, RodioBackend, SilentAudio,
 };
 pub use self::input::{pointer_action_for_scene_frame, ConfigurableInput, Input, InputAction};
 pub use self::render::RuntimeSceneFramePresenter;

@@ -3888,6 +3888,7 @@ dependencies = [
  "ab_glyph",
  "bytemuck",
  "image 0.25.9",
+ "ogg",
  "pixels",
  "pollster",
  "rodio",

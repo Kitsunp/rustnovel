@@ -52,9 +52,7 @@ fn composer_node_selection_schedules_graph_focus() {
     );
 
     workbench.handle_composer_actions(
-        vec![crate::editor::visual_composer::VisualComposerAction::SelectNode(
-            scene,
-        )],
+        vec![crate::editor::visual_composer::VisualComposerAction::SelectNode(scene)],
         None,
     );
 
@@ -80,10 +78,31 @@ fn workbench_update_uses_supplied_delta_ticks_and_seconds() {
     workbench.timeline.add_track(track).unwrap();
     workbench.is_playing = true;
 
+    workbench.update(0);
+    assert_eq!(
+        workbench.timeline.current_time(),
+        0,
+        "zero elapsed time must not advance animation"
+    );
     workbench.update(30);
     assert_eq!(workbench.timeline.current_time(), 30);
     workbench.update_seconds(0.5);
     assert_eq!(workbench.timeline.current_time(), 60);
+    for _ in 0..60 {
+        workbench.update_seconds(1.0 / 120.0);
+    }
+    assert_eq!(
+        workbench.timeline.current_time(),
+        90,
+        "high refresh rates must not speed up playback"
+    );
+    workbench.update(100);
+    assert_eq!(
+        workbench.timeline.current_time(),
+        120,
+        "keep the last animation frame at the end"
+    );
+    assert!(!workbench.is_playing);
 }
 
 #[test]
@@ -102,6 +121,56 @@ fn export_wizard_initializes_project_defaults_without_executing() {
         .output_root
         .contains(workbench.export_wizard.target.as_str()));
     assert_eq!(workbench.export_wizard.entry_script, "main.json");
+}
+
+#[test]
+fn export_runtime_discovery_is_independent_of_working_directory_and_skips_debug() {
+    let tmp = tempfile::tempdir().unwrap();
+    let installed = tmp.path().join("installed");
+    let unrelated = tmp.path().join("another-project");
+    let debug = tmp.path().join("target/debug");
+    let desktop = tmp.path().join("target/desktop");
+    let release = tmp.path().join("target/release");
+    for path in [&installed, &unrelated, &debug, &desktop, &release] {
+        fs::create_dir_all(path).unwrap();
+    }
+    for dir in [&installed, &debug, &desktop, &release] {
+        fs::write(dir.join("vn_player.exe"), b"runtime").unwrap();
+    }
+    let discover = |dir: &Path| {
+        EditorWorkbench::discover_export_runtime(
+            Some(dir),
+            &unrelated,
+            visual_novel_engine::ExportTargetPlatform::Windows,
+        )
+    };
+    assert_eq!(
+        discover(&installed),
+        Some(installed.join("vn_player.exe").canonicalize().unwrap())
+    );
+    assert_eq!(
+        discover(&debug),
+        Some(desktop.join("vn_player.exe").canonicalize().unwrap())
+    );
+    fs::remove_file(desktop.join("vn_player.exe")).unwrap();
+    assert_eq!(
+        discover(&debug),
+        Some(release.join("vn_player.exe").canonicalize().unwrap())
+    );
+    fs::remove_file(release.join("vn_player.exe")).unwrap();
+    assert_eq!(
+        discover(&debug),
+        None,
+        "debug binaries must be explicitly chosen, never shipped automatically"
+    );
+    assert_eq!(
+        EditorWorkbench::discover_export_runtime(
+            Some(&installed),
+            &unrelated,
+            visual_novel_engine::ExportTargetPlatform::Linux
+        ),
+        None
+    );
 }
 
 fn minimal_pe_exe() -> Vec<u8> {
@@ -181,18 +250,21 @@ fn export_wizard_report_summary_matches_real_export_flow_outputs() {
     let compat_report = read_json(&output_root.join("meta/compat_report.json"));
     let bundle_manifest = read_json(&output_root.join("meta/bundle_file_manifest.json"));
     let runtime_hash = sha256_hex(&runtime_bytes);
-    let signature = fs::read_to_string(output_root.join("meta/bundle.hmac_sha256"))
-        .expect("bundle signature");
+    let signature =
+        fs::read_to_string(output_root.join("meta/bundle.hmac_sha256")).expect("bundle signature");
 
     assert_eq!(
         package_report,
         serde_json::to_value(&report).expect("report json"),
         "wizard summary should be driven by the same report written to disk"
     );
-    assert_eq!(package_report["runtime_artifact"], "runtime/vn_player.exe");
+    assert_eq!(package_report["runtime_artifact"], "game.exe");
     assert_eq!(package_report["runtime_artifact_sha256"], runtime_hash);
     assert_eq!(compat_report["runtime_artifact_sha256"], runtime_hash);
-    assert_eq!(package_report["generator_os"], compat_report["generator_os"]);
+    assert_eq!(
+        package_report["generator_os"],
+        compat_report["generator_os"]
+    );
     assert_eq!(
         package_report["expected_executable"],
         compat_report["expected_executable"]
@@ -201,7 +273,10 @@ fn export_wizard_report_summary_matches_real_export_flow_outputs() {
         package_report["graphics_backend"],
         compat_report["graphics_backend"]
     );
-    assert_eq!(package_report["wgpu_fallback"], compat_report["wgpu_fallback"]);
+    assert_eq!(
+        package_report["wgpu_fallback"],
+        compat_report["wgpu_fallback"]
+    );
     assert_eq!(package_report["total_size"], compat_report["total_size"]);
     assert_eq!(package_report["hashes"], bundle_manifest["files"]);
     assert_eq!(compat_report["hashes"], bundle_manifest["files"]);
@@ -212,21 +287,19 @@ fn export_wizard_report_summary_matches_real_export_flow_outputs() {
     assert_eq!(package_report["bundle_hmac_sha256"], signature);
     assert_eq!(compat_report["bundle_hmac_sha256"], signature);
     assert_eq!(
-        package_report["smoke_result"],
-        compat_report["smoke_result"],
+        package_report["smoke_result"], compat_report["smoke_result"],
         "package and compat reports must expose the same smoke state"
     );
     assert!(bundle_manifest["files"]
         .as_array()
         .expect("manifest files")
         .iter()
-        .any(|entry| entry["path"] == "runtime/vn_player.exe"
-            && entry["sha256"] == runtime_hash));
+        .any(|entry| entry["path"] == "game.exe" && entry["sha256"] == runtime_hash));
 
     let lines = EditorWorkbench::export_report_summary_lines(&report);
     assert!(lines
         .iter()
-        .any(|line| line == &format!("Runtime: runtime/vn_player.exe sha256={runtime_hash}")));
+        .any(|line| line == &format!("Runtime: game.exe sha256={runtime_hash}")));
     assert!(lines
         .iter()
         .any(|line| line == "Expected executable: game.exe"));
@@ -236,7 +309,10 @@ fn export_wizard_report_summary_matches_real_export_flow_outputs() {
     assert!(lines.iter().any(|line| {
         line == &format!(
             "Payload: files={} total_size={}",
-            bundle_manifest["files"].as_array().expect("manifest files").len(),
+            bundle_manifest["files"]
+                .as_array()
+                .expect("manifest files")
+                .len(),
             package_report["total_size"].as_u64().expect("total size")
         )
     }));
@@ -255,18 +331,29 @@ fn export_wizard_report_summary_matches_real_export_flow_outputs() {
         .any(|line| line == &format!("Integrity: hmac_sha256 scope=bundle_file_manifest_v2_signed_manifest_covers_payload_files hmac={signature}")));
     assert!(lines
         .iter()
-        .any(|line| line.starts_with("Smoke: status=not_run backend=software trace_id=export-smoke-")));
+        .any(|line| line
+            .starts_with("Smoke: status=not_run backend=software trace_id=export-smoke-")));
 }
 
 #[test]
 fn failed_compilation_discards_previous_runtime_and_recovers() {
     for action in ["sync", "validate", "play"] {
         let mut workbench = EditorWorkbench::new(VnConfig::default());
-        let start = workbench.node_graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
-        let scene = workbench.node_graph.add_node(StoryNode::Scene {
-            profile: None, background: Some("bg/old.png".to_string()), music: None, characters: vec![],
-        }, egui::pos2(0.0, 100.0));
-        let end = workbench.node_graph.add_node(StoryNode::End, egui::pos2(0.0, 200.0));
+        let start = workbench
+            .node_graph
+            .add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+        let scene = workbench.node_graph.add_node(
+            StoryNode::Scene {
+                profile: None,
+                background: Some("bg/old.png".to_string()),
+                music: None,
+                characters: vec![],
+            },
+            egui::pos2(0.0, 100.0),
+        );
+        let end = workbench
+            .node_graph
+            .add_node(StoryNode::End, egui::pos2(0.0, 200.0));
         workbench.node_graph.connect(start, scene);
         workbench.node_graph.connect(scene, end);
         workbench.sync_graph_to_script().unwrap();
@@ -275,7 +362,9 @@ fn failed_compilation_discards_previous_runtime_and_recovers() {
         workbench.is_playing = true;
         workbench.current_time = 42.0;
         workbench.node_graph.disconnect(scene, end);
-        *workbench.node_graph.get_node_mut(scene).unwrap() = StoryNode::Jump { target: "missing_label".to_string() };
+        *workbench.node_graph.get_node_mut(scene).unwrap() = StoryNode::Jump {
+            target: "missing_label".to_string(),
+        };
         let failed = match action {
             "sync" => workbench.sync_graph_to_script().is_err(),
             "validate" => !workbench.run_dry_validation(),
@@ -283,18 +372,36 @@ fn failed_compilation_discards_previous_runtime_and_recovers() {
             _ => unreachable!(),
         };
         assert!(failed, "{action} should reject the changed graph");
-        assert!(workbench.engine.is_none(), "{action} retained the old engine");
+        assert!(
+            workbench.engine.is_none(),
+            "{action} retained the old engine"
+        );
         assert!(workbench.scene.is_empty());
         assert!(workbench.composer_entity_owners.is_empty());
         assert!(!workbench.is_playing);
         assert_eq!(workbench.current_time, 0.0);
-        assert!(workbench.validation_issues.iter().any(|issue| issue.code == LintCode::CompileError));
-        assert!(!workbench.validation_issues.iter().any(|issue| issue.code == LintCode::RuntimeInitError), "compile failure is not a runtime init error");
-        *workbench.node_graph.get_node_mut(scene).unwrap() = StoryNode::Dialogue { speaker: "Ava".to_string(), text: "Recovered".to_string() };
+        assert!(workbench
+            .validation_issues
+            .iter()
+            .any(|issue| issue.code == LintCode::CompileError));
+        assert!(
+            !workbench
+                .validation_issues
+                .iter()
+                .any(|issue| issue.code == LintCode::RuntimeInitError),
+            "compile failure is not a runtime init error"
+        );
+        *workbench.node_graph.get_node_mut(scene).unwrap() = StoryNode::Dialogue {
+            speaker: "Ava".to_string(),
+            text: "Recovered".to_string(),
+        };
         workbench.node_graph.connect(scene, end);
         assert!(workbench.run_dry_validation());
         assert!(workbench.engine.is_some());
-        assert!(!workbench.validation_issues.iter().any(|issue| issue.severity == LintSeverity::Error));
+        assert!(!workbench
+            .validation_issues
+            .iter()
+            .any(|issue| issue.severity == LintSeverity::Error));
     }
 }
 
@@ -420,10 +527,15 @@ fn workbench_reuses_compilation_cache_until_graph_changes() {
 
     let _ = workbench.run_dry_validation();
     assert_eq!(workbench.compilation_cache_stats(), (1, 2));
-    let extra_start = workbench.node_graph.add_node(StoryNode::Start, egui::pos2(200.0, 0.0));
+    let extra_start = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::pos2(200.0, 0.0));
     assert!(workbench.compile_current_graph().engine_result.is_ok());
     assert!(!workbench.run_dry_validation());
-    assert!(workbench.engine.is_none(), "blocking diagnostics must discard the old engine even when the script compiles");
+    assert!(
+        workbench.engine.is_none(),
+        "blocking diagnostics must discard the old engine even when the script compiles"
+    );
     workbench.node_graph.remove_node(extra_start);
     assert!(workbench.run_dry_validation());
     assert!(workbench.engine.is_some());
@@ -768,7 +880,10 @@ fn report_import_rejects_malformed_issue_location_numbers() {
         .apply_diagnostic_report_json(&payload)
         .expect_err("string node_id should not import as missing location");
 
-    assert!(err.contains("issue 0 node_id must be an unsigned integer"), "{err}");
+    assert!(
+        err.contains("issue 0 node_id must be an unsigned integer"),
+        "{err}"
+    );
     assert!(workbench.validation_issues.is_empty());
 }
 
@@ -787,7 +902,10 @@ fn report_import_rejects_malformed_selection_fields() {
         .apply_diagnostic_report_json(&payload)
         .expect_err("string selected_issue should not be silently ignored");
 
-    assert!(err.contains("selected_issue must be an unsigned integer"), "{err}");
+    assert!(
+        err.contains("selected_issue must be an unsigned integer"),
+        "{err}"
+    );
     assert!(workbench.validation_issues.is_empty());
     assert_eq!(workbench.selected_issue, None);
 }
@@ -814,7 +932,10 @@ fn report_import_rejects_malformed_semantic_values() {
         .apply_diagnostic_report_json(&payload)
         .expect_err("malformed semantic values should not import silently");
 
-    assert!(err.contains("issue 0 semantic_values must be an array"), "{err}");
+    assert!(
+        err.contains("issue 0 semantic_values must be an array"),
+        "{err}"
+    );
     assert!(workbench.validation_issues.is_empty());
 }
 

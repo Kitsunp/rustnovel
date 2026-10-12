@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+default-members = ["crates/core", "crates/runtime", "crates/assets", "crates/gui", "tools/cli"]
 members = [
     "crates/core",
     "crates/runtime",
@@ -26,3 +27,9 @@ debug = 1
 [profile.python]
 inherits = "release"
 panic = "unwind"
+
+# Build desktop executables separately from workspace tests/Python bindings.
+[profile.desktop]
+inherits = "release"
+opt-level = "s"
+debug = 0
