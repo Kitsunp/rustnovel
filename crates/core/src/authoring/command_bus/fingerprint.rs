@@ -123,8 +123,15 @@ impl CommandBusFingerprintState {
             AuthoringDelta::BranchConnected { .. } | AuthoringDelta::QuickFixApplied { .. } => {
                 self.reconcile_graph_components(graph);
             }
-            AuthoringDelta::NodeEdited { node_id, .. } => {
+            AuthoringDelta::NodeEdited {
+                node_id,
+                removed_connections,
+                ..
+            } => {
                 self.replace_node_from_graph(graph, *node_id);
+                for (_, connection) in removed_connections {
+                    self.remove_connection(connection);
+                }
             }
             AuthoringDelta::FragmentCreated { fragment } => {
                 self.insert_fragment(fragment);
@@ -178,6 +185,7 @@ impl CommandBusFingerprintState {
                 node,
                 position,
                 connections,
+                ..
             } => {
                 self.insert_node(*node_id, node, *position);
                 for connection in connections {
@@ -225,8 +233,15 @@ impl CommandBusFingerprintState {
             AuthoringDelta::BranchConnected { .. } | AuthoringDelta::QuickFixApplied { .. } => {
                 self.reconcile_graph_components(graph);
             }
-            AuthoringDelta::NodeEdited { node_id, .. } => {
+            AuthoringDelta::NodeEdited {
+                node_id,
+                removed_connections,
+                ..
+            } => {
                 self.replace_node_from_graph(graph, *node_id);
+                for (_, connection) in removed_connections {
+                    self.insert_connection(connection);
+                }
             }
             AuthoringDelta::FragmentCreated { fragment } => {
                 self.remove_fragment(&fragment.fragment_id);

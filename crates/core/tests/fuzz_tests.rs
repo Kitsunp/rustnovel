@@ -74,7 +74,7 @@ mod fuzz {
         let mut raw_data = [0u8; 1024 * 64];
 
         for i in 0..128u64 {
-            fill_deterministic(&mut raw_data, 0xA11C_E55u64 ^ i);
+            fill_deterministic(&mut raw_data, 0x0A11_CE55_u64 ^ i);
             let mut u = Unstructured::new(&raw_data);
 
             if let Ok(script) = ScriptRaw::arbitrary(&mut u) {

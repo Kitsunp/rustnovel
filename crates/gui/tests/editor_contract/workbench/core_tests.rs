@@ -259,6 +259,46 @@ fn export_wizard_report_summary_matches_real_export_flow_outputs() {
 }
 
 #[test]
+fn failed_compilation_discards_previous_runtime_and_recovers() {
+    for action in ["sync", "validate", "play"] {
+        let mut workbench = EditorWorkbench::new(VnConfig::default());
+        let start = workbench.node_graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+        let scene = workbench.node_graph.add_node(StoryNode::Scene {
+            profile: None, background: Some("bg/old.png".to_string()), music: None, characters: vec![],
+        }, egui::pos2(0.0, 100.0));
+        let end = workbench.node_graph.add_node(StoryNode::End, egui::pos2(0.0, 200.0));
+        workbench.node_graph.connect(start, scene);
+        workbench.node_graph.connect(scene, end);
+        workbench.sync_graph_to_script().unwrap();
+        assert!(workbench.engine.is_some());
+        assert!(!workbench.scene.is_empty());
+        workbench.is_playing = true;
+        workbench.current_time = 42.0;
+        workbench.node_graph.disconnect(scene, end);
+        *workbench.node_graph.get_node_mut(scene).unwrap() = StoryNode::Jump { target: "missing_label".to_string() };
+        let failed = match action {
+            "sync" => workbench.sync_graph_to_script().is_err(),
+            "validate" => !workbench.run_dry_validation(),
+            "play" => !workbench.prepare_player_mode(),
+            _ => unreachable!(),
+        };
+        assert!(failed, "{action} should reject the changed graph");
+        assert!(workbench.engine.is_none(), "{action} retained the old engine");
+        assert!(workbench.scene.is_empty());
+        assert!(workbench.composer_entity_owners.is_empty());
+        assert!(!workbench.is_playing);
+        assert_eq!(workbench.current_time, 0.0);
+        assert!(workbench.validation_issues.iter().any(|issue| issue.code == LintCode::CompileError));
+        assert!(!workbench.validation_issues.iter().any(|issue| issue.code == LintCode::RuntimeInitError), "compile failure is not a runtime init error");
+        *workbench.node_graph.get_node_mut(scene).unwrap() = StoryNode::Dialogue { speaker: "Ava".to_string(), text: "Recovered".to_string() };
+        workbench.node_graph.connect(scene, end);
+        assert!(workbench.run_dry_validation());
+        assert!(workbench.engine.is_some());
+        assert!(!workbench.validation_issues.iter().any(|issue| issue.severity == LintSeverity::Error));
+    }
+}
+
+#[test]
 fn play_mode_refuses_empty_workbench_without_stale_preview_state() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);
@@ -380,6 +420,13 @@ fn workbench_reuses_compilation_cache_until_graph_changes() {
 
     let _ = workbench.run_dry_validation();
     assert_eq!(workbench.compilation_cache_stats(), (1, 2));
+    let extra_start = workbench.node_graph.add_node(StoryNode::Start, egui::pos2(200.0, 0.0));
+    assert!(workbench.compile_current_graph().engine_result.is_ok());
+    assert!(!workbench.run_dry_validation());
+    assert!(workbench.engine.is_none(), "blocking diagnostics must discard the old engine even when the script compiles");
+    workbench.node_graph.remove_node(extra_start);
+    assert!(workbench.run_dry_validation());
+    assert!(workbench.engine.is_some());
 }
 
 #[test]

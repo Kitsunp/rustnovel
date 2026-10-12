@@ -32,6 +32,13 @@ from .types import (
     _require_int,
 )
 
+CharacterTuple = Union[
+    Tuple[str, Optional[str], Optional[str]],
+    Tuple[str, Optional[str], Optional[str], Optional[int], Optional[int], Optional[float]],
+]
+CharacterInput = Union[CharacterPlacement, CharacterTuple]
+CharacterPatchInput = Union[CharacterPatch, CharacterTuple]
+
 SchemaPolicy = str
 STRICT_CURRENT: SchemaPolicy = "strict_current"
 LEGACY_READ_ONLY: SchemaPolicy = "legacy_read_only"
@@ -150,36 +157,32 @@ def normalize_choice_options(
 
 
 def normalize_characters(
-    characters: Iterable[
-        Union[CharacterPlacement, Tuple[str, Optional[str], Optional[str]]]
-    ],
+    characters: Iterable[CharacterInput],
 ) -> List[CharacterPlacement]:
     normalized: List[CharacterPlacement] = []
     for character in characters:
         if isinstance(character, CharacterPlacement):
             normalized.append(character)
         else:
-            name, expression, position = character
-            normalized.append(
-                CharacterPlacement(name=name, expression=expression, position=position)
-            )
+            fields = tuple(character)
+            if len(fields) not in (3, 6):
+                raise ValueError("character tuples must have 3 or 6 elements")
+            normalized.append(CharacterPlacement(*fields))
     return normalized
 
 
 def normalize_character_patches(
-    characters: Iterable[
-        Union[CharacterPatch, Tuple[str, Optional[str], Optional[str]]]
-    ],
+    characters: Iterable[CharacterPatchInput],
 ) -> List[CharacterPatch]:
     normalized: List[CharacterPatch] = []
     for character in characters:
         if isinstance(character, CharacterPatch):
             normalized.append(character)
         else:
-            name, expression, position = character
-            normalized.append(
-                CharacterPatch(name=name, expression=expression, position=position)
-            )
+            fields = tuple(character)
+            if len(fields) not in (3, 6):
+                raise ValueError("character tuples must have 3 or 6 elements")
+            normalized.append(CharacterPatch(*fields))
     return normalized
 
 

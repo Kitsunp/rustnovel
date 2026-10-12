@@ -240,7 +240,7 @@ fn render_dialogue_overlay(
     ui.painter().rect_stroke(
         rect,
         layout.corner_radius,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(130)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(130)),
     );
     ui.allocate_ui_at_rect(rect.shrink2(layout.content_padding), |ui| {
         ui.set_clip_rect(rect.shrink(layout.clip_padding));
@@ -298,7 +298,7 @@ fn render_choice_overlay(
     ui.painter().rect_stroke(
         layout.panel,
         corner_radius,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(120)),
     );
 
     let mut selected = None;

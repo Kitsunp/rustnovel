@@ -96,8 +96,7 @@ impl Transform {
 ///
 /// This enum follows the "Simple Entity List" pattern: each variant contains
 /// its own data directly, avoiding complex trait objects or dynamic dispatch.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EntityKind {
     /// A background or foreground image.
     Image(ImageData),
@@ -113,6 +112,9 @@ pub enum EntityKind {
     /// An audio source attached to this entity.
     Audio(AudioData),
 }
+
+#[path = "entity/serde_kind.rs"]
+mod serde_kind;
 
 /// Data for an image entity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,7 +210,7 @@ impl Entity {
 /// - Entities are always iterated in a deterministic order: by `z_order` ascending,
 ///   then by `id` ascending.
 /// - The `spawn` method assigns monotonically increasing IDs.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct SceneState {
     /// All entities in the scene.
     entities: Vec<Entity>,
@@ -216,12 +218,45 @@ pub struct SceneState {
     #[serde(skip)]
     index: HashMap<EntityId, usize>,
     /// Counter for generating new entity IDs.
-    #[serde(skip, default = "default_next_id")]
+    #[serde(skip)]
     next_id: u32,
 }
 
-fn default_next_id() -> u32 {
-    0
+#[derive(Deserialize)]
+struct SceneStateWire {
+    entities: Vec<Entity>,
+}
+
+impl<'de> Deserialize<'de> for SceneState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = SceneStateWire::deserialize(deserializer)?;
+        if wire.entities.len() > MAX_ENTITIES {
+            return Err(serde::de::Error::custom("scene exceeds entity limit"));
+        }
+        let mut index = HashMap::with_capacity(wire.entities.len());
+        let mut max_id: Option<u32> = None;
+        for (idx, entity) in wire.entities.iter().enumerate() {
+            let raw_id = entity.id.raw();
+            if index.insert(entity.id, idx).is_some() {
+                return Err(serde::de::Error::custom("duplicate entity id"));
+            }
+            max_id = Some(max_id.map_or(raw_id, |m| m.max(raw_id)));
+        }
+        let next_id = match max_id {
+            Some(id) => id
+                .checked_add(1)
+                .ok_or_else(|| serde::de::Error::custom("scene entity id space exhausted"))?,
+            None => 0,
+        };
+        Ok(Self {
+            entities: wire.entities,
+            index,
+            next_id,
+        })
+    }
 }
 
 /// Maximum number of entities allowed (Criterio C: Presupuesto de Recursos).
@@ -261,8 +296,9 @@ impl SceneState {
         if self.entities.len() >= MAX_ENTITIES {
             return None;
         }
+        let next_id = self.next_id.checked_add(1)?;
         let id = EntityId::new(self.next_id);
-        self.next_id += 1;
+        self.next_id = next_id;
         let entity = Entity::new(id, kind);
         let idx = self.entities.len();
         self.entities.push(entity);
@@ -279,8 +315,9 @@ impl SceneState {
         if self.entities.len() >= MAX_ENTITIES {
             return None;
         }
+        let next_id = self.next_id.checked_add(1)?;
         let id = EntityId::new(self.next_id);
-        self.next_id += 1;
+        self.next_id = next_id;
         let entity = Entity::with_transform(id, transform, kind);
         let idx = self.entities.len();
         self.entities.push(entity);
@@ -364,7 +401,7 @@ impl SceneState {
             .iter()
             .map(|e| e.id.raw())
             .max()
-            .map(|m| m + 1)
+            .and_then(|m| m.checked_add(1))
             .unwrap_or(0);
     }
 }

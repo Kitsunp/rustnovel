@@ -74,6 +74,22 @@ fn quicksave_recovery() {
         .expect("quickload should recover from quicksave backup");
     assert_eq!(recovered.state.position, 6);
 
+    fs::remove_file(&slot_path).unwrap();
+    assert!(store.has_quicksave().expect("backup availability"));
+    assert_eq!(
+        store
+            .quickload()
+            .expect("recover missing quicksave")
+            .state
+            .position,
+        6
+    );
+    assert!(store
+        .list_slots()
+        .unwrap()
+        .iter()
+        .any(|entry| entry.metadata.quick));
+
     let _ = fs::remove_dir_all(root);
 }
 

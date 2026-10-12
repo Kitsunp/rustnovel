@@ -15,14 +15,20 @@ pub fn analyze_flow_graph(
     start_nodes: &[NodeId],
 ) -> FlowGraphAnalysis {
     let node_set = nodes.iter().copied().collect::<BTreeSet<_>>();
-    let adjacency = adjacency_map(edges);
+    let adjacency = adjacency_map(
+        &edges
+            .iter()
+            .copied()
+            .filter(|(from, to)| node_set.contains(from) && node_set.contains(to))
+            .collect::<Vec<_>>(),
+    );
     let reachable = reachable_nodes(&node_set, &adjacency, start_nodes);
     let unreachable = node_set
         .iter()
         .copied()
         .filter(|node| !reachable.contains(node))
         .collect::<Vec<_>>();
-    let reachable_cycle_nodes = detect_reachable_cycle_nodes(&adjacency, start_nodes);
+    let reachable_cycle_nodes = detect_reachable_cycle_nodes(&node_set, &adjacency, start_nodes);
 
     FlowGraphAnalysis {
         reachable,
@@ -71,16 +77,11 @@ fn reachable_nodes(
 }
 
 fn detect_reachable_cycle_nodes(
+    node_set: &BTreeSet<NodeId>,
     adjacency: &BTreeMap<NodeId, Vec<NodeId>>,
     start_nodes: &[NodeId],
 ) -> Vec<NodeId> {
-    let mut node_set = BTreeSet::new();
-    for (from, targets) in adjacency {
-        node_set.insert(*from);
-        node_set.extend(targets.iter().copied());
-    }
-    node_set.extend(start_nodes.iter().copied());
-    let reachable = reachable_nodes(&node_set, adjacency, start_nodes);
+    let reachable = reachable_nodes(node_set, adjacency, start_nodes);
     let reverse = reverse_adjacency(adjacency);
     let finish_order = finish_order_iterative(adjacency, &reachable);
     let mut seen = BTreeSet::new();

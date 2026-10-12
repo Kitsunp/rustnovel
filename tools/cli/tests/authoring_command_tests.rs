@@ -722,6 +722,135 @@ fn cli_global_json_error_envelope_has_stable_exit_code() {
         .as_str()
         .unwrap_or_default()
         .contains("load script"));
+
+    let compiled = ScriptRaw::new(
+        vec![EventRaw::Dialogue(DialogueRaw {
+            speaker: "Narrator".to_string(),
+            text: "Ready".to_string(),
+        })],
+        BTreeMap::from([("start".to_string(), 0)]),
+    )
+    .compile()
+    .expect("compile");
+    let script_bytes = compiled.to_binary().expect("compiled bytes");
+    let script_path = tmp.path().join("script.vns");
+    fs::write(&script_path, &script_bytes).expect("write compiled script");
+    let save = visual_novel_engine::SaveData::new(
+        visual_novel_engine::compute_script_id(&script_bytes),
+        visual_novel_engine::runtime::EngineState::new(0, 0),
+    );
+    let legacy = save.to_binary().expect("save bytes");
+    let authenticated = save
+        .to_authenticated_binary(visual_novel_engine::AUTH_SAVE_KEY)
+        .expect("authenticated save");
+    let mut corrupt = authenticated.clone();
+    *corrupt.last_mut().expect("payload") ^= 1;
+    let mut mismatched = save.clone();
+    mismatched.script_id[0] ^= 1;
+    for (name, bytes, exit_code, code, message) in [
+        (
+            "legacy",
+            Some(legacy),
+            2,
+            "engine_error",
+            "invalid save file magic",
+        ),
+        ("authenticated", Some(authenticated), 0, "ok", ""),
+        (
+            "truncated",
+            Some(vec![0xff]),
+            2,
+            "engine_error",
+            "too small",
+        ),
+        (
+            "corrupt",
+            Some(corrupt),
+            2,
+            "engine_error",
+            "authentication failed",
+        ),
+        (
+            "wrong_key",
+            Some(
+                save.to_authenticated_binary(b"other key")
+                    .expect("other key save"),
+            ),
+            2,
+            "engine_error",
+            "authentication failed",
+        ),
+        (
+            "mismatched",
+            Some(
+                mismatched
+                    .to_authenticated_binary(visual_novel_engine::AUTH_SAVE_KEY)
+                    .expect("mismatched save"),
+            ),
+            2,
+            "engine_error",
+            "does not match",
+        ),
+        ("missing", None, 3, "io_error", "read"),
+        (
+            "missing_script",
+            Some(
+                save.to_authenticated_binary(visual_novel_engine::AUTH_SAVE_KEY)
+                    .expect("save"),
+            ),
+            3,
+            "io_error",
+            "read",
+        ),
+    ] {
+        let save_path = tmp.path().join(format!("{name}.sav"));
+        if let Some(bytes) = bytes {
+            fs::write(&save_path, bytes).expect("write save fixture");
+        }
+        for json in [false, true] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_vnengine"));
+            if json {
+                command.arg("--json");
+            }
+            let output = command
+                .arg("verify-save")
+                .arg(&save_path)
+                .arg("--script")
+                .arg(if name == "missing_script" {
+                    &missing
+                } else {
+                    &script_path
+                })
+                .output()
+                .expect("verify save");
+            assert_eq!(
+                output.status.code(),
+                Some(exit_code),
+                "{name}, json={json}: stdout={}, stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if json {
+                assert!(output.stderr.is_empty(), "{name}");
+                let envelope: serde_json::Value =
+                    serde_json::from_slice(&output.stdout).expect("verify save envelope");
+                assert_eq!(envelope["ok"], exit_code == 0, "{name}");
+                assert_eq!(envelope["code"], code, "{name}");
+                if exit_code != 0 {
+                    assert!(
+                        envelope["error"].as_str().expect("error").contains(message),
+                        "{name}"
+                    );
+                }
+            } else if exit_code != 0 {
+                assert!(output.stdout.is_empty(), "{name}");
+                assert!(
+                    String::from_utf8_lossy(&output.stderr).contains(message),
+                    "{name}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

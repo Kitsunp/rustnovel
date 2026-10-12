@@ -1,8 +1,7 @@
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{self, ExitCode};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -391,6 +390,16 @@ fn main() -> ExitCode {
                     data,
                     error: None,
                 });
+            } else if !json {
+                if let Some(data) = data {
+                    match serde_json::to_string_pretty(&data) {
+                        Ok(text) => println!("{text}"),
+                        Err(err) => {
+                            eprintln!("failed to serialize command output: {err}");
+                            return ExitCode::from(2);
+                        }
+                    }
+                }
             }
             ExitCode::SUCCESS
         }
@@ -416,6 +425,9 @@ fn classify_error(err: &anyhow::Error) -> (&'static str, u8) {
         cause
             .downcast_ref::<visual_novel_engine::VnError>()
             .is_some()
+            || cause
+                .downcast_ref::<visual_novel_engine::SaveError>()
+                .is_some()
     }) {
         ("engine_error", 2)
     } else if err

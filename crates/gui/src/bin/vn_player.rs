@@ -71,7 +71,10 @@ fn run_from_args(args: impl IntoIterator<Item = String>) -> Result<(), Box<dyn s
             }
             "--title" => title = Some(next_value(&mut iter, "--title")?),
             "--smoke" => smoke = true,
-            "--smoke-report" => smoke_report_path = Some(next_path(&mut iter, "--smoke-report")?),
+            "--smoke-report" => {
+                smoke_report_path = Some(next_path(&mut iter, "--smoke-report")?);
+                smoke = true;
+            }
             "--require-manifest" => require_manifest = true,
             "--untrusted" => security_mode = SecurityMode::Untrusted,
             "--trusted" => security_mode = SecurityMode::Trusted,

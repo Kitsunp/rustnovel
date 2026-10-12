@@ -1,5 +1,6 @@
 mod asset_refs;
 mod assets;
+pub mod atomic_io;
 mod audio;
 pub mod authoring;
 mod bundle;
@@ -17,6 +18,8 @@ pub mod manifest;
 mod migration;
 mod player_menu;
 mod protected_content;
+#[cfg(any(feature = "python", feature = "python-embed"))]
+pub mod python;
 mod render;
 mod renpy_import;
 mod repro;
@@ -109,8 +112,8 @@ pub use schema_policy::{
 };
 pub use security::SecurityPolicy;
 pub use storage::{
-    compute_script_id, SaveData, SaveError, SaveSlotEntry, SaveSlotMetadata, SaveSlotStore,
-    SaveStoreError, ScriptId, AUTH_SAVE_KEY,
+    compute_script_id, SaveData, SaveError, SaveSlotEntry, SaveSlotListIssue, SaveSlotListing,
+    SaveSlotMetadata, SaveSlotStore, SaveStoreError, ScriptId, AUTH_SAVE_KEY,
 };
 pub use version::{COMPILED_FORMAT_VERSION, SAVE_FORMAT_VERSION, SCRIPT_SCHEMA_VERSION};
 
@@ -131,6 +134,3 @@ pub use graph::{
     analyze_flow_graph, EdgeType, FlowGraphAnalysis, GraphEdge, GraphNode, GraphStats, NodeType,
     StoryGraph,
 };
-
-// Python bindings are now handled in the `vnengine_py` crate.
-// Core remains agnostic to the language binding layer.

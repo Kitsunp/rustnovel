@@ -196,7 +196,7 @@ impl VnApp {
         ui.painter().rect_stroke(
             rect,
             layout.corner_radius,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(130)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(130)),
         );
 
         let mut should_advance = false;
@@ -272,7 +272,7 @@ impl VnApp {
         ui.painter().rect_stroke(
             layout.panel,
             corner_radius,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(120)),
         );
 
         let mut selected = None;

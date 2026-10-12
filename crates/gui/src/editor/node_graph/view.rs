@@ -10,7 +10,11 @@ impl NodeGraph {
 
     /// Sets the zoom level, clamping to valid range.
     pub fn set_zoom(&mut self, zoom: f32) {
-        self.zoom = zoom.clamp(ZOOM_MIN, ZOOM_MAX);
+        self.zoom = if zoom.is_nan() {
+            ZOOM_DEFAULT
+        } else {
+            zoom.clamp(ZOOM_MIN, ZOOM_MAX)
+        };
     }
 
     /// Zooms by a delta (positive = zoom in, negative = zoom out).
@@ -26,16 +30,25 @@ impl NodeGraph {
 
     /// Adds to the pan offset.
     pub fn pan_by(&mut self, delta: egui::Vec2) {
-        self.pan += delta;
+        let next = self.pan + delta;
+        if next.x.is_finite() && next.y.is_finite() {
+            self.pan = next;
+        }
     }
 
     pub fn pan_node_into_viewport(&mut self, node_id: u32, viewport: egui::Vec2) -> bool {
+        if !viewport.x.is_finite() || !viewport.y.is_finite() {
+            return false;
+        }
         let Some(node) = self.get_node(node_id) else {
             return false;
         };
         let Some(pos) = self.get_node_pos(node_id) else {
             return false;
         };
+        if !pos.x.is_finite() || !pos.y.is_finite() {
+            return false;
+        }
 
         let node_size = egui::vec2(node_visual_width(node), node_visual_height(node));
         let node_rect = egui::Rect::from_min_size(pos, node_size);
@@ -67,6 +80,9 @@ impl NodeGraph {
         }
 
         let changed = (next_pan - self.pan).length_sq() > f32::EPSILON;
+        if !next_pan.x.is_finite() || !next_pan.y.is_finite() {
+            return false;
+        }
         self.pan = next_pan;
         changed
     }
@@ -84,21 +100,28 @@ impl NodeGraph {
 
     /// Adjusts pan and zoom to show all nodes in a concrete viewport.
     pub fn zoom_to_fit_viewport(&mut self, viewport: egui::Vec2) {
-        if self.is_empty() {
+        if self.is_empty() || !viewport.x.is_finite() || !viewport.y.is_finite() {
             self.reset_view();
             return;
         }
 
-        let mut min_x = f32::MAX;
-        let mut min_y = f32::MAX;
-        let mut max_x = f32::MIN;
-        let mut max_y = f32::MIN;
+        let mut min_x = f64::INFINITY;
+        let mut min_y = f64::INFINITY;
+        let mut max_x = f64::NEG_INFINITY;
+        let mut max_y = f64::NEG_INFINITY;
 
         for (_, node, pos) in self.nodes() {
-            min_x = min_x.min(pos.x);
-            min_y = min_y.min(pos.y);
-            max_x = max_x.max(pos.x + node_visual_width(&node));
-            max_y = max_y.max(pos.y + node_visual_height(&node));
+            if !pos.x.is_finite() || !pos.y.is_finite() {
+                continue;
+            }
+            min_x = min_x.min(pos.x as f64);
+            min_y = min_y.min(pos.y as f64);
+            max_x = max_x.max(pos.x as f64 + node_visual_width(&node) as f64);
+            max_y = max_y.max(pos.y as f64 + node_visual_height(&node) as f64);
+        }
+        if !min_x.is_finite() || !min_y.is_finite() {
+            self.reset_view();
+            return;
         }
 
         let padding = 50.0;
@@ -107,23 +130,26 @@ impl NodeGraph {
         max_x += padding;
         max_y += padding;
 
-        let viewport_width = viewport.x.max(1.0);
-        let viewport_height = viewport.y.max(1.0);
+        let viewport_width = viewport.x.max(1.0) as f64;
+        let viewport_height = viewport.y.max(1.0) as f64;
         let content_width = max_x - min_x;
         let content_height = max_y - min_y;
 
         let zoom_x = viewport_width / content_width;
         let zoom_y = viewport_height / content_height;
-        let new_zoom = zoom_x.min(zoom_y).clamp(ZOOM_MIN, ZOOM_MAX);
+        let new_zoom = zoom_x.min(zoom_y).clamp(ZOOM_MIN as f64, ZOOM_MAX as f64);
 
         let center_x = (min_x + max_x) / 2.0;
         let center_y = (min_y + max_y) / 2.0;
 
-        self.zoom = new_zoom;
+        self.zoom = new_zoom as f32;
         self.pan = egui::vec2(
-            viewport_width / (2.0 * new_zoom) - center_x,
-            viewport_height / (2.0 * new_zoom) - center_y,
+            (viewport_width / (2.0 * new_zoom) - center_x) as f32,
+            (viewport_height / (2.0 * new_zoom) - center_y) as f32,
         );
+        if !self.pan.x.is_finite() || !self.pan.y.is_finite() {
+            self.reset_view();
+        }
     }
 
     /// Duplicates a node at an offset position.

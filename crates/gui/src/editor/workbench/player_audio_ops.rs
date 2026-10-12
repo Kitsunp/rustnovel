@@ -62,6 +62,7 @@ impl EditorWorkbench {
                     path,
                     r#loop,
                     volume,
+                    fade_in,
                     ..
                 } => {
                     let playback_path = self.resolve_preview_audio_path("BGM", path.as_ref());
@@ -71,10 +72,11 @@ impl EditorWorkbench {
                         playback_path, r#loop, output_volume
                     ));
                     let result = if let Some(audio_backend) = self.player_audio_backend.as_mut() {
-                        audio_backend.play_music_with_options(
+                        audio_backend.play_music_with_transition(
                             playback_path.as_str(),
                             r#loop,
                             output_volume,
+                            Some(fade_in),
                         )
                     } else {
                         Ok(())

@@ -110,6 +110,11 @@ fn manifest_command_rejects_output_symlink_without_replacing_target() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "invalid output remains an input error"
+    );
     assert!(
         stderr.contains("output path is not a regular file"),
         "stderr={stderr}"

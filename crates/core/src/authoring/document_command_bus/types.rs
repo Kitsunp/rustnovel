@@ -1,24 +1,52 @@
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 use super::super::{
     composer::{BackgroundFit, LayerOverride},
-    AuthoringCommand, AuthoringDelta, AuthoringReportFingerprint, OperationLogEntry,
-    VerificationRun,
+    AuthoringCommand, AuthoringDelta, AuthoringReportFingerprint, NodeGraph, OperationKind,
+    OperationLogEntry, VerificationRun,
 };
 
 #[derive(Clone, Debug)]
 pub enum AuthoringDocumentCommand {
     Graph(AuthoringCommand),
-    SetLayerVisible { object_id: String, visible: bool },
-    SetLayerLocked { object_id: String, locked: bool },
-    SetBackgroundFitOverride { node_id: u32, fit: BackgroundFit },
-    ClearBackgroundFitOverride { node_id: u32 },
+    /// Records a completed graph edit from a snapshot-based authoring client.
+    /// The graph retains shared node entries; logs are produced by the session.
+    ReplaceGraph {
+        graph: Box<NodeGraph>,
+        kind: OperationKind,
+        details: String,
+        field_path: Option<String>,
+        before_value: Option<String>,
+        after_value: Option<String>,
+    },
+    SetLayerVisible {
+        object_id: String,
+        visible: bool,
+    },
+    SetLayerLocked {
+        object_id: String,
+        locked: bool,
+    },
+    SetBackgroundFitOverride {
+        node_id: u32,
+        fit: BackgroundFit,
+    },
+    ClearBackgroundFitOverride {
+        node_id: u32,
+    },
+    ResetComposerOverrides,
     RevertLast,
+    UndoLast,
+    RedoLast,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum AuthoringDocumentDelta {
     Graph(Box<AuthoringDelta>),
+    GraphReplaced {
+        before: Box<NodeGraph>,
+    },
     LayerVisibleChanged {
         object_id: String,
         before: Option<LayerOverride>,
@@ -37,6 +65,10 @@ pub enum AuthoringDocumentDelta {
     BackgroundFitCleared {
         node_id: u32,
         before: Option<BackgroundFit>,
+    },
+    ComposerOverridesReset {
+        before_layers: BTreeMap<String, LayerOverride>,
+        before_background_fits: BTreeMap<String, BackgroundFit>,
     },
     Reverted {
         reverted: Box<AuthoringDocumentDelta>,
@@ -77,19 +109,22 @@ impl AuthoringDirtyFlags {
             AuthoringDocumentDelta::LayerVisibleChanged { .. }
             | AuthoringDocumentDelta::LayerLockedChanged { .. }
             | AuthoringDocumentDelta::BackgroundFitChanged { .. }
-            | AuthoringDocumentDelta::BackgroundFitCleared { .. } => Self {
+            | AuthoringDocumentDelta::BackgroundFitCleared { .. }
+            | AuthoringDocumentDelta::ComposerOverridesReset { .. } => Self {
                 layout_dirty: true,
                 document_dirty: true,
                 ..Self::default()
             },
-            AuthoringDocumentDelta::Graph(_) => Self {
-                graph_dirty: true,
-                layout_dirty: true,
-                assets_dirty: true,
-                document_dirty: true,
-                validation_dirty: true,
-                runtime_export_dirty: true,
-            },
+            AuthoringDocumentDelta::Graph(_) | AuthoringDocumentDelta::GraphReplaced { .. } => {
+                Self {
+                    graph_dirty: true,
+                    layout_dirty: true,
+                    assets_dirty: true,
+                    document_dirty: true,
+                    validation_dirty: true,
+                    runtime_export_dirty: true,
+                }
+            }
             AuthoringDocumentDelta::Reverted { reverted } => Self::for_delta(reverted),
         }
     }

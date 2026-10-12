@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use crate::authoring::is_unsafe_asset_ref;
 use crate::error::{VnError, VnResult};
 use crate::event::EventRaw;
 
@@ -265,6 +266,9 @@ fn rewrite_path_and_copy(
 }
 
 fn normalize_asset_rel_path(raw: &str) -> Result<String, &'static str> {
+    if is_unsafe_asset_ref(raw) {
+        return Err("asset_path_traversal");
+    }
     let mut parts = Vec::new();
     let path = Path::new(raw.trim());
     for component in path.components() {

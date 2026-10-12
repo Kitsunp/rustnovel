@@ -199,12 +199,18 @@ class CharacterPatch:
     name: str
     expression: Optional[str] = None
     position: Optional[str] = None
+    x: Optional[int] = None
+    y: Optional[int] = None
+    scale: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "name": self.name,
             "expression": self.expression,
             "position": self.position,
+            "x": self.x,
+            "y": self.y,
+            "scale": self.scale,
         }
 
     @classmethod
@@ -215,12 +221,21 @@ class CharacterPatch:
             name=str(data["name"]),
             expression=str(expression) if expression is not None else None,
             position=str(position) if position is not None else None,
+            x=_require_int(data["x"], "CharacterPatch 'x'")
+            if data.get("x") is not None
+            else None,
+            y=_require_int(data["y"], "CharacterPatch 'y'")
+            if data.get("y") is not None
+            else None,
+            scale=_require_float(data["scale"], "CharacterPatch 'scale'")
+            if data.get("scale") is not None
+            else None,
         )
 
 
 @dataclass(frozen=True)
 class Patch:
-    """Scene patch event with add/update/remove operations."""
+    """Scene patch: None preserves background/music; an empty string clears them."""
 
     background: Optional[str] = None
     music: Optional[str] = None
@@ -229,14 +244,17 @@ class Patch:
     remove: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result: Dict[str, Any] = {
             "type": "patch",
-            "background": self.background,
-            "music": self.music,
             "add": [character.to_dict() for character in self.add],
             "update": [character.to_dict() for character in self.update],
             "remove": list(self.remove),
         }
+        if self.background is not None:
+            result["background"] = self.background
+        if self.music is not None:
+            result["music"] = self.music
+        return result
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Patch":
@@ -244,8 +262,12 @@ class Patch:
         update = [CharacterPatch.from_dict(item) for item in data.get("update", [])]
         remove = [str(item) for item in data.get("remove", [])]
         return cls(
-            background=data.get("background"),
-            music=data.get("music"),
+            background=""
+            if "background" in data and data["background"] is None
+            else data.get("background"),
+            music=""
+            if "music" in data and data["music"] is None
+            else data.get("music"),
             add=add,
             update=update,
             remove=remove,
@@ -277,8 +299,8 @@ class AudioAction:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "AudioAction":
         return cls(
-            channel=str(data["channel"]),
-            action=str(data["action"]),
+            channel=str(data.get("channel_name", data["channel"])),
+            action=str(data.get("action_name", data["action"])),
             asset=str(data["asset"]) if data.get("asset") is not None else None,
             volume=_require_float(data["volume"], "AudioAction 'volume'")
             if data.get("volume") is not None
@@ -315,7 +337,7 @@ class Transition:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Transition":
         return cls(
-            kind=str(data["kind"]),
+            kind=str(data.get("kind_name", data["kind"])),
             duration_ms=_require_int(data["duration_ms"], "Transition 'duration_ms'"),
             color=str(data["color"]) if data.get("color") is not None else None,
         )

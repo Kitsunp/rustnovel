@@ -125,8 +125,12 @@ impl AuthoringReadModel {
                 .update_layer_override(object_id, *after),
             AuthoringDocumentDelta::BackgroundFitChanged { .. }
             | AuthoringDocumentDelta::BackgroundFitCleared { .. } => {}
-            AuthoringDocumentDelta::Graph(_) => {
+            AuthoringDocumentDelta::Graph(_) | AuthoringDocumentDelta::GraphReplaced { .. } => {
                 self.rebuild_document_projection(document);
+            }
+            AuthoringDocumentDelta::ComposerOverridesReset { .. } => {
+                self.composer_layer_index = ComposerLayerIndex::from_document(document);
+                self.preview_index = PreviewIndex::from_document(document);
             }
             AuthoringDocumentDelta::Reverted { .. } => self.rebuild_document_projection(document),
         }

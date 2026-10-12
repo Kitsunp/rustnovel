@@ -70,12 +70,67 @@ pub fn node_toolbar_is_compact(available_width: f32) -> bool {
 /// Node editor panel widget with pan/zoom and context menu.
 pub struct NodeEditorPanel<'a> {
     graph: &'a mut NodeGraph,
-    undo_stack: &'a mut UndoStack,
+    history: NodeEditorHistory<'a>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeEditorHistoryAction {
+    Undo,
+    Redo,
+}
+
+enum NodeEditorHistory<'a> {
+    Snapshots(&'a mut UndoStack),
+    Document {
+        can_undo: bool,
+        can_redo: bool,
+        request: &'a mut Option<NodeEditorHistoryAction>,
+    },
 }
 
 impl<'a> NodeEditorPanel<'a> {
     pub fn new(graph: &'a mut NodeGraph, undo_stack: &'a mut UndoStack) -> Self {
-        Self { graph, undo_stack }
+        Self {
+            graph,
+            history: NodeEditorHistory::Snapshots(undo_stack),
+        }
+    }
+
+    /// Delegates history actions to the workbench that owns the full document.
+    pub fn for_document(
+        graph: &'a mut NodeGraph,
+        can_undo: bool,
+        can_redo: bool,
+        request: &'a mut Option<NodeEditorHistoryAction>,
+    ) -> Self {
+        Self {
+            graph,
+            history: NodeEditorHistory::Document {
+                can_undo,
+                can_redo,
+                request,
+            },
+        }
+    }
+
+    fn can_undo(&self) -> bool {
+        match &self.history {
+            NodeEditorHistory::Snapshots(stack) => stack.can_undo(),
+            NodeEditorHistory::Document { can_undo, .. } => *can_undo,
+        }
+    }
+
+    fn can_redo(&self) -> bool {
+        match &self.history {
+            NodeEditorHistory::Snapshots(stack) => stack.can_redo(),
+            NodeEditorHistory::Document { can_redo, .. } => *can_redo,
+        }
+    }
+
+    fn push_drag_snapshot(&mut self) {
+        if let NodeEditorHistory::Snapshots(stack) = &mut self.history {
+            stack.push(self.graph.clone());
+        }
     }
 
     #[inline]
@@ -135,7 +190,7 @@ impl<'a> NodeEditorPanel<'a> {
             painter.line_segment(
                 [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
                 egui::Stroke::new(
-                    1.0,
+                    1.0_f32,
                     if col_idx.is_multiple_of(5) {
                         grid_color_major
                     } else {
@@ -152,7 +207,7 @@ impl<'a> NodeEditorPanel<'a> {
             painter.line_segment(
                 [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
                 egui::Stroke::new(
-                    1.0,
+                    1.0_f32,
                     if row_idx.is_multiple_of(5) {
                         grid_color_major
                     } else {
@@ -276,30 +331,39 @@ impl<'a> NodeEditorPanel<'a> {
     }
 
     pub fn apply_undo_shortcut(&mut self) -> bool {
-        if let Some(previous) = self.undo_stack.undo(self.graph.clone()) {
-            *self.graph = previous;
-            self.graph.queue_operation_hint(
-                "undo",
-                "Undo graph editor mutation",
-                Some("graph".to_string()),
-                false,
-            );
-            self.graph.mark_modified();
-            true
-        } else {
-            false
-        }
+        self.apply_history_action(NodeEditorHistoryAction::Undo)
     }
 
     pub fn apply_redo_shortcut(&mut self) -> bool {
-        if let Some(next) = self.undo_stack.redo(self.graph.clone()) {
-            *self.graph = next;
-            self.graph.queue_operation_hint(
-                "redo",
-                "Redo graph editor mutation",
-                Some("graph".to_string()),
-                false,
-            );
+        self.apply_history_action(NodeEditorHistoryAction::Redo)
+    }
+
+    fn apply_history_action(&mut self, action: NodeEditorHistoryAction) -> bool {
+        let available = match action {
+            NodeEditorHistoryAction::Undo => self.can_undo(),
+            NodeEditorHistoryAction::Redo => self.can_redo(),
+        };
+        if !available {
+            return false;
+        }
+        let restored = match &mut self.history {
+            NodeEditorHistory::Snapshots(stack) => match action {
+                NodeEditorHistoryAction::Undo => stack.undo(self.graph.clone()),
+                NodeEditorHistoryAction::Redo => stack.redo(self.graph.clone()),
+            },
+            NodeEditorHistory::Document { request, .. } => {
+                **request = Some(action);
+                return true;
+            }
+        };
+        if let Some(restored) = restored {
+            *self.graph = restored;
+            let (kind, details) = match action {
+                NodeEditorHistoryAction::Undo => ("undo", "Undo graph editor mutation"),
+                NodeEditorHistoryAction::Redo => ("redo", "Redo graph editor mutation"),
+            };
+            self.graph
+                .queue_operation_hint(kind, details, Some("graph".to_string()), false);
             self.graph.mark_modified();
             true
         } else {

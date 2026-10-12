@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, VecDeque};
 
-use crate::audio::AudioCommand;
+use crate::audio::{scene_music_command, AudioCommand};
 use crate::error::{VnError, VnResult};
 use crate::event::{EventCompiled, SceneTransitionCompiled};
 use crate::event_behavior::{
@@ -16,6 +16,7 @@ use crate::scene_frame::{ImageFit, LayoutRect, RenderCommand, SceneFrame};
 use crate::script::{ScriptCompiled, ScriptRaw};
 use crate::security::SecurityPolicy;
 use crate::state::EngineState;
+use crate::storage::{compute_script_id, SaveData};
 use crate::visual::VisualState;
 
 #[path = "runtime/visual.rs"]
@@ -446,24 +447,49 @@ impl Engine {
         self.jump_to_ip(target_ip)
     }
 
-    /// Restores the engine state from a saved snapshot.
-    pub fn set_state(&mut self, state: EngineState) -> VnResult<()> {
+    /// Loads a decoded save only when it belongs to this engine's compiled script.
+    /// Byte-level authentication is performed when decoding the save.
+    pub fn load_save_data(&mut self, save: SaveData) -> VnResult<()> {
+        let script_id = compute_script_id(&self.script.to_binary()?);
+        save.validate_script_id(&script_id)
+            .map_err(|err| VnError::invalid_script(err.to_string()))?;
+        self.set_state(save.state)
+    }
+
+    /// Restores a trusted snapshot without checking its source script identity.
+    /// Use `load_save_data` when restoring a persisted save.
+    /// Replaces pending audio with commands to reconcile the restored scene.
+    pub fn set_state(&mut self, mut state: EngineState) -> VnResult<()> {
         if state.position as usize > self.script.events.len() {
             return Err(VnError::InvalidScript(format!(
                 "state position '{}' outside script",
                 state.position
             )));
         }
+        state.trim_history();
         self.state = state;
         self.pending_transition = None;
-        if let Some(read_model) = self.state.read_model.clone() {
-            self.read_dialogue_ips = read_model.visited_dialogue_ips;
-        }
-        if let Some(route_progress) = self.state.route_progress.clone() {
+        self.queued_audio = vec![
+            AudioCommand::StopSfx,
+            AudioCommand::StopVoice,
+            scene_music_command(self.state.visual.music.as_ref()),
+        ];
+        self.read_dialogue_ips = self
+            .state
+            .read_model
+            .take()
+            .map(|snapshot| snapshot.visited_dialogue_ips)
+            .unwrap_or_default();
+        if let Some(route_progress) = self.state.route_progress.take() {
             self.route_visited_ips = route_progress.visited_ips;
+            let excess = route_progress
+                .selected_choices
+                .len()
+                .saturating_sub(CHOICE_HISTORY_LIMIT);
             self.choice_history = route_progress
                 .selected_choices
                 .into_iter()
+                .skip(excess)
                 .map(|choice| ChoiceHistoryEntry {
                     event_ip: choice.event_ip,
                     prompt: choice.prompt,
@@ -473,6 +499,8 @@ impl Engine {
                 })
                 .collect();
         } else {
+            self.choice_history.clear();
+            self.route_visited_ips.clear();
             self.route_visited_ips.insert(self.state.position);
         }
         self.sync_progress_snapshots();

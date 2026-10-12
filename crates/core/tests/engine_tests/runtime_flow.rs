@@ -29,6 +29,31 @@ fn engine_records_dialogue_history() {
     let history = &engine.state().history;
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].text.as_ref(), "Hola");
+
+    let mut oversized = engine.state().clone();
+    let dialogue = oversized.history[0].clone();
+    oversized.history = (0..210)
+        .map(|index| {
+            let mut entry = dialogue.clone();
+            entry.text = format!("line {index}").into();
+            entry
+        })
+        .collect();
+    let mut direct = oversized.clone();
+    direct.record_dialogue(&dialogue);
+    assert_eq!(direct.history.len(), 200);
+    assert_eq!(direct.history.front().unwrap().text.as_ref(), "line 11");
+    assert_eq!(direct.history.back().unwrap().text.as_ref(), "Hola");
+    engine.set_state(oversized).unwrap();
+    assert_eq!(engine.state().history.len(), 200);
+    assert_eq!(
+        engine.state().history.front().unwrap().text.as_ref(),
+        "line 10"
+    );
+    assert_eq!(
+        engine.state().history.back().unwrap().text.as_ref(),
+        "line 209"
+    );
 }
 
 #[test]
@@ -64,6 +89,78 @@ fn engine_state_round_trip() {
         serde_json::from_str::<visual_novel_engine::runtime::EngineState>(&serialized).unwrap();
     assert_eq!(parsed.position, engine.state().position);
     assert_eq!(parsed.history.len(), engine.state().history.len());
+    let saved = parsed.clone();
+    engine.choose(1).unwrap();
+    assert!(!engine.choice_history().is_empty());
+    engine.set_state(parsed).unwrap();
+    assert_eq!(
+        serde_json::to_value(engine.state()).unwrap(),
+        serde_json::to_value(&saved).unwrap()
+    );
+
+    let mut legacy = saved;
+    legacy.position = 0;
+    legacy.read_model = None;
+    legacy.route_progress = None;
+    engine.choose(1).unwrap();
+    engine.set_state(legacy.clone()).unwrap();
+    let mut fresh = Engine::new(
+        sample_script(),
+        SecurityPolicy::default(),
+        ResourceLimiter::default(),
+    )
+    .unwrap();
+    fresh.set_state(legacy).unwrap();
+    assert_eq!(
+        serde_json::to_value(engine.state()).unwrap(),
+        serde_json::to_value(fresh.state()).unwrap()
+    );
+    assert!(engine.choice_history().is_empty());
+    assert!(!engine.is_dialogue_read(1));
+
+    let mut oversized = engine.state().clone();
+    let choices = &mut oversized.route_progress.as_mut().unwrap().selected_choices;
+    choices.extend(
+        (0..520).map(|index| visual_novel_engine::ChoiceProgressSnapshot {
+            event_ip: 2,
+            prompt: format!("choice {index}"),
+            option_index: 1,
+            option_text: "No".into(),
+            target_ip: 0,
+        }),
+    );
+    engine.set_state(oversized).unwrap();
+    assert_eq!(engine.choice_history().len(), 512);
+    assert_eq!(engine.choice_history().front().unwrap().prompt, "choice 8");
+    assert_eq!(engine.choice_history().back().unwrap().prompt, "choice 519");
+    let before_error = serde_json::to_value(engine.state()).unwrap();
+    let mut invalid = engine.state().clone();
+    invalid.position = u32::MAX;
+    assert!(engine.set_state(invalid).is_err());
+    assert_eq!(serde_json::to_value(engine.state()).unwrap(), before_error);
+    let mut completed = engine.state().clone();
+    completed.position = engine.script().events.len() as u32;
+    engine.set_state(completed).unwrap();
+    assert!(matches!(
+        engine.current_event(),
+        Err(visual_novel_engine::VnError::EndOfScript)
+    ));
+    let script_id = visual_novel_engine::compute_script_id(&engine.script().to_binary().unwrap());
+    let save = visual_novel_engine::SaveData::new(script_id, engine.state().clone());
+    let mut other_script = save.clone();
+    other_script.script_id[0] ^= 1;
+    let before_error = serde_json::to_value(engine.state()).unwrap();
+    let err = engine.load_save_data(other_script).unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("save does not match current script"));
+    assert_eq!(serde_json::to_value(engine.state()).unwrap(), before_error);
+    let mut invalid = save.clone();
+    invalid.state.position = u32::MAX;
+    assert!(engine.load_save_data(invalid).is_err());
+    assert_eq!(serde_json::to_value(engine.state()).unwrap(), before_error);
+    engine.load_save_data(save).unwrap();
+    assert_eq!(serde_json::to_value(engine.state()).unwrap(), before_error);
 }
 
 #[test]

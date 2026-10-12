@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::event::EventCompiled;
+use crate::event_behavior::{event_behavior_for_compiled, EventBehavior, PreviewCtx};
 use crate::script::ScriptCompiled;
 use crate::visual::VisualState;
 
@@ -160,16 +161,12 @@ fn resolve_visual_linear(script: &ScriptCompiled, ip: u32) -> VisualState {
     let mut visual = VisualState::default();
     let end = (ip as usize).min(script.events.len().saturating_sub(1));
     for event in script.events.iter().take(end.saturating_add(1)) {
-        match event {
-            EventCompiled::Scene(scene) => visual.apply_scene(scene),
-            EventCompiled::Patch(patch) => visual.apply_patch(patch),
-            EventCompiled::SetCharacterPosition(pos)
-                if visual.set_character_position(pos).is_err() =>
-            {
-                break;
-            }
-            EventCompiled::SetCharacterPosition(_) => {}
-            _ => {}
+        let mut ctx = PreviewCtx::new(&mut visual);
+        if !matches!(
+            event_behavior_for_compiled(event).preview(&mut ctx, event),
+            Ok(None)
+        ) {
+            break;
         }
     }
     visual

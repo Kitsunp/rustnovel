@@ -1,3 +1,7 @@
+use crate::event::{
+    audio_action_code, audio_action_name, audio_channel_code, audio_channel_name,
+    transition_kind_code, transition_kind_name,
+};
 use crate::event::{CondCompiled, CondRaw, EventCompiled, EventRaw};
 use crate::event_behavior::{event_spec_for_compiled, event_spec_for_raw};
 
@@ -44,8 +48,8 @@ pub(crate) fn compiled_event_signature(event: &EventCompiled) -> String {
         }
         EventCompiled::AudioAction(audio) => format!(
             "audio|{}|{}|asset={:?}|vol={}|fade={:?}|loop={:?}",
-            compiled_audio_channel(audio.channel),
-            compiled_audio_action(audio.action),
+            audio_channel_name(audio.channel),
+            audio_action_name(audio.action),
             audio.asset.as_deref(),
             fmt_opt_f32(audio.volume),
             audio.fade_duration_ms,
@@ -53,7 +57,7 @@ pub(crate) fn compiled_event_signature(event: &EventCompiled) -> String {
         ),
         EventCompiled::Transition(transition) => format!(
             "transition|{}|{}|{:?}",
-            compiled_transition_kind(transition.kind),
+            transition_kind_name(transition.kind),
             transition.duration_ms,
             transition.color.as_deref()
         ),
@@ -129,58 +133,22 @@ fn raw_cond_signature(cond: &CondRaw) -> String {
     }
 }
 
-fn compiled_audio_channel(channel: u8) -> &'static str {
-    match channel {
-        0 => "bgm",
-        1 => "sfx",
-        2 => "voice",
-        _ => "unknown",
-    }
-}
-
-fn compiled_audio_action(action: u8) -> &'static str {
-    match action {
-        0 => "play",
-        1 => "stop",
-        2 => "fade_out",
-        _ => "unknown",
-    }
-}
-
-fn compiled_transition_kind(kind: u8) -> &'static str {
-    match kind {
-        0 => "fade",
-        1 => "dissolve",
-        2 => "cut",
-        _ => "unknown",
-    }
-}
-
 fn normalize_audio_channel(channel: &str) -> &'static str {
-    match channel.trim().to_ascii_lowercase().as_str() {
-        "bgm" => "bgm",
-        "sfx" => "sfx",
-        "voice" => "voice",
-        _ => "unknown",
-    }
+    audio_channel_code(channel)
+        .map(audio_channel_name)
+        .unwrap_or("unknown")
 }
 
 fn normalize_audio_action(action: &str) -> &'static str {
-    match action.trim().to_ascii_lowercase().as_str() {
-        "play" => "play",
-        "stop" => "stop",
-        "fade_out" => "fade_out",
-        _ => "unknown",
-    }
+    audio_action_code(action)
+        .map(audio_action_name)
+        .unwrap_or("unknown")
 }
 
 fn normalize_transition_kind(kind: &str) -> &'static str {
-    match kind.trim().to_ascii_lowercase().as_str() {
-        "fade" | "fade_black" => "fade",
-        "dissolve" => "dissolve",
-        "cut" => "cut",
-        _ => "unknown",
-    }
+    transition_kind_code(kind)
+        .map(transition_kind_name)
+        .unwrap_or("unknown")
 }
 
 fn fmt_opt_f32(value: Option<f32>) -> String {

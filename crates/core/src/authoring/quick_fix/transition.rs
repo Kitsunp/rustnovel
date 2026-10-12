@@ -1,10 +1,11 @@
 use crate::authoring::{NodeGraph, StoryNode};
+use crate::event::transition_kind_code;
 
 pub(super) fn set_kind(graph: &mut NodeGraph, node_id: u32) -> Result<bool, String> {
     let Some(StoryNode::Transition { kind, .. }) = graph.get_node_mut(node_id) else {
         return Err(format!("node_id {node_id} is not Transition"));
     };
-    if matches!(kind.as_str(), "fade" | "fade_black" | "dissolve" | "cut") {
+    if transition_kind_code(kind).is_some() {
         return Ok(false);
     }
     *kind = "fade".to_string();

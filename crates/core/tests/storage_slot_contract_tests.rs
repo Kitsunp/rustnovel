@@ -74,6 +74,98 @@ fn slot_store_roundtrip_and_list() {
     assert_eq!(slots.len(), 1);
     assert_eq!(slots[0].metadata.slot_id, 1);
 
+    store.quicksave(&save).expect("quicksave");
+    store.save_slot(2, &save).expect("second slot");
+    let bad_json = root.join("meta/slot_002.json");
+    fs::write(&bad_json, b"{broken").unwrap();
+    let directory = root.join("meta/bad.json");
+    fs::create_dir(&directory).unwrap();
+    assert!(
+        store.list_slots().is_err(),
+        "strict API still reports failures"
+    );
+    let listing = store.list_slots_with_issues().expect("partial list");
+    assert_eq!(listing.entries.len(), 2);
+    assert!(listing.entries.iter().any(|entry| entry.metadata.quick));
+    assert!(listing
+        .entries
+        .iter()
+        .any(|entry| !entry.metadata.quick && entry.metadata.slot_id == 1));
+    assert_eq!(listing.issues.len(), 2);
+    assert!(listing.issues.iter().any(|issue| issue.path == bad_json
+        && matches!(
+            issue.error,
+            SaveStoreError::Save(SaveError::Serialization(_))
+        )));
+    assert!(listing
+        .issues
+        .iter()
+        .any(|issue| issue.path == directory && matches!(issue.error, SaveStoreError::Io(_))));
+    assert_eq!(
+        fs::read(&entry.path).unwrap(),
+        stored,
+        "listing never changes save data"
+    );
+    assert_eq!(store.load_slot(1).unwrap().state.position, 7);
+    assert_eq!(store.quickload().unwrap().state.position, 7);
+    fs::remove_file(bad_json).unwrap();
+    fs::remove_dir(directory).unwrap();
+    assert_eq!(store.list_slots().unwrap().len(), 2);
+
+    store.save_slot(1, &sample_save(9)).unwrap();
+    store
+        .remove_slot(1)
+        .expect("remove slot and its recovery files");
+    assert!(
+        matches!(store.load_slot(1), Err(SaveStoreError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound),
+        "a removed slot must not recover its previous backup"
+    );
+    for relative in [
+        "slots/slot_001.vnsav",
+        "slots/slot_001.vnsav.bak",
+        "meta/slot_001.json",
+        "meta/slot_001.json.bak",
+    ] {
+        assert!(!root.join(relative).exists(), "left behind {relative}");
+    }
+    store.remove_slot(1).expect("removal remains idempotent");
+    assert_eq!(store.list_slots().unwrap().len(), 1);
+    assert_eq!(store.quickload().unwrap().state.position, 7);
+
+    store.save_slot(1, &sample_save(15)).unwrap();
+    assert!(!root.join("slots/slot_001.vnsav.bak").exists());
+    store.save_slot(1, &sample_save(16)).unwrap();
+    let backup = root.join("slots/slot_001.vnsav.bak");
+    fs::remove_file(&backup).unwrap();
+    fs::create_dir(&backup).unwrap();
+    let primary_before = fs::read(&entry.path).unwrap();
+    assert!(
+        matches!(store.remove_slot(1), Err(SaveStoreError::Io(err)) if err.kind() == std::io::ErrorKind::InvalidInput)
+    );
+    assert_eq!(fs::read(&entry.path).unwrap(), primary_before);
+    fs::remove_dir(&backup).unwrap();
+    store.save_slot(1, &sample_save(16)).unwrap();
+    let metadata_path = root.join("meta/slot_001.json");
+    fs::remove_file(&metadata_path).unwrap();
+    fs::create_dir(&metadata_path).unwrap();
+    let backup_before = fs::read(&backup).unwrap();
+    assert!(
+        matches!(store.remove_slot(1), Err(SaveStoreError::Io(err)) if err.kind() == std::io::ErrorKind::InvalidInput)
+    );
+    assert_eq!(fs::read(&entry.path).unwrap(), primary_before);
+    assert_eq!(fs::read(&backup).unwrap(), backup_before);
+    fs::remove_dir(metadata_path).unwrap();
+    store.remove_slot(1).unwrap();
+
+    // Orphaned backups must also be removable when both primary files are gone.
+    store.save_slot(1, &save).unwrap();
+    store.save_slot(1, &sample_save(17)).unwrap();
+    fs::remove_file(&entry.path).unwrap();
+    fs::remove_file(root.join("meta/slot_001.json")).unwrap();
+    store.remove_slot(1).unwrap();
+    assert!(!backup.exists());
+    assert!(!root.join("meta/slot_001.json.bak").exists());
+
     let _ = fs::remove_dir_all(root);
 }
 
@@ -169,6 +261,37 @@ fn slot_load_recovers_from_corrupted_primary() {
         .load_slot(7)
         .expect("loader should recover from backup");
     assert_eq!(recovered.state.position, 3);
+
+    fs::remove_file(&primary_path).unwrap();
+    assert_eq!(
+        store
+            .load_slot(7)
+            .expect("missing primary recovers backup")
+            .state
+            .position,
+        3
+    );
+    assert_eq!(
+        store.list_slots().unwrap().len(),
+        1,
+        "backup-only slot remains visible"
+    );
+    let backup = root.join("slots/slot_007.vnsav.bak");
+    fs::write(&backup, [0u8]).unwrap();
+    assert!(matches!(
+        store.load_slot(7),
+        Err(SaveStoreError::Save(SaveError::TooSmall))
+    ));
+    fs::remove_file(&backup).unwrap();
+    assert!(
+        matches!(store.load_slot(7), Err(SaveStoreError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound)
+    );
+    assert!(store.list_slots().unwrap().is_empty());
+    fs::create_dir(&backup).unwrap();
+    assert!(
+        matches!(store.load_slot(7), Err(SaveStoreError::Io(err)) if err.kind() == std::io::ErrorKind::InvalidInput)
+    );
+    assert_eq!(store.list_slots_with_issues().unwrap().issues.len(), 1);
 
     let _ = fs::remove_dir_all(root);
 }

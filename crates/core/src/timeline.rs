@@ -28,7 +28,7 @@ pub use types::{Easing, Fixed, Keyframe, PropertyType, PropertyValue};
 ///
 /// # Invariant
 /// Keyframes are always sorted by time and have strictly increasing times.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Track {
     /// The entity this track animates.
     pub target: EntityId,
@@ -40,6 +40,39 @@ pub struct Track {
 
 /// Maximum keyframes per track (Criterio C: Presupuesto).
 pub const MAX_KEYFRAMES_PER_TRACK: usize = 256;
+
+#[derive(Deserialize)]
+struct TrackWire {
+    target: EntityId,
+    property: PropertyType,
+    keyframes: Vec<Keyframe>,
+}
+
+impl<'de> Deserialize<'de> for Track {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = TrackWire::deserialize(deserializer)?;
+        if wire.keyframes.len() > MAX_KEYFRAMES_PER_TRACK {
+            return Err(serde::de::Error::custom("track exceeds keyframe limit"));
+        }
+        if wire
+            .keyframes
+            .windows(2)
+            .any(|pair| pair[0].time >= pair[1].time)
+        {
+            return Err(serde::de::Error::custom(
+                "track keyframe times must be strictly increasing",
+            ));
+        }
+        Ok(Self {
+            target: wire.target,
+            property: wire.property,
+            keyframes: wire.keyframes,
+        })
+    }
+}
 
 impl Track {
     /// Creates a new empty track.
@@ -138,9 +171,12 @@ impl Track {
         let eased_t = k1.easing.apply(t);
 
         // Lerp the values
-        let v0 = Fixed::from_int(k0.value);
-        let v1 = Fixed::from_int(k1.value);
-        Fixed::lerp(v0, v1, eased_t).to_int()
+        // Interpolate the full i32 value domain in i64. Converting the
+        // keyframe value itself to Q16.16 would truncate large coordinates.
+        let v0 = i64::from(k0.value);
+        let delta = i64::from(k1.value) - v0;
+        let value = v0 + ((delta * i64::from(eased_t.raw())) >> Fixed::FRAC_BITS);
+        value.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
     }
 
     /// Returns an iterator over keyframes.

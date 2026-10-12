@@ -10,8 +10,8 @@ impl Fixed {
     pub const FRAC_BITS: u32 = 16;
 
     #[inline]
-    pub const fn from_int(n: i32) -> Self {
-        Self(n << Self::FRAC_BITS)
+    pub fn from_int(n: i32) -> Self {
+        Self(((n as i64) << Self::FRAC_BITS).clamp(i32::MIN as i64, i32::MAX as i64) as i32)
     }
 
     #[inline]
@@ -43,7 +43,7 @@ impl Fixed {
     pub fn lerp(a: Fixed, b: Fixed, t: Fixed) -> Fixed {
         let diff = b.0 as i64 - a.0 as i64;
         let scaled = (diff * t.0 as i64) >> Self::FRAC_BITS;
-        Fixed(a.0 + scaled as i32)
+        Fixed(((a.0 as i64 + scaled).clamp(i32::MIN as i64, i32::MAX as i64)) as i32)
     }
 }
 
@@ -68,7 +68,7 @@ impl std::ops::Mul for Fixed {
     #[inline]
     fn mul(self, rhs: Self) -> Self {
         let result = (self.0 as i64 * rhs.0 as i64) >> Self::FRAC_BITS;
-        Self(result as i32)
+        Self(result.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
     }
 }
 
@@ -80,7 +80,7 @@ impl std::ops::Div for Fixed {
             return Self::ZERO;
         }
         let result = ((self.0 as i64) << Self::FRAC_BITS) / rhs.0 as i64;
-        Self(result as i32)
+        Self(result.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
     }
 }
 

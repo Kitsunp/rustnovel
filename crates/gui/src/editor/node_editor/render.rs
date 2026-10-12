@@ -67,7 +67,7 @@ impl<'a> NodeEditorPanel<'a> {
                     let size = egui::vec2(node_visual_width(node), height) * self.graph.zoom();
                     let node_rect = egui::Rect::from_min_size(screen_pos, size);
                     if node_rect.contains(pos) {
-                        self.undo_stack.push(self.graph.clone());
+                        self.push_drag_snapshot();
                         self.graph.dragging_node = Some(*id);
                         break;
                     }
@@ -149,7 +149,7 @@ impl<'a> NodeEditorPanel<'a> {
             painter.rect_stroke(
                 marquee_rect,
                 0.0,
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 180, 255)),
+                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(120, 180, 255)),
             );
         }
 
@@ -187,7 +187,7 @@ impl<'a> NodeEditorPanel<'a> {
             painter.rect_stroke(
                 node_rect,
                 2.0 * self.graph.zoom(),
-                egui::Stroke::new(2.0, border_color),
+                egui::Stroke::new(2.0_f32, border_color),
             );
 
             // Content
@@ -230,7 +230,7 @@ impl<'a> NodeEditorPanel<'a> {
 
                         painter.line_segment(
                             [opt_rect.left_top(), opt_rect.left_bottom()],
-                            egui::Stroke::new(1.0, egui::Color32::BLACK),
+                            egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
                         );
                         painter.rect_filled(
                             egui::Rect::from_min_size(
@@ -298,7 +298,7 @@ impl<'a> NodeEditorPanel<'a> {
                     );
                     painter.line_segment(
                         [add_rect.left_top(), add_rect.left_bottom()],
-                        egui::Stroke::new(1.0, egui::Color32::BLACK),
+                        egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
                     );
                     painter.text(
                         add_rect.left_center() + egui::vec2(5.0, 0.0),

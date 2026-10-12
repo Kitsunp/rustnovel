@@ -45,8 +45,9 @@ pub use entry::{
     parse_runtime_script_from_entry,
 };
 pub use graph::{
-    CharacterPoseBinding, DecisionHub, FragmentPort, GraphConnection, GraphFragment, GraphStack,
-    NodeGraph, PortalNode, SceneLayer, SceneProfile,
+    CharacterPoseBinding, DecisionHub, FragmentPort, GraphConnection, GraphFragment,
+    GraphMutationUndo, GraphStack, NodeGraph, NodeRemovalContext, PortalNode, SceneLayer,
+    SceneProfile,
 };
 pub use lint::{LintCode, LintIssue, LintSeverity, ValidationPhase};
 pub use operation_log::{

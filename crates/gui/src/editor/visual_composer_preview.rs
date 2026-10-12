@@ -83,17 +83,47 @@ impl StageFit {
 
 pub fn fit_stage_rect(bounds: egui::Rect, stage_size: (f32, f32), fit: StageFit) -> egui::Rect {
     let (stage_w, stage_h) = stage_size;
-    let available = bounds.shrink2(egui::vec2(6.0, 6.0));
-    if available.width() <= 1.0 || available.height() <= 1.0 {
+    if !bounds.min.x.is_finite()
+        || !bounds.min.y.is_finite()
+        || !bounds.max.x.is_finite()
+        || !bounds.max.y.is_finite()
+        || !bounds.width().is_finite()
+        || !bounds.height().is_finite()
+        || bounds.width() < 0.0
+        || bounds.height() < 0.0
+    {
+        return egui::Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::ZERO);
+    }
+    let available = bounds.shrink2(egui::vec2(
+        6.0_f32.min(bounds.width() * 0.5),
+        6.0_f32.min(bounds.height() * 0.5),
+    ));
+    if !stage_w.is_finite()
+        || !stage_h.is_finite()
+        || stage_w <= 0.0
+        || stage_h <= 0.0
+        || !available.min.x.is_finite()
+        || !available.min.y.is_finite()
+        || !available.max.x.is_finite()
+        || !available.max.y.is_finite()
+        || available.width() <= 1.0
+        || available.height() <= 1.0
+    {
         return available;
     }
 
-    let stage_aspect = stage_w / stage_h;
-    let available_aspect = available.width() / available.height();
+    let stage_aspect = stage_w as f64 / stage_h as f64;
+    let available_aspect = available.width() as f64 / available.height() as f64;
     let mut size = if available_aspect > stage_aspect {
-        egui::vec2(available.height() * stage_aspect, available.height())
+        egui::vec2(
+            (available.height() as f64 * stage_aspect) as f32,
+            available.height(),
+        )
     } else {
-        egui::vec2(available.width(), available.width() / stage_aspect)
+        egui::vec2(
+            available.width(),
+            (available.width() as f64 / stage_aspect) as f32,
+        )
     };
     size *= fit.max_stage_fill();
     egui::Rect::from_center_size(available.center(), size)
@@ -101,9 +131,20 @@ pub fn fit_stage_rect(bounds: egui::Rect, stage_size: (f32, f32), fit: StageFit)
 
 pub fn stage_scale(stage_rect: egui::Rect, stage_size: (f32, f32)) -> f32 {
     let (stage_w, stage_h) = stage_size;
-    (stage_rect.width() / stage_w)
-        .min(stage_rect.height() / stage_h)
-        .max(0.001)
+    if !stage_w.is_finite()
+        || !stage_h.is_finite()
+        || stage_w <= 0.0
+        || stage_h <= 0.0
+        || !stage_rect.min.x.is_finite()
+        || !stage_rect.min.y.is_finite()
+        || !stage_rect.max.x.is_finite()
+        || !stage_rect.max.y.is_finite()
+    {
+        return 0.001;
+    }
+    ((stage_rect.max.x as f64 - stage_rect.min.x as f64) / stage_w as f64)
+        .min((stage_rect.max.y as f64 - stage_rect.min.y as f64) / stage_h as f64)
+        .clamp(0.001, f32::MAX as f64) as f32
 }
 
 pub fn stage_viewport_size(

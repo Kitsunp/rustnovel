@@ -11,6 +11,10 @@ use crate::editor::image_asset_cache::{
 use crate::editor::resource_service::EditorResourceService;
 use crate::editor::{AssetImportKind, PreviewQuality};
 
+#[cfg(test)]
+#[path = "asset_browser/tests.rs"]
+mod tests;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AssetBrowserAction {
     Import(AssetImportKind),
@@ -242,12 +246,15 @@ impl<'a> AssetBrowserPanel<'a> {
     ) -> egui::Response {
         let card_size = asset_card_size(ui.available_width());
         let (rect, response) = ui.allocate_exact_size(card_size, egui::Sense::click_and_drag());
+        if !ui.is_rect_visible(rect) {
+            return response;
+        }
         ui.painter()
             .rect_filled(rect, 4.0, egui::Color32::from_rgb(46, 46, 46));
         ui.painter().rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(72)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(72)),
         );
 
         let asset_path = normalize_asset_path(&path.to_string_lossy());
@@ -288,7 +295,17 @@ impl<'a> AssetBrowserPanel<'a> {
     ) -> Option<egui::TextureId> {
         let project_root = self.project_root?;
         let request_cache_key = thumbnail_cache_key(project_root, asset_path);
+        crate::editor::image_asset_cache::prune_image_cache_versions(
+            self.image_cache,
+            &request_cache_key,
+        );
+        crate::editor::image_asset_cache::prune_image_cache_versions(
+            self.image_failures,
+            &request_cache_key,
+        );
         if let Some(texture) = self.image_cache.get(&request_cache_key) {
+            self.resource_service
+                .record_texture_use(texture.id(), ctx.frame_nr());
             return Some(texture.id());
         }
         if let Some(should_retry) = self
@@ -312,8 +329,15 @@ impl<'a> AssetBrowserPanel<'a> {
             }
         };
         let cache_key = thumbnail_cache_key(project_root, &resolved_asset_path);
+        crate::editor::image_asset_cache::prune_image_cache_versions(self.image_cache, &cache_key);
+        crate::editor::image_asset_cache::prune_image_cache_versions(
+            self.image_failures,
+            &cache_key,
+        );
         if let Some(texture) = self.image_cache.get(&cache_key) {
             let texture = texture.clone();
+            self.resource_service
+                .record_texture_use(texture.id(), ctx.frame_nr());
             if request_cache_key != cache_key {
                 self.image_cache.insert(request_cache_key, texture.clone());
             }
@@ -344,6 +368,7 @@ impl<'a> AssetBrowserPanel<'a> {
             egui::TextureOptions::LINEAR,
         );
         let id = texture.id();
+        self.resource_service.record_texture_use(id, ctx.frame_nr());
         if request_cache_key != cache_key {
             self.image_cache.insert(request_cache_key, texture.clone());
         }

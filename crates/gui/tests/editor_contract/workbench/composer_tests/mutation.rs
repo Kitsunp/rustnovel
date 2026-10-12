@@ -258,10 +258,12 @@ fn composer_drag_operation_records_node_before_after_values() {
         entry.operation_kind_v2,
         Some(visual_novel_engine::authoring::OperationKind::ComposerObjectMoved)
     ));
-    assert_eq!(
-        entry.field_paths.first().map(|path| path.value.as_str()),
-        Some("graph.nodes[0].visual.transform")
-    );
+    let object_id = visual_novel_engine::authoring::composer::list_layered_objects(
+        workbench.node_graph.authoring_graph(), Some(scene),
+    ).into_iter().find(|object| object.character_name.as_deref() == Some("Ava"))
+        .expect("character layer").object_id;
+    assert_eq!(entry.field_paths.first().map(|path| path.value.as_str()),
+        Some(format!("composer.objects[{object_id}]").as_str()));
     assert!(entry
         .before_value
         .as_deref()
@@ -482,11 +484,11 @@ fn composer_choice_target_matches_authoring_command_bus_connect_and_logs_connect
     let before_authoring = workbench.node_graph.authoring_graph().clone();
     let mut expected_bus =
         visual_novel_engine::authoring::AuthoringCommandBus::new(before_authoring);
-    expected_bus
-        .apply(visual_novel_engine::authoring::AuthoringCommand::Connect {
-            from: choice,
-            from_port: 0,
-            to: new_target,
+    let expected_outcome = expected_bus
+        .apply(visual_novel_engine::authoring::AuthoringCommand::SetChoiceOptionTarget {
+            node_id: choice,
+            option_index: 0,
+            target_node_id: Some(new_target),
         })
         .expect("core command bus should reconnect the choice option");
 
@@ -516,13 +518,7 @@ fn composer_choice_target_matches_authoring_command_bus_connect_and_logs_connect
         .operation_log
         .last()
         .expect("choice target connection should be logged");
-    assert_eq!(entry.operation_kind, "node_connected");
-    assert!(matches!(
-        entry.operation_kind_v2,
-        Some(visual_novel_engine::authoring::OperationKind::NodeConnected)
-    ));
-    assert_eq!(
-        entry.field_paths.first().map(|path| path.value.as_str()),
-        Some("graph.edges[0:0]")
-    );
+    assert_eq!(entry.operation_kind, expected_outcome.operation.operation_kind);
+    assert_eq!(entry.operation_kind_v2, expected_outcome.operation.operation_kind_v2);
+    assert_eq!(entry.field_paths, expected_outcome.operation.field_paths);
 }

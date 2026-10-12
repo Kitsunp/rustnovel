@@ -1,4 +1,5 @@
 use super::super::{LintCode, LintIssue, NodeGraph, StoryNode};
+use crate::event::{audio_action_code, audio_channel_code, transition_kind_code};
 
 pub(super) fn issue_still_matches(issue: &LintIssue, graph: &NodeGraph) -> bool {
     match issue.code {
@@ -54,7 +55,7 @@ pub(super) fn issue_still_matches(issue: &LintIssue, graph: &NodeGraph) -> bool 
             matches!(
                 graph.get_node(node_id),
                 Some(StoryNode::Transition { kind, .. })
-                    if !matches!(kind.as_str(), "fade" | "fade_black" | "dissolve" | "cut")
+                    if transition_kind_code(kind).is_none()
             )
         }),
         LintCode::InvalidTransitionDuration => issue.node_id.is_some_and(|node_id| {
@@ -67,14 +68,14 @@ pub(super) fn issue_still_matches(issue: &LintIssue, graph: &NodeGraph) -> bool 
             matches!(
                 graph.get_node(node_id),
                 Some(StoryNode::AudioAction { channel, .. })
-                    if !matches!(channel.as_str(), "bgm" | "sfx" | "voice")
+                    if audio_channel_code(channel).is_none()
             )
         }),
         LintCode::InvalidAudioAction => issue.node_id.is_some_and(|node_id| {
             matches!(
                 graph.get_node(node_id),
                 Some(StoryNode::AudioAction { action, .. })
-                    if !matches!(action.as_str(), "play" | "stop" | "fade_out")
+                    if audio_action_code(action).is_none()
             )
         }),
         LintCode::InvalidAudioVolume => issue.node_id.is_some_and(|node_id| {
@@ -88,7 +89,7 @@ pub(super) fn issue_still_matches(issue: &LintIssue, graph: &NodeGraph) -> bool 
             matches!(
                 graph.get_node(node_id),
                 Some(StoryNode::AudioAction { action, fade_duration_ms, .. })
-                    if matches!(action.as_str(), "stop" | "fade_out")
+                    if matches!(audio_action_code(action), Some(1 | 2))
                         && fade_duration_ms.unwrap_or(0) == 0
             )
         }),

@@ -30,9 +30,9 @@ from .types import (
     normalize_choice_options,
 )
 
+from .script_types import CharacterInput, CharacterPatchInput
+
 ChoiceOptionInput = Union[ChoiceOption, Tuple[str, str]]
-CharacterInput = Union[Tuple[str, Optional[str], Optional[str]], CharacterPlacement]
-CharacterPatchInput = Union[Tuple[str, Optional[str], Optional[str]], CharacterPatch]
 
 
 class ScriptBuilder:
