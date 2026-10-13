@@ -40,10 +40,6 @@ impl EditorWorkbench {
                     }
                 } else {
                     self.node_graph = NodeGraph::default();
-                    self.operation_log.clear();
-                    self.verification_runs.clear();
-                    self.composer_layer_overrides.clear();
-                    self.composer_background_fit_overrides.clear();
                     self.initialize_loaded_document(None);
                     self.refresh_operation_fingerprint();
                     if show_toasts {
@@ -110,10 +106,6 @@ impl EditorWorkbench {
         show_toast: bool,
     ) {
         self.node_graph = loaded_script.graph;
-        self.operation_log = loaded_script.operation_log;
-        self.verification_runs = loaded_script.verification_runs;
-        self.composer_layer_overrides = loaded_script.composer_layer_overrides;
-        self.composer_background_fit_overrides = loaded_script.composer_background_fit_overrides;
         self.initialize_loaded_document(Some(path));
 
         let msg = if loaded_script.was_imported {
@@ -165,10 +157,7 @@ impl EditorWorkbench {
         self.current_script = None;
         self.compilation_cache.invalidate();
         self.validation_issues.clear();
-        self.rebuild_authoring_session_from_fields();
-        let mut stack = UndoStack::new();
-        stack.push(self.node_graph.clone());
-        self.undo_stack = stack;
+        self.last_fix_command_index = None;
         self.pending_save_path = save_path;
         self.saved_script_snapshot = Some(self.node_graph.to_script());
     }
@@ -369,14 +358,9 @@ impl EditorWorkbench {
     }
 
     pub fn execute_save(&mut self, path: &std::path::Path, _content_unused: &str) {
-        if let Err(e) = crate::editor::project_io::save_authoring_document_with_metadata(
-            path,
-            &self.node_graph,
-            &self.composer_layer_overrides,
-            &self.composer_background_fit_overrides,
-            &self.operation_log,
-            &self.verification_runs,
-        ) {
+        self.node_graph.commit_drag_positions();
+        self.record_pending_editor_operation();
+        if let Err(e) = crate::editor::project_io::save_authoring_document(path, &self.node_graph) {
             tracing::error!("Failed to save: {}", e);
             self.toast = Some(ToastState::error(format!("Save failed: {}", e)));
         } else {

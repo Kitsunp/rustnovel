@@ -2,7 +2,7 @@ use super::*;
 use visual_novel_engine::authoring::{AuthoringPosition, StoryNode};
 
 fn add_test_node(graph: &mut PyNodeGraph, node: StoryNode) -> u32 {
-    let node_id = graph.inner.next_node_id();
+    let node_id = graph.inner().next_node_id();
     graph
         .apply_authoring_command(AuthoringCommand::CreateNode {
             node_id,

@@ -16,7 +16,6 @@ use super::node_types::{
     node_visual_height, node_visual_width, ContextMenu, StoryNode, StoryNodeVisualExt,
     CHOICE_HEADER_HEIGHT, CHOICE_OPTION_CELL_WIDTH, CHOICE_OPTION_ROW_HEIGHT, NODE_WIDTH,
 };
-use super::undo::UndoStack;
 
 // =============================================================================
 // NodeEditorPanel - UI Widget
@@ -70,7 +69,7 @@ pub fn node_toolbar_is_compact(available_width: f32) -> bool {
 /// Node editor panel widget with pan/zoom and context menu.
 pub struct NodeEditorPanel<'a> {
     graph: &'a mut NodeGraph,
-    history: NodeEditorHistory<'a>,
+    history_request: Option<&'a mut Option<NodeEditorHistoryAction>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,58 +78,30 @@ pub enum NodeEditorHistoryAction {
     Redo,
 }
 
-enum NodeEditorHistory<'a> {
-    Snapshots(&'a mut UndoStack),
-    Document {
-        can_undo: bool,
-        can_redo: bool,
-        request: &'a mut Option<NodeEditorHistoryAction>,
-    },
-}
-
 impl<'a> NodeEditorPanel<'a> {
-    pub fn new(graph: &'a mut NodeGraph, undo_stack: &'a mut UndoStack) -> Self {
+    pub fn new(graph: &'a mut NodeGraph) -> Self {
         Self {
             graph,
-            history: NodeEditorHistory::Snapshots(undo_stack),
+            history_request: None,
         }
     }
 
-    /// Delegates history actions to the workbench that owns the full document.
+    /// Lets the workbench refresh compilation and preview after a history action.
     pub fn for_document(
         graph: &'a mut NodeGraph,
-        can_undo: bool,
-        can_redo: bool,
         request: &'a mut Option<NodeEditorHistoryAction>,
     ) -> Self {
         Self {
             graph,
-            history: NodeEditorHistory::Document {
-                can_undo,
-                can_redo,
-                request,
-            },
+            history_request: Some(request),
         }
     }
 
     fn can_undo(&self) -> bool {
-        match &self.history {
-            NodeEditorHistory::Snapshots(stack) => stack.can_undo(),
-            NodeEditorHistory::Document { can_undo, .. } => *can_undo,
-        }
+        self.graph.authoring_session.undo_delta_count() > 0
     }
-
     fn can_redo(&self) -> bool {
-        match &self.history {
-            NodeEditorHistory::Snapshots(stack) => stack.can_redo(),
-            NodeEditorHistory::Document { can_redo, .. } => *can_redo,
-        }
-    }
-
-    fn push_drag_snapshot(&mut self) {
-        if let NodeEditorHistory::Snapshots(stack) = &mut self.history {
-            stack.push(self.graph.clone());
-        }
+        self.graph.authoring_session.redo_delta_count() > 0
     }
 
     #[inline]
@@ -313,9 +284,11 @@ impl<'a> NodeEditorPanel<'a> {
         if ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
             let ids = self.graph.selected_node_ids();
             if !ids.is_empty() {
-                for id in ids {
-                    self.graph.remove_node(id);
-                }
+                self.graph.edit_graph("Remove selected nodes", |graph| {
+                    for id in ids {
+                        graph.remove_node(id);
+                    }
+                });
                 self.graph.selected = None;
                 self.graph.selected_nodes.clear();
             }
@@ -339,6 +312,7 @@ impl<'a> NodeEditorPanel<'a> {
     }
 
     fn apply_history_action(&mut self, action: NodeEditorHistoryAction) -> bool {
+        self.graph.commit_drag_positions();
         let available = match action {
             NodeEditorHistoryAction::Undo => self.can_undo(),
             NodeEditorHistoryAction::Redo => self.can_redo(),
@@ -346,29 +320,23 @@ impl<'a> NodeEditorPanel<'a> {
         if !available {
             return false;
         }
-        let restored = match &mut self.history {
-            NodeEditorHistory::Snapshots(stack) => match action {
-                NodeEditorHistoryAction::Undo => stack.undo(self.graph.clone()),
-                NodeEditorHistoryAction::Redo => stack.redo(self.graph.clone()),
-            },
-            NodeEditorHistory::Document { request, .. } => {
-                **request = Some(action);
-                return true;
-            }
-        };
-        if let Some(restored) = restored {
-            *self.graph = restored;
-            let (kind, details) = match action {
-                NodeEditorHistoryAction::Undo => ("undo", "Undo graph editor mutation"),
-                NodeEditorHistoryAction::Redo => ("redo", "Redo graph editor mutation"),
-            };
-            self.graph
-                .queue_operation_hint(kind, details, Some("graph".to_string()), false);
-            self.graph.mark_modified();
-            true
-        } else {
-            false
+        if let Some(request) = &mut self.history_request {
+            **request = Some(action);
+            return true;
         }
+        use visual_novel_engine::authoring::AuthoringDocumentCommand;
+        let (command, kind) = match action {
+            NodeEditorHistoryAction::Undo => (AuthoringDocumentCommand::UndoLast, "undo"),
+            NodeEditorHistoryAction::Redo => (AuthoringDocumentCommand::RedoLast, "redo"),
+        };
+        if self.graph.authoring_session.apply(command).is_err() {
+            return false;
+        }
+        self.graph.reconcile_view_after_document_change();
+        self.graph
+            .queue_operation_hint(kind, "Document history", Some("graph".into()), false);
+        self.graph.mark_modified();
+        true
     }
 
     fn render_connections(&self, painter: &egui::Painter, rect: egui::Rect) {

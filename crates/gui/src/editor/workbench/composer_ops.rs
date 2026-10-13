@@ -1,6 +1,5 @@
 use super::*;
 use crate::editor::StoryNode;
-use visual_novel_engine::runtime::EventCompiled;
 
 impl EditorWorkbench {
     pub fn inspect_composer_scene(&mut self, node_id: u32) {
@@ -67,36 +66,56 @@ impl EditorWorkbench {
 
     pub fn add_composer_created_node(&mut self, node: StoryNode, pos: eframe::egui::Pos2) -> u32 {
         let source = self.node_graph.selected;
-        let new_id = self.node_graph.add_node(node, pos);
-        if let Some(source_id) = source {
-            self.connect_composer_node_from_selection(source_id, new_id);
-        }
+        let (new_id, _) = self
+            .node_graph
+            .authoring_session
+            .edit_graph(
+                visual_novel_engine::authoring::OperationKind::NodeCreated,
+                "Create connected composer node",
+                Some("graph.nodes".into()),
+                |graph| {
+                    let new_id = graph.add_node(
+                        node,
+                        visual_novel_engine::authoring::AuthoringPosition::new(pos.x, pos.y),
+                    );
+                    if let Some(source_id) = source {
+                        let port = match graph.get_node(source_id) {
+                            Some(StoryNode::Choice { options, .. }) => {
+                                let used = graph
+                                    .connections()
+                                    .filter(|connection| connection.from == source_id)
+                                    .map(|connection| connection.from_port)
+                                    .collect::<std::collections::BTreeSet<_>>();
+                                Some(
+                                    (0..=options.len())
+                                        .find(|candidate| !used.contains(candidate))
+                                        .unwrap_or(options.len()),
+                                )
+                            }
+                            Some(StoryNode::End) | None => None,
+                            _ => Some(0),
+                        };
+                        if let Some(port) = port {
+                            let position = graph
+                                .get_node_pos(source_id)
+                                .map(|pos| {
+                                    visual_novel_engine::authoring::AuthoringPosition::new(
+                                        pos.x,
+                                        pos.y + crate::editor::node_types::NODE_VERTICAL_SPACING,
+                                    )
+                                })
+                                .unwrap_or_default();
+                            graph.connect_or_branch(source_id, port, new_id, position);
+                        }
+                    }
+                    new_id
+                },
+            )
+            .expect("new composer graph is a valid replacement");
         self.node_graph.set_single_selection(Some(new_id));
         self.selected_node = Some(new_id);
         self.node_graph.mark_modified();
         new_id
-    }
-
-    fn connect_composer_node_from_selection(&mut self, source_id: u32, new_id: u32) {
-        let Some(source_node) = self.node_graph.get_node(source_id).cloned() else {
-            return;
-        };
-        let port = match source_node {
-            StoryNode::Choice { options, .. } => {
-                let used = self
-                    .node_graph
-                    .connections()
-                    .filter(|connection| connection.from == source_id)
-                    .map(|connection| connection.from_port)
-                    .collect::<std::collections::BTreeSet<_>>();
-                (0..=options.len())
-                    .find(|candidate| !used.contains(candidate))
-                    .unwrap_or(options.len())
-            }
-            StoryNode::End => return,
-            _ => 0,
-        };
-        self.node_graph.connect_or_branch(source_id, port, new_id);
     }
 
     pub fn build_entity_node_map(&self) -> std::collections::HashMap<u32, u32> {
@@ -276,22 +295,14 @@ impl EditorWorkbench {
                 self.toast = Some(ToastState::error("Composer test unavailable"));
                 return;
             };
-            match engine.current_event() {
-                Ok(EventCompiled::Choice(_)) => match choice {
-                    Some(index) => engine.choose(index).map(|_| engine.take_audio_commands()),
-                    None => {
-                        self.toast = Some(ToastState::warning("Choose an option to continue"));
-                        return;
-                    }
-                },
-                Ok(EventCompiled::ExtCall { .. }) => engine.resume().map(|_| Vec::new()),
-                Ok(_) => engine.step().map(|(audio, _)| audio),
-                Err(err) => Err(err),
-            }
+            visual_novel_engine::authoring::composer::advance_preview_engine(engine, choice)
         };
 
         match result {
-            Ok(audio_commands) => {
+            Ok(None) => {
+                self.toast = Some(ToastState::warning("Choose an option to continue"));
+            }
+            Ok(Some(audio_commands)) => {
                 self.apply_composer_audio_commands(audio_commands);
                 self.refresh_scene_from_engine_preview();
                 self.select_current_composer_runtime_node();
@@ -308,10 +319,7 @@ impl EditorWorkbench {
                 self.toast = Some(ToastState::error("Composer test unavailable"));
                 return;
             };
-            engine.jump_to_label(label).map(|_| {
-                engine.clear_session_history();
-                engine.take_audio_commands()
-            })
+            visual_novel_engine::authoring::composer::jump_preview_engine(engine, label)
         };
 
         match result {

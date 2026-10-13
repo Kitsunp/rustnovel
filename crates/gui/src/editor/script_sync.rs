@@ -5,7 +5,7 @@
 
 use visual_novel_engine::{authoring::NodeGraph as AuthoringGraph, runtime::ScriptRaw};
 
-use super::authoring_adapter::{from_authoring_graph, to_authoring_graph};
+use super::authoring_adapter::from_authoring_graph;
 use super::node_graph::NodeGraph;
 
 /// Creates a GUI `NodeGraph` from a raw script.
@@ -23,5 +23,5 @@ pub fn from_script(script: &ScriptRaw) -> NodeGraph {
 
 /// Converts a GUI `NodeGraph` to a raw script.
 pub fn to_script(graph: &NodeGraph) -> ScriptRaw {
-    to_authoring_graph(graph).to_script()
+    graph.authoring_graph().to_script()
 }

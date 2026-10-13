@@ -286,7 +286,6 @@ fn composer_drag_operation_records_node_before_after_values() {
     workbench.node_graph.clear_operation_hint();
     workbench.node_graph.clear_modified();
     workbench.refresh_operation_fingerprint();
-    let before = workbench.node_graph.clone();
 
     assert!(workbench.apply_composer_node_mutation(
         scene,
@@ -300,9 +299,9 @@ fn composer_drag_operation_records_node_before_after_values() {
         },
     ));
     workbench.node_graph.mark_modified();
-    workbench.commit_modified_graph(before);
+    workbench.commit_modified_graph();
 
-    let entry = workbench
+    let entry = workbench.document()
         .operation_log
         .last()
         .expect("composer drag should be logged");
@@ -348,7 +347,6 @@ fn composer_overlay_dialogue_edit_updates_node_and_operation_trace() {
     workbench.node_graph.clear_operation_hint();
     workbench.node_graph.clear_modified();
     workbench.refresh_operation_fingerprint();
-    let before = workbench.node_graph.clone();
 
     assert!(workbench.apply_composer_node_mutation(
         dialogue,
@@ -358,7 +356,7 @@ fn composer_overlay_dialogue_edit_updates_node_and_operation_trace() {
         },
     ));
     workbench.node_graph.mark_modified();
-    workbench.commit_modified_graph(before);
+    workbench.commit_modified_graph();
 
     let Some(StoryNode::Dialogue { speaker, text }) = workbench.node_graph.get_node(dialogue)
     else {
@@ -367,7 +365,7 @@ fn composer_overlay_dialogue_edit_updates_node_and_operation_trace() {
     assert_eq!(speaker, "Sakura");
     assert_eq!(text, "A visible edit from the Composer overlay.");
 
-    let entry = workbench
+    let entry = workbench.document()
         .operation_log
         .last()
         .expect("dialogue overlay edit should be logged");
@@ -465,7 +463,6 @@ fn composer_choice_reorder_preserves_option_target_pairs() {
     workbench.node_graph.clear_operation_hint();
     workbench.node_graph.clear_modified();
     workbench.refresh_operation_fingerprint();
-    let before = workbench.node_graph.clone();
 
     assert!(workbench.apply_composer_node_mutation(
         choice,
@@ -475,7 +472,7 @@ fn composer_choice_reorder_preserves_option_target_pairs() {
         },
     ));
     workbench.node_graph.mark_modified();
-    workbench.commit_modified_graph(before);
+    workbench.commit_modified_graph();
 
     let Some(StoryNode::Choice { options, .. }) = workbench.node_graph.get_node(choice) else {
         panic!("expected choice node");
@@ -497,7 +494,7 @@ fn composer_choice_reorder_preserves_option_target_pairs() {
     targets.sort_unstable();
     assert_eq!(targets, vec![(0, center), (1, right), (2, left)]);
 
-    let entry = workbench
+    let entry = workbench.document()
         .operation_log
         .last()
         .expect("choice reorder should be logged");
@@ -539,7 +536,6 @@ fn composer_choice_target_matches_authoring_command_bus_connect_and_logs_connect
     workbench.node_graph.clear_modified();
     workbench.refresh_operation_fingerprint();
 
-    let before_graph = workbench.node_graph.clone();
     let before_authoring = workbench.node_graph.authoring_graph().clone();
     let mut expected_bus =
         visual_novel_engine::authoring::AuthoringCommandBus::new(before_authoring);
@@ -573,9 +569,9 @@ fn composer_choice_target_matches_authoring_command_bus_connect_and_logs_connect
     ));
 
     workbench.node_graph.mark_modified();
-    workbench.commit_modified_graph(before_graph);
+    workbench.commit_modified_graph();
 
-    let entry = workbench
+    let entry = workbench.document()
         .operation_log
         .last()
         .expect("choice target connection should be logged");

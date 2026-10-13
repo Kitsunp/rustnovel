@@ -2,6 +2,8 @@
 //!
 //! This module keeps semantic story editing independent from egui/eframe.
 
+mod compilation_cache;
+pub use compilation_cache::CompilationCache;
 mod command_bus;
 pub mod compiler;
 pub mod composer;
@@ -41,9 +43,9 @@ pub use document_command_bus::{
     DiagnosticsIndex, NodeIndex, RouteIndex,
 };
 pub use entry::{
-    export_runtime_script_from_authoring, load_authoring_document_or_script,
-    load_runtime_script_from_entry, parse_authoring_document_or_script,
-    parse_runtime_script_from_entry,
+    export_runtime_script_from_authoring, load_authoring_document_or_script, load_authoring_entry,
+    load_runtime_script_from_entry, parse_authoring_document_or_script, parse_authoring_entry,
+    parse_runtime_script_from_entry, save_authoring_document,
 };
 pub use graph::{
     CharacterPoseBinding, DecisionHub, FragmentPort, GraphConnection, GraphFragment,

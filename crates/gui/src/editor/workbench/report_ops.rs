@@ -104,7 +104,7 @@ impl EditorWorkbench {
         let report_script = self.node_graph.to_script();
         let fingerprints =
             visual_novel_engine::authoring::build_authoring_document_report_fingerprint(
-                &self.current_authoring_document(),
+                self.document(),
                 &report_script,
             );
         let verification_run = visual_novel_engine::authoring::VerificationRun::from_diagnostics(
@@ -130,7 +130,7 @@ impl EditorWorkbench {
             "selected_issue": self.selected_issue,
             "issues": issues,
             "quick_fix_audit": quick_fix_audit,
-            "operation_log": &self.operation_log,
+            "operation_log": &self.node_graph.authoring_session.document().operation_log,
             "dry_run": dry_run,
         });
         serde_json::to_string_pretty(&payload)
@@ -412,7 +412,7 @@ fn required_issue_str_field<'a>(
 fn current_fingerprints_value(workbench: &EditorWorkbench) -> Result<serde_json::Value, String> {
     let script = workbench.node_graph.to_script();
     let fingerprints = visual_novel_engine::authoring::build_authoring_document_report_fingerprint(
-        &workbench.current_authoring_document(),
+        workbench.document(),
         &script,
     );
     serde_json::to_value(fingerprints).map_err(|err| format!("fingerprint serialization: {err}"))

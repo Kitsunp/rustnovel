@@ -156,11 +156,7 @@ impl EditorWorkbench {
 
     fn apply_repro_case(&mut self, case: visual_novel_engine::ReproCase) -> Result<(), String> {
         let graph = crate::editor::script_sync::from_script(&case.script);
-        self.node_graph = graph;
-        self.operation_log.clear();
-        self.verification_runs.clear();
-        self.composer_layer_overrides.clear();
-        self.composer_background_fit_overrides.clear();
+        self.node_graph = NodeGraph::from_authoring_graph(graph.authoring_graph().clone());
         self.initialize_loaded_document(None);
         self.saved_script_snapshot = Some(case.script.clone());
         self.loaded_repro_case = Some(case);

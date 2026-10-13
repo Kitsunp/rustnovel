@@ -1,7 +1,6 @@
 //! Thin adapter between the headless authoring graph and the egui wrapper.
 //!
-//! The GUI `NodeGraph` now owns a `visual_novel_engine::authoring::NodeGraph`
-//! directly. This module remains as a small compatibility boundary for code
+//! The GUI `NodeGraph` owns an authoring document session and separate view state. This module remains as a small compatibility boundary for code
 //! paths that still ask for an explicit conversion.
 
 use visual_novel_engine::authoring::NodeGraph as AuthoringGraph;

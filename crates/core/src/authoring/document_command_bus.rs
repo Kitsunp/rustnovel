@@ -1,4 +1,5 @@
 mod apply;
+mod edit;
 mod inverse;
 mod read_model;
 mod replay;

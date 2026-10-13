@@ -5,7 +5,6 @@ use eframe::egui;
 #[test]
 fn node_editor_panel_creation_paints_canvas_and_keeps_graph_state() {
     let mut graph = NodeGraph::new();
-    let mut undo = UndoStack::new();
     let node_id = graph.add_node(StoryNode::Start, egui::pos2(120.0, 90.0));
     let ctx = egui::Context::default();
     let output = ctx.run(
@@ -18,7 +17,7 @@ fn node_editor_panel_creation_paints_canvas_and_keeps_graph_state() {
         },
         |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                NodeEditorPanel::new(&mut graph, &mut undo).ui(ui);
+                NodeEditorPanel::new(&mut graph).ui(ui);
             });
         },
     );
@@ -196,13 +195,13 @@ fn auto_layout_hierarchical_resolves_overlaps_in_dense_graph() {
 fn keyboard_undo_redo_restore_graph_and_leave_typed_operation_hint() {
     let mut graph = NodeGraph::new();
     let start = graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
-    let mut undo = UndoStack::new();
-    undo.push(graph.clone());
-    let end = graph.add_node(StoryNode::End, egui::pos2(0.0, 120.0));
-    graph.connect(start, end);
+    graph.edit_graph("Create connected end", |graph| {
+        let end = graph.add_node(StoryNode::End, visual_novel_engine::authoring::AuthoringPosition::new(0.0, 120.0));
+        graph.connect(start, end);
+    });
 
     {
-        let mut panel = NodeEditorPanel::new(&mut graph, &mut undo);
+        let mut panel = NodeEditorPanel::new(&mut graph);
         assert!(panel.apply_undo_shortcut());
     }
 
@@ -214,7 +213,7 @@ fn keyboard_undo_redo_restore_graph_and_leave_typed_operation_hint() {
     assert!(!hint.push_undo_snapshot);
 
     {
-        let mut panel = NodeEditorPanel::new(&mut graph, &mut undo);
+        let mut panel = NodeEditorPanel::new(&mut graph);
         assert!(panel.apply_redo_shortcut());
     }
 
@@ -230,16 +229,18 @@ fn keyboard_undo_redo_restore_graph_and_leave_typed_operation_hint() {
     // In a workbench the same shortcuts request a document action; they must
     // never restore a graph-only snapshot before its metadata can be restored.
     use crate::editor::node_editor::NodeEditorHistoryAction;
+    graph.authoring_session.apply(visual_novel_engine::authoring::AuthoringDocumentCommand::UndoLast).unwrap();
     let content = serde_json::to_value(graph.authoring_graph()).unwrap();
     for (redo, expected) in [(false, NodeEditorHistoryAction::Undo), (true, NodeEditorHistoryAction::Redo)] {
         let mut request = None;
-        let mut panel = NodeEditorPanel::for_document(&mut graph, true, true, &mut request);
+        let mut panel = NodeEditorPanel::for_document(&mut graph, &mut request);
         assert!(if redo { panel.apply_redo_shortcut() } else { panel.apply_undo_shortcut() });
         assert_eq!(request, Some(expected));
         assert_eq!(serde_json::to_value(graph.authoring_graph()).unwrap(), content);
     }
     let mut request = None;
-    let mut panel = NodeEditorPanel::for_document(&mut graph, false, false, &mut request);
+    let mut empty_graph = NodeGraph::new();
+    let mut panel = NodeEditorPanel::for_document(&mut empty_graph, &mut request);
     assert!(!panel.apply_undo_shortcut());
     assert!(!panel.apply_redo_shortcut());
     assert!(request.is_none());

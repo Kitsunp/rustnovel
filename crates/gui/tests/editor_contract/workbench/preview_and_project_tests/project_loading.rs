@@ -350,7 +350,7 @@ entry_point = "main.json"
     assert!(workbench.current_script.is_none());
     assert!(workbench.scene.iter().next().is_none());
     assert!(workbench.pending_save_path.is_none());
-    assert_eq!(workbench.authoring_session.undo_delta_count(), 0);
+    assert_eq!(workbench.node_graph.authoring_session.undo_delta_count(), 0);
 }
 
 #[test]

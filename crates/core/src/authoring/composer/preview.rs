@@ -1,3 +1,4 @@
+use crate::audio::AudioCommand;
 use crate::error::VnResult;
 use crate::event::EventCompiled;
 use crate::localization::LocalizationCatalog;
@@ -13,6 +14,7 @@ use super::{
 #[derive(Clone, Debug)]
 pub struct ComposerPreviewSession {
     engine: Engine,
+    pending_audio: Vec<AudioCommand>,
 }
 
 impl ComposerPreviewSession {
@@ -23,20 +25,28 @@ impl ComposerPreviewSession {
             SecurityPolicy::default(),
             ResourceLimiter::default(),
         )?;
-        engine.jump_to_label(&format!("node_{node_id}"))?;
-        Ok(Self { engine })
+        let pending_audio = jump_preview_engine(&mut engine, &format!("node_{node_id}"))?;
+        Ok(Self {
+            engine,
+            pending_audio,
+        })
     }
 
     pub fn advance(&mut self) -> VnResult<()> {
-        match self.engine.current_event()? {
-            EventCompiled::Choice(_) => Ok(()),
-            EventCompiled::ExtCall { .. } => self.engine.resume(),
-            _ => self.engine.step().map(|_| ()),
+        if let Some(commands) = advance_preview_engine(&mut self.engine, None)? {
+            self.pending_audio.extend(commands);
         }
+        Ok(())
     }
 
     pub fn choose(&mut self, option_index: usize) -> VnResult<()> {
-        self.engine.choose(option_index).map(|_| ())
+        self.engine.choose(option_index)?;
+        self.pending_audio.extend(self.engine.take_audio_commands());
+        Ok(())
+    }
+
+    pub fn take_audio_commands(&mut self) -> Vec<AudioCommand> {
+        std::mem::take(&mut self.pending_audio)
     }
 
     pub fn snapshot(
@@ -72,4 +82,33 @@ impl ComposerPreviewSession {
             catalog,
         )
     }
+}
+
+/// Returns None when the preview is waiting for a choice; otherwise returns the
+/// audio produced by the same runtime transition used by all preview clients.
+pub fn advance_preview_engine(
+    engine: &mut Engine,
+    choice: Option<usize>,
+) -> VnResult<Option<Vec<AudioCommand>>> {
+    let commands = match engine.current_event()? {
+        EventCompiled::Choice(_) => {
+            let Some(index) = choice else {
+                return Ok(None);
+            };
+            engine.choose(index)?;
+            engine.take_audio_commands()
+        }
+        EventCompiled::ExtCall { .. } => {
+            engine.resume()?;
+            engine.take_audio_commands()
+        }
+        _ => engine.step()?.0,
+    };
+    Ok(Some(commands))
+}
+
+pub fn jump_preview_engine(engine: &mut Engine, label: &str) -> VnResult<Vec<AudioCommand>> {
+    engine.jump_to_label(label)?;
+    engine.clear_session_history();
+    Ok(engine.take_audio_commands())
 }

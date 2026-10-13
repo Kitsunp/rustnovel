@@ -177,33 +177,37 @@ impl NodeGraph {
             return Vec::new();
         }
 
-        let selected_set = selected.iter().copied().collect::<BTreeSet<_>>();
-        let mut id_map = BTreeMap::new();
-        let mut new_ids = Vec::with_capacity(selected.len());
-
-        for old_id in &selected {
-            let Some(node) = self.get_node(*old_id).cloned() else {
-                continue;
-            };
-            let Some(pos) = self.get_node_pos(*old_id) else {
-                continue;
-            };
-            let new_id = self.add_node(node, egui::pos2(pos.x + 50.0, pos.y + 50.0));
-            id_map.insert(*old_id, new_id);
-            new_ids.push(new_id);
-        }
-
-        let internal_connections = self
-            .connections()
-            .filter(|conn| selected_set.contains(&conn.from) && selected_set.contains(&conn.to))
+        let id_map = self.edit_graph("Duplicate selected nodes", |graph| {
+            let selected_set = selected.iter().copied().collect::<BTreeSet<_>>();
+            let originals = graph
+                .nodes()
+                .filter(|(id, _, _)| selected_set.contains(id))
+                .cloned()
+                .collect::<Vec<_>>();
+            let connections = graph
+                .connections()
+                .filter(|conn| selected_set.contains(&conn.from) && selected_set.contains(&conn.to))
+                .cloned()
+                .collect::<Vec<_>>();
+            let mut id_map = BTreeMap::new();
+            for (old_id, node, pos) in originals {
+                let new_id =
+                    graph.add_node(node, AuthoringPosition::new(pos.x + 50.0, pos.y + 50.0));
+                id_map.insert(old_id, new_id);
+            }
+            for connection in connections {
+                if let (Some(from), Some(to)) =
+                    (id_map.get(&connection.from), id_map.get(&connection.to))
+                {
+                    graph.connect_port(*from, connection.from_port, *to);
+                }
+            }
+            id_map
+        });
+        let new_ids = selected
+            .iter()
+            .filter_map(|id| id_map.get(id).copied())
             .collect::<Vec<_>>();
-        for conn in internal_connections {
-            let (Some(from), Some(to)) = (id_map.get(&conn.from), id_map.get(&conn.to)) else {
-                continue;
-            };
-            self.connect_port(*from, conn.from_port, *to);
-        }
-
         self.selected_nodes = new_ids.iter().copied().collect();
         self.selected = self
             .selected

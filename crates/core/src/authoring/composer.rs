@@ -22,7 +22,7 @@ pub use objects::{
     set_layer_visible, set_scene_object_pose,
 };
 pub use presentation::build_presentation_snapshot;
-pub use preview::ComposerPreviewSession;
+pub use preview::{advance_preview_engine, jump_preview_engine, ComposerPreviewSession};
 pub use route::preview_scene_route;
 pub use types::{
     list_stage_layers, BackgroundFit, ComposerOverlay, ComposerSnapshot, LayerOverride,

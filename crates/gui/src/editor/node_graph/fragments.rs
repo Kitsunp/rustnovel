@@ -90,16 +90,16 @@ impl NodeGraph {
     }
 
     pub fn fragments(&self) -> Vec<visual_novel_engine::authoring::GraphFragment> {
-        self.authoring.list_fragments()
+        self.authoring_graph().list_fragments()
     }
 
     pub fn active_fragment(&self) -> Option<&str> {
-        self.authoring.active_fragment()
+        self.authoring_graph().active_fragment()
     }
 
     pub fn visible_nodes(&self) -> impl Iterator<Item = (u32, StoryNode, egui::Pos2)> + '_ {
         let visible_ids = self
-            .authoring
+            .authoring_graph()
             .visible_node_ids()
             .into_iter()
             .collect::<BTreeSet<_>>();
@@ -108,10 +108,10 @@ impl NodeGraph {
     }
 
     pub fn visible_connections(&self) -> impl Iterator<Item = GraphConnection> + '_ {
-        self.authoring.visible_connections().into_iter()
+        self.authoring_graph().visible_connections().into_iter()
     }
 
     pub fn fragment_validation_issues(&self) -> Vec<visual_novel_engine::authoring::LintIssue> {
-        self.authoring.validate_fragments()
+        self.authoring_graph().validate_fragments()
     }
 }

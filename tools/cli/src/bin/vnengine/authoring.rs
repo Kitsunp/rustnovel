@@ -5,9 +5,9 @@ use clap::{Args, Subcommand};
 use serde::Serialize;
 use visual_novel_engine::authoring::{
     apply_authoring_document_command_headless, apply_authoring_document_commands_headless,
-    load_authoring_document_or_script, source_looks_like_authoring_document,
-    validate_authoring_graph_with_project_root, AuthoringCommand as CoreAuthoringCommand,
-    AuthoringDocument, AuthoringDocumentCommand, AuthoringValidationReport, LintSeverity,
+    load_authoring_document_or_script, validate_authoring_graph_with_project_root,
+    AuthoringCommand as CoreAuthoringCommand, AuthoringDocument, AuthoringDocumentCommand,
+    AuthoringValidationReport, LintSeverity,
 };
 use visual_novel_engine::{run_repro_case, ReproCase};
 
@@ -474,25 +474,8 @@ fn build_validation_report(
 }
 
 fn load_authoring_document(path: &Path) -> Result<AuthoringDocument> {
-    let source =
-        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    if source_looks_like_authoring_document(&source) {
-        return AuthoringDocument::from_json(&source).with_context(|| {
-            format!(
-                "parse authoring document {} (legacy fallback disabled because authoring markers were found)",
-                path.display()
-            )
-        });
-    }
-    match AuthoringDocument::from_json(&source) {
-        Ok(document) => Ok(document),
-        Err(err) => {
-            let graph = load_authoring_document_or_script(path).with_context(|| {
-                format!("load legacy runtime script after authoring parse failed ({err})")
-            })?;
-            Ok(AuthoringDocument::new(graph))
-        }
-    }
+    visual_novel_engine::authoring::load_authoring_entry(path)
+        .with_context(|| format!("load authoring entry {}", path.display()))
 }
 
 fn write_mutated_document(
@@ -506,7 +489,11 @@ fn write_mutated_document(
     } else {
         output.ok_or_else(|| anyhow::anyhow!("mutating command requires --output or --in-place"))?
     };
-    write_json(path, document)
+    if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    visual_novel_engine::authoring::save_authoring_document(path, document)
+        .with_context(|| format!("save authoring document {}", path.display()))
 }
 
 fn target_mutation_path(input: &Path, output: Option<&Path>, in_place: bool) -> Option<PathBuf> {

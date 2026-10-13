@@ -34,7 +34,7 @@ pub struct SceneStagePainter<'a> {
     image_failures: &'a mut HashMap<String, String>,
     resource_service: &'a mut EditorResourceService,
     asset_store: Option<vnengine_assets::AssetStore>,
-    layer_overrides: HashMap<String, LayerOverride>,
+    layer_overrides: Option<&'a std::collections::BTreeMap<String, LayerOverride>>,
     entity_object_ids: HashMap<u32, String>,
     background_fit: crate::editor::BackgroundFit,
 }
@@ -69,14 +69,17 @@ impl<'a> SceneStagePainter<'a> {
             image_failures,
             resource_service,
             asset_store: None,
-            layer_overrides: HashMap::new(),
+            layer_overrides: None,
             entity_object_ids: HashMap::new(),
             background_fit: crate::editor::BackgroundFit::default(),
         }
     }
 
-    pub fn with_layer_overrides(mut self, layer_overrides: HashMap<String, LayerOverride>) -> Self {
-        self.layer_overrides = layer_overrides;
+    pub fn with_layer_overrides(
+        mut self,
+        layer_overrides: &'a std::collections::BTreeMap<String, LayerOverride>,
+    ) -> Self {
+        self.layer_overrides = Some(layer_overrides);
         self
     }
 
@@ -308,15 +311,13 @@ impl<'a> SceneStagePainter<'a> {
         source_node_id: Option<u32>,
         index: usize,
     ) -> Option<&LayerOverride> {
+        let overrides = self.layer_overrides?;
         let stable_id = scene_entity_object_id(entity, source_node_id, index);
         self.entity_object_ids
             .get(&entity.id.raw())
-            .and_then(|id| self.layer_overrides.get(id))
-            .or_else(|| self.layer_overrides.get(&stable_id))
-            .or_else(|| {
-                self.layer_overrides
-                    .get(&format!("entity:{}", entity.id.raw()))
-            })
+            .and_then(|id| overrides.get(id))
+            .or_else(|| overrides.get(&stable_id))
+            .or_else(|| overrides.get(&format!("entity:{}", entity.id.raw())))
     }
 
     fn paint_entity(

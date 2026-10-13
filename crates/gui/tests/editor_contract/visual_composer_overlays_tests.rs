@@ -37,7 +37,7 @@ fn authoring_overlay_mouse_clicks_inspect_nodes_instead_of_advancing_runtime() {
                                 geometry,
                                 42,
                                 &node,
-                                &HashMap::new(),
+                                &std::collections::BTreeMap::new(),
                                 &mut action,
                             );
                         });
@@ -265,7 +265,7 @@ fn selected_authoring_choice_overlay_takes_precedence_over_stale_runtime_dialogu
         Some(&engine),
         Some(&selected),
         ComposerPreviewMode::IsolatedNode,
-        &HashMap::new(),
+        &std::collections::BTreeMap::new(),
     )
     .expect("overlay selection should not hide runtime errors")
     .expect("selected choice overlay");
@@ -300,7 +300,7 @@ fn hidden_authoring_choice_overlay_does_not_reveal_unrelated_runtime_dialogue() 
         prompt: "Hidden selected choice".to_string(),
         options: vec!["A".to_string()],
     };
-    let mut overrides = HashMap::new();
+    let mut overrides = std::collections::BTreeMap::new();
     overrides.insert(
         "overlay:choice".to_string(),
         LayerOverride {
@@ -322,7 +322,7 @@ fn hidden_authoring_choice_overlay_does_not_reveal_unrelated_runtime_dialogue() 
                 Some(&engine),
                 Some(&StoryNode::Start),
                 mode,
-                &HashMap::new()
+                &std::collections::BTreeMap::new()
             )
             .unwrap(),
             None
@@ -336,7 +336,7 @@ fn runtime_overlay_visibility_uses_matching_layer_override() {
         prompt: visual_novel_engine::runtime::SharedStr::from("Pick one"),
         options: Vec::new(),
     });
-    let mut overrides = HashMap::new();
+    let mut overrides = std::collections::BTreeMap::new();
     assert!(runtime_overlay_visible(&event, &overrides));
 
     overrides.insert(
@@ -381,7 +381,7 @@ fn runtime_preview_mode_uses_engine_overlay_instead_of_selected_authoring_node()
         Some(&engine),
         Some(&selected),
         ComposerPreviewMode::RuntimeInherited,
-        &HashMap::new(),
+        &std::collections::BTreeMap::new(),
     )
     .expect("overlay selection should not hide runtime errors")
     .expect("runtime choice overlay");
@@ -427,7 +427,7 @@ fn runtime_and_authoring_choice_options_are_never_merged() {
         Some(&engine),
         Some(&selected),
         ComposerPreviewMode::RuntimeInherited,
-        &HashMap::new(),
+        &std::collections::BTreeMap::new(),
     )
     .expect("overlay selection should not hide runtime errors")
     .expect("runtime choice overlay");
@@ -444,7 +444,7 @@ fn runtime_and_authoring_choice_options_are_never_merged() {
         Some(&engine),
         Some(&selected),
         ComposerPreviewMode::IsolatedNode,
-        &HashMap::new(),
+        &std::collections::BTreeMap::new(),
     )
     .expect("overlay selection should not hide runtime errors")
     .expect("selected choice overlay");
@@ -460,7 +460,7 @@ fn runtime_and_authoring_choice_options_are_never_merged() {
         Some(&engine),
         Some(&selected),
         ComposerPreviewMode::SelectedRoute,
-        &HashMap::new(),
+        &std::collections::BTreeMap::new(),
     )
     .unwrap()
     .unwrap();
@@ -497,7 +497,7 @@ fn runtime_preview_overlay_reports_engine_error_instead_of_authoring_fallback() 
         Some(&engine),
         Some(&selected),
         ComposerPreviewMode::RuntimeInherited,
-        &HashMap::new(),
+        &std::collections::BTreeMap::new(),
     )
     .expect_err("runtime preview should surface exhausted runtime instead of falling back");
 
