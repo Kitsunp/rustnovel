@@ -339,6 +339,7 @@ fn export_wizard_report_summary_matches_real_export_flow_outputs() {
 fn failed_compilation_discards_previous_runtime_and_recovers() {
     for action in ["sync", "validate", "play"] {
         let mut workbench = EditorWorkbench::new(VnConfig::default());
+        workbench.composer_preview_mode = crate::editor::ComposerPreviewMode::SelectedRoute;
         let start = workbench
             .node_graph
             .add_node(StoryNode::Start, egui::pos2(0.0, 0.0));

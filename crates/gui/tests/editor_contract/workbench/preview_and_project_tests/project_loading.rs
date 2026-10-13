@@ -241,6 +241,7 @@ entry_point = "main.json"
 fn load_standalone_script_replaces_previous_project_root_and_manifest_state() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);
+    workbench.composer_preview_mode = crate::editor::ComposerPreviewMode::SelectedRoute;
     let dir = tempdir().expect("tempdir");
     let first_root = dir.path().join("first_project");
     let second_root = dir.path().join("second_project");

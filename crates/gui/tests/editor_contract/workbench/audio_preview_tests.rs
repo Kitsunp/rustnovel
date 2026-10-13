@@ -89,6 +89,7 @@ struct FailingAudioProbe;
 fn composer_previews_inherited_music_and_exposes_audio_failures() {
     use crate::editor::{visual_composer::VisualComposerAction, StoryNode};
     let mut workbench = EditorWorkbench::new(VnConfig::default());
+    workbench.composer_preview_mode = crate::editor::ComposerPreviewMode::SelectedRoute;
     let start = workbench
         .node_graph
         .add_node(StoryNode::Start, egui::Pos2::ZERO);
