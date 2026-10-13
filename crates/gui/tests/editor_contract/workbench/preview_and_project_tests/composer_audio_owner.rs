@@ -50,6 +50,7 @@ fn scene_preview_audio_stop_clears_music_entity() {
 fn scene_preview_builds_owner_map_for_core_entities() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);
+    workbench.composer_preview_mode = crate::editor::ComposerPreviewMode::SelectedRoute;
 
     let start = workbench
         .node_graph
@@ -159,6 +160,7 @@ fn composer_mutation_updates_node_character_position() {
 fn fallback_entity_owner_map_prefers_scene_music_owner_over_audio_action_override() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);
+    workbench.composer_preview_mode = crate::editor::ComposerPreviewMode::SelectedRoute;
 
     let start = workbench
         .node_graph
