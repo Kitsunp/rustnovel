@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn run_command(cli: Cli, json_output: bool) -> Result<Option<serde_json::Value>> {
     match cli.command {
+        Command::Asset { command } => asset_import::run(command),
         Command::Validate { script } => {
             validate_script(&script)?;
             Ok(Some(serde_json::json!({

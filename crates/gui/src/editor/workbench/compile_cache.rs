@@ -1,5 +1,4 @@
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::editor::compiler::CompilationResult;
@@ -142,18 +141,8 @@ fn hash_referenced_asset_state(
     hex_lower(&hasher.finalize())
 }
 
-pub(super) fn sha256_file(path: &Path) -> Result<String, std::io::Error> {
-    let mut file = fs::File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(hex_lower(&hasher.finalize()))
+fn sha256_file(path: &Path) -> Result<String, std::io::Error> {
+    visual_novel_engine::atomic_io::sha256_file(path).map(|(hash, _)| hash)
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {

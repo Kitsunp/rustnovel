@@ -1,3 +1,4 @@
+pub mod assets;
 pub mod audio;
 pub mod builder;
 mod character_input;
