@@ -7,11 +7,7 @@ pub enum AssetImportKind {
 
 impl AssetImportKind {
     pub fn label(self) -> &'static str {
-        match self {
-            AssetImportKind::Background => "Background",
-            AssetImportKind::Character => "Character",
-            AssetImportKind::Audio => "Audio",
-        }
+        visual_novel_engine::manifest::AssetImportKind::from(self).label()
     }
 
     pub fn dialog_title(self) -> &'static str {
@@ -23,18 +19,11 @@ impl AssetImportKind {
     }
 
     pub fn destination_dir(self) -> &'static str {
-        match self {
-            AssetImportKind::Background => "assets/backgrounds",
-            AssetImportKind::Character => "assets/characters",
-            AssetImportKind::Audio => "assets/audio",
-        }
+        visual_novel_engine::manifest::AssetImportKind::from(self).destination_dir()
     }
 
     pub fn allowed_extensions(self) -> &'static [&'static str] {
-        match self {
-            AssetImportKind::Background | AssetImportKind::Character => &["png", "jpg", "jpeg"],
-            AssetImportKind::Audio => &["ogg", "wav", "flac", "mp3"],
-        }
+        visual_novel_engine::manifest::AssetImportKind::from(self).allowed_extensions()
     }
 
     pub fn file_dialog_extensions(self) -> &'static [&'static str] {
@@ -64,4 +53,19 @@ pub enum AssetFieldTarget {
     ScenePatchMusic,
     ScenePatchAddCharacterExpression(usize),
     AudioActionAsset,
+}
+impl From<AssetImportKind> for visual_novel_engine::manifest::AssetImportKind {
+    fn from(kind: AssetImportKind) -> Self {
+        match kind {
+            AssetImportKind::Background => Self::Background,
+            AssetImportKind::Character => Self::Character,
+            AssetImportKind::Audio => Self::Audio,
+        }
+    }
+}
+
+impl AssetImportKind {
+    pub fn field_path(self, name: &str) -> String {
+        visual_novel_engine::manifest::AssetImportKind::from(self).field_path(name)
+    }
 }

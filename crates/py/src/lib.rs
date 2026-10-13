@@ -39,6 +39,10 @@ fn visual_novel_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGraphStats>()?;
     // Phase 7: Editor classes
     register_editor_classes(m)?;
+    m.add_function(wrap_pyfunction!(
+        bindings::assets::import_project_asset_json,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(run_visual_novel, m)?)?;
     m.add_function(wrap_pyfunction!(validate_runtime_config, m)?)?;
     m.add_function(wrap_pyfunction!(validate_script_schema_version, m)?)?;

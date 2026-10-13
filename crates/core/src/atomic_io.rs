@@ -1,8 +1,34 @@
 //! Shared publication of complete files through a sibling temporary file.
 
+use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+
+/// Hashes a file incrementally and returns its hash and bytes read.
+pub fn sha256_file(path: &Path) -> io::Result<(String, u64)> {
+    use std::io::Read;
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut total = 0u64;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        total = total.saturating_add(read as u64);
+    }
+    Ok((
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+        total,
+    ))
+}
 
 /// Writes and syncs a sibling temporary before replacing a regular destination.
 /// Failed writes leave the destination in place and attempt to remove the temporary.

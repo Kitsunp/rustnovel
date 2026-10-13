@@ -1,5 +1,7 @@
 from typing import Any, Callable, Dict, List, NoReturn, Optional, Sequence, Tuple, Union
 
+def import_project_asset_json(manifest_path: str, source: str, kind: str, max_bytes: int = 15728640) -> str: ...
+
 CharacterInput = Union[
     Tuple[str, Optional[str], Optional[str]],
     Tuple[str, Optional[str], Optional[str], Optional[int], Optional[int], Optional[float]],
