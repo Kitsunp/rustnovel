@@ -4,8 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::state::EngineState;
@@ -213,6 +212,18 @@ pub struct SaveSlotEntry {
 }
 
 #[derive(Debug)]
+pub struct SaveSlotListIssue {
+    pub path: PathBuf,
+    pub error: SaveStoreError,
+}
+
+#[derive(Debug, Default)]
+pub struct SaveSlotListing {
+    pub entries: Vec<SaveSlotEntry>,
+    pub issues: Vec<SaveSlotListIssue>,
+}
+
+#[derive(Debug)]
 pub struct SaveSlotStore {
     root: PathBuf,
 }
@@ -280,11 +291,20 @@ impl SaveSlotStore {
         slot_id: u16,
         save: &SaveData,
     ) -> Result<SaveSlotEntry, SaveStoreError> {
+        self.write_slot(slot_id, false, save)
+    }
+
+    fn write_slot(
+        &self,
+        slot_id: u16,
+        quick: bool,
+        save: &SaveData,
+    ) -> Result<SaveSlotEntry, SaveStoreError> {
         self.ensure_layout()?;
-        let slot_path = self.slot_path(slot_id, false);
-        let metadata_path = self.metadata_path(slot_id, false);
+        let slot_path = self.slot_path(slot_id, quick);
+        let metadata_path = self.metadata_path(slot_id, quick);
         self.atomic_write_binary(&slot_path, &save.to_authenticated_binary(AUTH_SAVE_KEY)?)?;
-        let metadata = self.build_metadata(slot_id, false, save);
+        let metadata = self.build_metadata(slot_id, quick, save);
         self.atomic_write_binary(
             &metadata_path,
             serde_json::to_vec_pretty(&metadata)
@@ -298,55 +318,67 @@ impl SaveSlotStore {
     }
 
     pub fn load_slot(&self, slot_id: u16) -> Result<SaveData, SaveStoreError> {
-        let slot_path = self.slot_path(slot_id, false);
+        self.read_slot(slot_id, false)
+    }
+
+    fn read_slot(&self, slot_id: u16, quick: bool) -> Result<SaveData, SaveStoreError> {
+        let slot_path = self.slot_path(slot_id, quick);
         let backup_path = backup_path(&slot_path);
         self.load_binary_with_recovery(&slot_path, &backup_path)
     }
 
+    /// Removes a numbered slot, its metadata and their recovery backups.
+    /// Missing files are accepted; filesystem failures can leave a partial removal.
     pub fn remove_slot(&self, slot_id: u16) -> Result<(), SaveStoreError> {
         let slot_path = self.slot_path(slot_id, false);
         let metadata_path = self.metadata_path(slot_id, false);
-        if store_path_exists(&slot_path, "slot file")? {
-            fs::remove_file(slot_path)?;
+        let paths = [
+            (backup_path(&slot_path), "slot backup"),
+            (backup_path(&metadata_path), "slot metadata backup"),
+            (slot_path, "slot file"),
+            (metadata_path, "slot metadata"),
+        ];
+        // Reject unexpected directories or symlinks before deleting any slot data.
+        for (path, role) in &paths {
+            store_path_exists(path, role)?;
         }
-        if store_path_exists(&metadata_path, "slot metadata")? {
-            fs::remove_file(metadata_path)?;
+        for (path, _) in paths {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(SaveStoreError::Io(err)),
+            }
         }
         Ok(())
     }
 
     pub fn quicksave(&self, save: &SaveData) -> Result<SaveSlotEntry, SaveStoreError> {
-        self.ensure_layout()?;
-        let slot_path = self.slot_path(0, true);
-        let metadata_path = self.metadata_path(0, true);
-        self.atomic_write_binary(&slot_path, &save.to_authenticated_binary(AUTH_SAVE_KEY)?)?;
-        let metadata = self.build_metadata(0, true, save);
-        self.atomic_write_binary(
-            &metadata_path,
-            serde_json::to_vec_pretty(&metadata)
-                .map_err(|err| SaveError::Serialization(err.to_string()))?
-                .as_slice(),
-        )?;
-        Ok(SaveSlotEntry {
-            metadata,
-            path: slot_path,
-        })
+        self.write_slot(0, true, save)
     }
 
     pub fn quickload(&self) -> Result<SaveData, SaveStoreError> {
-        let slot_path = self.slot_path(0, true);
-        let backup_path = backup_path(&slot_path);
-        self.load_binary_with_recovery(&slot_path, &backup_path)
+        self.read_slot(0, true)
     }
 
     pub fn has_quicksave(&self) -> Result<bool, SaveStoreError> {
         self.ensure_layout()?;
-        store_path_exists(&self.slot_path(0, true), "quicksave")
+        save_file_available(&self.slot_path(0, true))
     }
 
+    /// Lists slots strictly, returning an error if any metadata entry cannot be read.
     pub fn list_slots(&self) -> Result<Vec<SaveSlotEntry>, SaveStoreError> {
+        let listing = self.list_slots_with_issues()?;
+        if let Some(issue) = listing.issues.into_iter().next() {
+            return Err(issue.error);
+        }
+        Ok(listing.entries)
+    }
+
+    /// Lists readable entries and their individual failures without hiding healthy saves.
+    /// Failure to open or enumerate the metadata directory still returns an error.
+    pub fn list_slots_with_issues(&self) -> Result<SaveSlotListing, SaveStoreError> {
         self.ensure_layout()?;
-        let mut entries = Vec::new();
+        let mut listing = SaveSlotListing::default();
 
         let meta_dir = self.root.join("meta");
         for entry in fs::read_dir(meta_dir)? {
@@ -356,20 +388,35 @@ impl SaveSlotStore {
                 continue;
             }
 
-            let bytes = read_existing_regular_file(&path, "slot metadata")?;
-            let metadata: SaveSlotMetadata = serde_json::from_slice(&bytes)
-                .map_err(|err| SaveError::Serialization(err.to_string()))?;
-            let slot_path = self.slot_path(metadata.slot_id, metadata.quick);
-            if store_path_exists(&slot_path, "slot file")? {
-                entries.push(SaveSlotEntry {
-                    metadata,
-                    path: slot_path,
-                });
+            match self.read_slot_entry(&path) {
+                Ok(Some(entry)) => listing.entries.push(entry),
+                Ok(None) => {}
+                Err(error) => listing.issues.push(SaveSlotListIssue { path, error }),
             }
         }
 
-        entries.sort_by_key(|entry| std::cmp::Reverse(entry.metadata.updated_unix_ms));
-        Ok(entries)
+        listing.entries.sort_by_key(|entry| {
+            (
+                std::cmp::Reverse(entry.metadata.updated_unix_ms),
+                !entry.metadata.quick,
+                entry.metadata.slot_id,
+            )
+        });
+        listing
+            .issues
+            .sort_by(|left, right| left.path.cmp(&right.path));
+        Ok(listing)
+    }
+
+    fn read_slot_entry(&self, path: &Path) -> Result<Option<SaveSlotEntry>, SaveStoreError> {
+        let bytes = read_existing_regular_file(path, "slot metadata")?;
+        let metadata: SaveSlotMetadata = serde_json::from_slice(&bytes)
+            .map_err(|err| SaveError::Serialization(err.to_string()))?;
+        let slot_path = self.slot_path(metadata.slot_id, metadata.quick);
+        Ok(save_file_available(&slot_path)?.then_some(SaveSlotEntry {
+            metadata,
+            path: slot_path,
+        }))
     }
 
     fn build_metadata(&self, slot_id: u16, quick: bool, save: &SaveData) -> SaveSlotMetadata {
@@ -391,61 +438,39 @@ impl SaveSlotStore {
         primary_path: &Path,
         backup_path: &Path,
     ) -> Result<SaveData, SaveStoreError> {
-        let primary_bytes = read_existing_regular_file(primary_path, "save slot")?;
-        match SaveData::from_any_binary(&primary_bytes, AUTH_SAVE_KEY) {
-            Ok(save) => Ok(save),
-            Err(primary_err) => {
-                let Some(backup_bytes) =
-                    read_optional_regular_file(backup_path, "save slot backup")?
-                else {
-                    return Err(SaveStoreError::RecoveryFailed {
-                        primary: primary_err,
-                        backup: None,
-                    });
-                };
-                match SaveData::from_any_binary(&backup_bytes, AUTH_SAVE_KEY) {
-                    Ok(save) => Ok(save),
-                    Err(backup_err) => Err(SaveStoreError::RecoveryFailed {
-                        primary: primary_err,
-                        backup: Some(backup_err),
-                    }),
+        let primary_error = match read_optional_regular_file(primary_path, "save slot")? {
+            Some(bytes) => match SaveData::from_any_binary(&bytes, AUTH_SAVE_KEY) {
+                Ok(save) => return Ok(save),
+                Err(err) => Some(err),
+            },
+            None => None,
+        };
+        if let Some(bytes) = read_optional_regular_file(backup_path, "save slot backup")? {
+            return SaveData::from_any_binary(&bytes, AUTH_SAVE_KEY).map_err(|backup| {
+                match primary_error {
+                    Some(primary) => SaveStoreError::RecoveryFailed {
+                        primary,
+                        backup: Some(backup),
+                    },
+                    None => SaveStoreError::Save(backup),
                 }
-            }
+            });
         }
+        Err(match primary_error {
+            Some(primary) => SaveStoreError::RecoveryFailed {
+                primary,
+                backup: None,
+            },
+            None => missing_store_file(primary_path, "save slot"),
+        })
     }
 
     fn atomic_write_binary(&self, path: &Path, bytes: &[u8]) -> Result<(), SaveStoreError> {
-        let parent = path.parent().ok_or_else(|| {
-            SaveStoreError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "target path has no parent",
-            ))
-        })?;
-        fs::create_dir_all(parent)?;
-        let had_existing = store_path_exists(path, "save slot target")?;
-        if had_existing {
-            let backup = backup_path(path);
-            ensure_replaceable_regular_path(&backup, "save slot backup")?;
-            fs::copy(path, backup)?;
+        if store_path_exists(path, "save slot target")? {
+            crate::atomic_io::atomic_copy(path, &backup_path(path))?;
         }
-        let (tmp_path, mut tmp_file) = create_unique_temp_file(path)?;
-        tmp_file.write_all(bytes)?;
-        tmp_file.sync_all()?;
-        drop(tmp_file);
-        if had_existing {
-            fs::remove_file(path)?;
-        }
-        match fs::rename(&tmp_path, path) {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                let _ = fs::remove_file(&tmp_path);
-                if had_existing {
-                    let backup = backup_path(path);
-                    let _ = fs::copy(&backup, path);
-                }
-                Err(SaveStoreError::Io(err))
-            }
-        }
+        crate::atomic_io::atomic_replace(path, bytes)?;
+        Ok(())
     }
 
     fn slot_path(&self, slot_id: u16, quick: bool) -> PathBuf {
@@ -479,13 +504,21 @@ fn store_path_exists(path: &Path, role: &str) -> Result<bool, SaveStoreError> {
 }
 
 fn read_existing_regular_file(path: &Path, role: &str) -> Result<Vec<u8>, SaveStoreError> {
-    if store_path_exists(path, role)? {
-        fs::read(path).map_err(SaveStoreError::Io)
+    read_optional_regular_file(path, role)?.ok_or_else(|| missing_store_file(path, role))
+}
+
+fn missing_store_file(path: &Path, role: &str) -> SaveStoreError {
+    SaveStoreError::Io(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("missing {role}: {}", path.display()),
+    ))
+}
+
+fn save_file_available(path: &Path) -> Result<bool, SaveStoreError> {
+    if store_path_exists(path, "save slot")? {
+        Ok(true)
     } else {
-        Err(SaveStoreError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("missing {role}: {}", path.display()),
-        )))
+        store_path_exists(&backup_path(path), "save slot backup")
     }
 }
 
@@ -497,41 +530,9 @@ fn read_optional_regular_file(path: &Path, role: &str) -> Result<Option<Vec<u8>>
     }
 }
 
-fn ensure_replaceable_regular_path(path: &Path, role: &str) -> Result<(), SaveStoreError> {
-    let _ = store_path_exists(path, role)?;
-    Ok(())
-}
-
 fn non_regular_store_path(path: &Path, role: &str) -> SaveStoreError {
     SaveStoreError::Io(std::io::Error::new(
         std::io::ErrorKind::InvalidInput,
         format!("{role} is not a regular file: {}", path.display()),
     ))
-}
-
-fn create_unique_temp_file(path: &Path) -> Result<(PathBuf, fs::File), SaveStoreError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("save");
-    for _ in 0..16 {
-        let tmp_path = parent.join(format!(".{file_name}.tmp-{}", uuid::Uuid::new_v4()));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)
-        {
-            Ok(file) => return Ok((tmp_path, file)),
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(err) => return Err(SaveStoreError::Io(err)),
-        }
-    }
-    Err(SaveStoreError::Io(std::io::Error::new(
-        std::io::ErrorKind::AlreadyExists,
-        format!(
-            "could not allocate unique save temp file for {}",
-            path.display()
-        ),
-    )))
 }

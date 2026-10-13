@@ -9,15 +9,52 @@ use crate::model::{AssetError, AssetKind, SUPPORTED_IMAGE_EXTENSIONS};
 
 pub fn sanitize_rel_path(rel: &Path) -> Result<PathBuf, AssetError> {
     use std::path::Component::*;
+    // Backslashes are native separators on Windows, but ambiguous literal
+    // filename characters on other platforms.
+    if !cfg!(windows) && rel.as_os_str().to_string_lossy().contains('\\') {
+        return Err(AssetError::Traversal);
+    }
     let mut out = PathBuf::new();
     for component in rel.components() {
         match component {
             CurDir => {}
-            Normal(part) => out.push(part),
+            Normal(part) => {
+                let name = part.to_str().ok_or(AssetError::Traversal)?;
+                if name.is_empty()
+                    || name.ends_with('.')
+                    || name.ends_with(' ')
+                    || name.contains(':')
+                    || ["%2e", "%2f", "%5c", "%00"]
+                        .iter()
+                        .any(|s| name.to_ascii_lowercase().contains(s))
+                    || name.bytes().any(|b| b == 0 || b < 32)
+                    || is_windows_device_name(name)
+                {
+                    return Err(AssetError::Traversal);
+                }
+                out.push(part);
+            }
             ParentDir | RootDir | Prefix(_) => return Err(AssetError::Traversal),
         }
     }
+    if out.as_os_str().is_empty() {
+        return Err(AssetError::Traversal);
+    }
     Ok(out)
+}
+
+fn is_windows_device_name(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0')
 }
 
 pub(crate) fn normalize_asset_key(path: &Path) -> String {

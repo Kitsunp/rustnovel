@@ -52,6 +52,9 @@ impl AssetStore {
             }
             None => None,
         };
+        if (mode == SecurityMode::Untrusted || require_manifest) && manifest.is_none() {
+            return Err(AssetError::ManifestMissing);
+        }
         let allowed_image_extensions = SUPPORTED_IMAGE_EXTENSIONS
             .into_iter()
             .map(|ext| ext.to_string())
@@ -98,14 +101,8 @@ impl AssetStore {
 
         let full_path = canonicalize_within_root(&self.root, &rel)?;
 
-        let bytes = fs::read(&full_path)?;
+        let bytes = crate::read_asset_bytes(&full_path, self.limits.max_bytes)?;
         let size = bytes.len() as u64;
-        if size > self.limits.max_bytes {
-            return Err(AssetError::TooLarge {
-                size,
-                max: self.limits.max_bytes,
-            });
-        }
         self.verify_manifest(&cache_key, size, &bytes)?;
         let bytes: Arc<[u8]> = Arc::from(bytes);
         self.byte_cache
@@ -117,7 +114,7 @@ impl AssetStore {
 
     pub fn load_image(&self, asset_path: &str) -> Result<LoadedImage, AssetError> {
         let resolved_path = self.resolve_image_path(asset_path)?;
-        let bytes = self.load_bytes(&resolved_path)?;
+        let bytes = self.load_bytes_shared(&resolved_path)?;
 
         decode_image_bytes(&resolved_path, &bytes, &self.limits)
     }
@@ -138,6 +135,16 @@ impl AssetStore {
         for candidate in candidate_image_paths(&normalized) {
             attempted.push(candidate.clone());
             let rel = sanitize_rel_path(Path::new(&candidate))?;
+            if !rel
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    self.allowed_image_extensions
+                        .contains(&ext.to_ascii_lowercase())
+                })
+            {
+                continue;
+            }
             let full_path = self.root.join(&rel);
             match full_path.canonicalize() {
                 Ok(canonical_path) => {
@@ -163,7 +170,8 @@ impl AssetStore {
     }
 
     fn verify_manifest(&self, asset_key: &str, size: u64, bytes: &[u8]) -> Result<(), AssetError> {
-        if self.mode == SecurityMode::Untrusted && self.require_manifest && self.manifest.is_none()
+        if (self.mode == SecurityMode::Untrusted || self.require_manifest)
+            && self.manifest.is_none()
         {
             return Err(AssetError::ManifestMissing);
         }
@@ -191,6 +199,24 @@ pub fn decode_image_bytes(
     bytes: &[u8],
     limits: &AssetLimits,
 ) -> Result<LoadedImage, AssetError> {
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|err| AssetError::Decode {
+            path: path.to_string(),
+            reason: err.to_string(),
+        })?;
+    let (width, height) = reader.into_dimensions().map_err(|err| AssetError::Decode {
+        path: path.to_string(),
+        reason: err.to_string(),
+    })?;
+    if width == 0 || height == 0 || width > limits.max_width || height > limits.max_height {
+        return Err(AssetError::InvalidDimensions {
+            width,
+            height,
+            max_width: limits.max_width,
+            max_height: limits.max_height,
+        });
+    }
     let image = image::load_from_memory(bytes).map_err(|err| AssetError::Decode {
         path: path.to_string(),
         reason: err.to_string(),

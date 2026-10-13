@@ -1,4 +1,6 @@
 use super::*;
+use crate::audio::{scene_music_command, DEFAULT_AUDIO_FADE_MS};
+use crate::event::{audio_action_code, audio_channel_code, transition_kind_code};
 
 pub(super) fn compile_event_raw(
     ctx: &mut CompileCtx<'_>,
@@ -180,6 +182,7 @@ pub(super) fn execute_event_compiled(
         EventCompiled::ExtCall { .. } => Ok(()),
         EventCompiled::AudioAction(action) => {
             if let Some(command) = audio_command_from_action(action) {
+                ctx.state.visual.apply_audio_action(action);
                 ctx.audio_commands.push(command);
             }
             ctx.advance_position()
@@ -202,6 +205,7 @@ pub(super) fn preview_event_compiled(
     match event {
         EventCompiled::Scene(scene) => ctx.visual.apply_scene(scene),
         EventCompiled::Patch(patch) => ctx.visual.apply_patch(patch),
+        EventCompiled::AudioAction(action) => ctx.visual.apply_audio_action(action),
         EventCompiled::SetCharacterPosition(position) => {
             match ctx.visual.set_character_position(position) {
                 Ok(()) => {}
@@ -326,42 +330,28 @@ pub(super) fn append_scene_frame_for_event(ctx: &mut SceneFrameCtx<'_>, event: &
 }
 
 fn compile_audio_channel(channel: &str) -> VnResult<u8> {
-    let normalized = channel.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "bgm" => Ok(0),
-        "sfx" => Ok(1),
-        "voice" => Ok(2),
-        _ => Err(VnError::InvalidScript(format!(
+    audio_channel_code(channel).ok_or_else(|| {
+        VnError::InvalidScript(format!(
             "invalid audio channel '{channel}' (expected bgm|sfx|voice)"
-        ))),
-    }
+        ))
+    })
 }
 
 fn compile_audio_action(action: &str) -> VnResult<u8> {
-    let normalized = action.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "play" => Ok(0),
-        "stop" => Ok(1),
-        "fade_out" => Ok(2),
-        _ => Err(VnError::InvalidScript(format!(
+    audio_action_code(action).ok_or_else(|| {
+        VnError::InvalidScript(format!(
             "invalid audio action '{action}' (expected play|stop|fade_out)"
-        ))),
-    }
+        ))
+    })
 }
 
 fn compile_transition_kind(kind: &str) -> VnResult<u8> {
-    let normalized = kind.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "fade" | "fade_black" => Ok(0),
-        "dissolve" => Ok(1),
-        "cut" => Ok(2),
-        _ => Err(VnError::InvalidScript(format!(
+    transition_kind_code(kind).ok_or_else(|| {
+        VnError::InvalidScript(format!(
             "invalid transition kind '{kind}' (expected fade|fade_black|dissolve|cut)"
-        ))),
-    }
+        ))
+    })
 }
-
-const DEFAULT_AUDIO_FADE_MS: u64 = 500;
 
 pub(super) fn append_music_delta(
     before: Option<SharedStr>,
@@ -371,18 +361,7 @@ pub(super) fn append_music_delta(
     if before.as_deref() == after.as_deref() {
         return;
     }
-    match after {
-        Some(music) => audio_commands.push(AudioCommand::PlayBgm {
-            resource: AssetId::from_path(music.as_ref()),
-            path: music.clone(),
-            r#loop: true,
-            volume: None,
-            fade_in: Duration::from_millis(DEFAULT_AUDIO_FADE_MS),
-        }),
-        None => audio_commands.push(AudioCommand::StopBgm {
-            fade_out: Duration::from_millis(DEFAULT_AUDIO_FADE_MS),
-        }),
-    }
+    audio_commands.push(scene_music_command(after.as_ref()));
 }
 
 fn audio_command_from_action(action: &AudioActionCompiled) -> Option<AudioCommand> {

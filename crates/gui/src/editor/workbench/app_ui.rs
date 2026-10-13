@@ -32,6 +32,8 @@ impl EditorWorkbench {
         self.render_export_report_panel(ctx);
         self.render_profiler_cache_panel(ctx);
         self.render_layout_debug_overlay(ctx);
+        self.resource_service
+            .trim_texture_cache(&mut self.composer_image_cache, ctx.frame_nr());
         self.persist_layout_prefs_if_changed();
     }
 
@@ -379,6 +381,8 @@ impl EditorWorkbench {
                 ui.label(format!("compile cache hits: {compile_hits}"));
                 ui.label(format!("compile cache misses: {compile_misses}"));
                 if ui.button("Clear asset cache").clicked() {
+                    self.composer_image_cache.clear();
+                    self.composer_image_failures.clear();
                     self.resource_service.clear();
                     self.toast = Some(ToastState::success("Asset cache cleared"));
                 }
@@ -408,7 +412,7 @@ impl EditorWorkbench {
         painter.rect_stroke(
             rect,
             0.0,
-            egui::Stroke::new(1.5, egui::Color32::from_rgb(90, 190, 255)),
+            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(90, 190, 255)),
         );
 
         egui::Area::new(egui::Id::new("layout_debug_overlay_panel"))

@@ -10,16 +10,23 @@ use crate::resource::StringBudget;
 pub mod branching;
 pub mod choice;
 pub mod dialogue;
+mod media;
 pub mod scene;
 
 #[cfg(any(feature = "python", feature = "python-embed"))]
 mod python_bridge;
 #[cfg(any(feature = "python", feature = "python-embed"))]
 mod python_bridge_helpers;
+#[cfg(any(feature = "python", feature = "python-embed"))]
+mod python_conversion;
 
 pub use branching::{CmpOp, CondCompiled, CondRaw};
 pub use choice::{ChoiceCompiled, ChoiceOptionCompiled, ChoiceOptionRaw, ChoiceRaw};
 pub use dialogue::{DialogueCompiled, DialogueRaw};
+pub use media::{
+    audio_action_code, audio_action_name, audio_channel_code, audio_channel_name,
+    transition_kind_code, transition_kind_name,
+};
 pub use scene::{
     CharacterPatchCompiled, CharacterPatchRaw, CharacterPlacementCompiled, CharacterPlacementRaw,
     ScenePatchCompiled, ScenePatchRaw, SceneUpdateCompiled, SceneUpdateRaw,
@@ -169,6 +176,13 @@ pub struct SceneTransitionCompiled {
 
 #[cfg(any(feature = "python", feature = "python-embed"))]
 impl EventRaw {
+    /// Converts every raw field using the same representation as authoring JSON.
+    pub fn to_python_dict(&self, py: pyo3::Python<'_>) -> pyo3::PyResult<pyo3::PyObject> {
+        let value = serde_json::to_value(self)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        crate::python::json_value_to_py(py, &value)
+    }
+
     pub fn to_python(&self, py: pyo3::Python<'_>) -> pyo3::PyResult<pyo3::PyObject> {
         use pyo3::IntoPyObject;
         let event = pyo3::Py::new(py, PyEvent::from_raw(self.clone()))?;
@@ -178,6 +192,11 @@ impl EventRaw {
 
 #[cfg(any(feature = "python", feature = "python-embed"))]
 impl EventCompiled {
+    /// Returns the flat Python runtime event, retaining compiled IDs and targets.
+    pub fn to_python_dict(&self, py: pyo3::Python<'_>) -> pyo3::PyResult<pyo3::PyObject> {
+        python_conversion::compiled_event_to_python_dict(self, py)
+    }
+
     pub fn to_python(&self, py: pyo3::Python<'_>) -> pyo3::PyResult<pyo3::PyObject> {
         use pyo3::IntoPyObject;
         let event = pyo3::Py::new(py, PyEvent::from_compiled(self.clone()))?;

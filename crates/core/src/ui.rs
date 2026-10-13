@@ -1,5 +1,7 @@
 //! UI mapping helpers for runtime consumers.
 
+use crate::event::transition_kind_name;
+
 use crate::event::EventCompiled;
 use crate::visual::VisualState;
 
@@ -95,7 +97,7 @@ impl UiState {
         };
         let pending_transition = match event {
             EventCompiled::Transition(transition) => Some(UiTransition {
-                kind: transition_kind_label(transition.kind).to_string(),
+                kind: transition_kind_name(transition.kind).to_string(),
                 duration_ms: transition.duration_ms,
                 color: transition
                     .color
@@ -108,15 +110,6 @@ impl UiState {
             view,
             pending_transition,
         }
-    }
-}
-
-fn transition_kind_label(kind: u8) -> &'static str {
-    match kind {
-        0 => "fade",
-        1 => "dissolve",
-        2 => "cut",
-        _ => "unknown",
     }
 }
 

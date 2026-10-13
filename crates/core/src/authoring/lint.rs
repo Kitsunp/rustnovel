@@ -1,3 +1,4 @@
+use super::diagnostics::normalize_trace_part as normalize_diagnostic_part;
 use super::{DiagnosticTarget, EvidenceTrace, FieldPath, SemanticValue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -389,17 +390,4 @@ impl LintIssue {
         ));
         self
     }
-}
-
-fn normalize_diagnostic_part(value: &str) -> String {
-    let out = value
-        .trim()
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-        .collect::<String>();
-    let mut compact = out;
-    while compact.contains("__") {
-        compact = compact.replace("__", "_");
-    }
-    compact.trim_matches('_').to_string()
 }

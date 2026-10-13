@@ -10,8 +10,8 @@ use std::collections::BTreeSet;
 pub use visual_novel_engine::authoring::{GraphConnection, SceneProfile};
 use visual_novel_engine::{
     authoring::{
-        AuthoringCommand, AuthoringCommandBus, AuthoringDelta, AuthoringPosition,
-        NodeGraph as AuthoringGraph,
+        AuthoringCommand, AuthoringDelta, AuthoringDocument, AuthoringDocumentCommand,
+        AuthoringDocumentSession, AuthoringPosition, NodeGraph as AuthoringGraph, OperationKind,
     },
     runtime::ScriptRaw,
 };
@@ -24,127 +24,15 @@ use super::script_sync;
 
 mod connections;
 mod fragments;
+mod interaction;
 mod layout;
 mod mutations;
 mod navigation;
 mod search;
 mod view;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GraphOperationHint {
-    pub kind: String,
-    pub details: String,
-    pub field_path: Option<String>,
-    pub before_value: Option<String>,
-    pub after_value: Option<String>,
-    pub push_undo_snapshot: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GraphLayoutOrientation {
-    #[default]
-    Vertical,
-    Horizontal,
-}
-
-impl GraphLayoutOrientation {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Vertical => "Vertical",
-            Self::Horizontal => "Horizontal",
-        }
-    }
-}
-
-/// A node graph representing the story structure.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct NodeGraph {
-    /// Headless semantic graph. GUI state below is view/interaction only.
-    #[serde(flatten)]
-    pub authoring: AuthoringGraph,
-    /// Currently selected node
-    #[serde(skip)]
-    pub selected: Option<u32>,
-    /// Multi-selection used for grouping fragments and batch graph operations.
-    #[serde(skip)]
-    pub selected_nodes: BTreeSet<u32>,
-    /// Pan offset (world-space translation)
-    #[serde(default)]
-    pub pan: egui::Vec2,
-    /// Zoom level
-    #[serde(default = "default_zoom")]
-    pub zoom: f32,
-    /// Preferred direction used by Auto Layout.
-    #[serde(default)]
-    pub layout_orientation: GraphLayoutOrientation,
-    /// Node being edited inline
-    #[serde(skip)]
-    pub editing: Option<u32>,
-    /// Node being dragged (robust interaction)
-    #[serde(skip)]
-    pub dragging_node: Option<u32>,
-    /// Node being connected (Connect To mode)
-    #[serde(skip)]
-    pub connecting_from: Option<(u32, usize)>,
-    /// True when connection mode was started from context menu and should wait for a click.
-    #[serde(skip)]
-    pub connecting_sticky: bool,
-    /// Graph-space marquee selection start.
-    #[serde(skip)]
-    pub marquee_start: Option<egui::Pos2>,
-    /// Graph-space marquee selection current endpoint.
-    #[serde(skip)]
-    pub marquee_current: Option<egui::Pos2>,
-    /// Active context menu
-    #[serde(skip)]
-    pub context_menu: Option<ContextMenu>,
-    /// Last semantic editor operation inferred at graph level.
-    #[serde(skip)]
-    pub operation_hint: Option<GraphOperationHint>,
-}
-
-impl Clone for NodeGraph {
-    fn clone(&self) -> Self {
-        Self {
-            authoring: self.authoring.clone(),
-            selected: self.selected,
-            selected_nodes: self.selected_nodes.clone(),
-            pan: self.pan,
-            zoom: self.zoom,
-            layout_orientation: self.layout_orientation,
-            editing: self.editing,
-            dragging_node: self.dragging_node,
-            connecting_from: self.connecting_from,
-            connecting_sticky: self.connecting_sticky,
-            marquee_start: self.marquee_start,
-            marquee_current: self.marquee_current,
-            context_menu: self.context_menu.clone(),
-            operation_hint: self.operation_hint.clone(),
-        }
-    }
-}
-
-impl Default for NodeGraph {
-    fn default() -> Self {
-        let authoring = AuthoringGraph::new();
-        Self {
-            authoring,
-            selected: None,
-            selected_nodes: BTreeSet::new(),
-            pan: egui::Vec2::ZERO,
-            zoom: ZOOM_DEFAULT,
-            layout_orientation: GraphLayoutOrientation::Vertical,
-            editing: None,
-            dragging_node: None,
-            connecting_from: None,
-            connecting_sticky: false,
-            marquee_start: None,
-            marquee_current: None,
-            context_menu: None,
-            operation_hint: None,
-        }
-    }
-}
+mod state;
+pub use state::{GraphLayoutOrientation, GraphOperationHint, GraphViewState, NodeGraph};
 
 impl NodeGraph {
     pub fn new() -> Self {
@@ -153,7 +41,7 @@ impl NodeGraph {
 
     /// Adds a node at the specified position. Returns the node ID.
     pub fn add_node(&mut self, node: StoryNode, pos: egui::Pos2) -> u32 {
-        let id = self.authoring.next_node_id();
+        let id = self.authoring_graph().next_node_id();
         if self
             .apply_authoring_command(AuthoringCommand::CreateNode {
                 node_id: id,
@@ -228,29 +116,29 @@ impl NodeGraph {
     /// Returns the number of nodes.
     #[inline]
     pub fn len(&self) -> usize {
-        self.authoring.len()
+        self.authoring_graph().len()
     }
 
     /// Returns true if the graph is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.authoring.is_empty()
+        self.authoring_graph().is_empty()
     }
 
     /// Returns true if the graph has been modified since last save.
     #[inline]
     pub fn is_modified(&self) -> bool {
-        self.authoring.is_modified()
+        self.view.modified
     }
 
     /// Clears the modified flag.
     pub fn clear_modified(&mut self) {
-        self.authoring.clear_modified();
+        self.view.modified = false;
     }
 
     /// Marks the graph as modified.
     pub fn mark_modified(&mut self) {
-        self.authoring.mark_modified();
+        self.view.modified = true;
     }
 
     /// Creates a node graph from a raw script.
@@ -279,12 +167,22 @@ impl NodeGraph {
 
     /// Gets a reference to a node by ID.
     pub fn get_node(&self, id: u32) -> Option<&StoryNode> {
-        self.authoring.get_node(id)
+        self.authoring_graph().get_node(id)
     }
 
-    /// Gets a mutable reference to a node by ID.
-    pub fn get_node_mut(&mut self, id: u32) -> Option<&mut StoryNode> {
-        self.authoring.get_node_mut(id)
+    /// Edits a node through the document session, keeping validation and undo aligned.
+    pub fn edit_node(&mut self, id: u32, edit: impl FnOnce(&mut StoryNode)) -> bool {
+        let Some(mut node) = self.get_node(id).cloned() else {
+            return false;
+        };
+        edit(&mut node);
+        self.replace_node_with_hint(
+            id,
+            node,
+            format!("Edited node {id}"),
+            format!("graph.nodes[{id}]"),
+            true,
+        )
     }
 
     pub fn replace_node_with_hint(
@@ -303,17 +201,26 @@ impl NodeGraph {
         }
         let before_value = serde_json::to_string(&before).ok();
         let after_value = serde_json::to_string(&replacement).ok();
+        let details = details.into();
+        let field_path = field_path.into();
         let changed = self
-            .apply_authoring_command(AuthoringCommand::EditNode {
-                node_id: id,
-                replacement,
-            })
-            .is_some();
+            .authoring_session
+            .apply_with_description(
+                AuthoringDocumentCommand::Graph(AuthoringCommand::EditNode {
+                    node_id: id,
+                    replacement,
+                }),
+                details.clone(),
+                field_path.clone(),
+                before_value.clone(),
+                after_value.clone(),
+            )
+            .is_ok();
         if changed {
             self.queue_operation_hint_with_values(
                 "field_edited",
                 details,
-                Some(field_path.into()),
+                Some(field_path),
                 before_value,
                 after_value,
                 push_undo_snapshot,
@@ -324,8 +231,11 @@ impl NodeGraph {
     }
 
     pub fn get_node_pos(&self, id: u32) -> Option<egui::Pos2> {
-        self.authoring
-            .get_node_pos(id)
+        self.view
+            .drag_positions
+            .get(&id)
+            .copied()
+            .or_else(|| self.authoring_graph().get_node_pos(id))
             .map(|pos| egui::pos2(pos.x, pos.y))
     }
 
@@ -339,9 +249,16 @@ impl NodeGraph {
         pos: egui::Pos2,
         push_undo_snapshot: bool,
     ) -> bool {
-        let changed = self
-            .authoring
-            .set_node_pos(id, AuthoringPosition::new(pos.x, pos.y));
+        let position = AuthoringPosition::new(pos.x, pos.y);
+        let changed = if push_undo_snapshot {
+            self.edit_graph("Moved node", |graph| graph.set_node_pos(id, position))
+        } else if self.get_node_pos(id).is_some_and(|before| before != pos) {
+            self.view.drag_positions.insert(id, position);
+            self.mark_modified();
+            true
+        } else {
+            false
+        };
         if changed {
             self.queue_operation_hint(
                 "node_moved",
@@ -351,6 +268,20 @@ impl NodeGraph {
             );
         }
         changed
+    }
+
+    pub fn commit_drag_positions(&mut self) -> bool {
+        let positions = std::mem::take(&mut self.view.drag_positions);
+        if positions.is_empty() {
+            return false;
+        }
+        self.edit_graph("Move nodes", |graph| {
+            positions
+                .into_iter()
+                .fold(false, |changed, (id, position)| {
+                    graph.set_node_pos(id, position) || changed
+                })
+        })
     }
 
     pub fn translate_node(&mut self, id: u32, delta: egui::Vec2) -> bool {
@@ -406,152 +337,68 @@ impl NodeGraph {
 
     /// Returns an iterator over all nodes as GUI-positioned snapshots.
     pub fn nodes(&self) -> impl Iterator<Item = (u32, StoryNode, egui::Pos2)> + '_ {
-        self.authoring
-            .nodes()
-            .map(|(id, node, pos)| (*id, node.clone(), egui::pos2(pos.x, pos.y)))
+        self.authoring_graph().nodes().map(|(id, node, pos)| {
+            let pos = self.view.drag_positions.get(id).unwrap_or(pos);
+            (*id, node.clone(), egui::pos2(pos.x, pos.y))
+        })
     }
 
     /// Returns an iterator over all connections as snapshots.
     pub fn connections(&self) -> impl Iterator<Item = GraphConnection> + '_ {
-        self.authoring.connections().cloned()
+        self.authoring_graph().connections().cloned()
     }
 
     pub fn from_authoring_graph(authoring: AuthoringGraph) -> Self {
+        Self::from_document(AuthoringDocument::new(authoring))
+    }
+
+    pub fn from_document(document: AuthoringDocument) -> Self {
         Self {
-            authoring,
-            ..Self::default()
+            authoring_session: AuthoringDocumentSession::new(document),
+            view: GraphViewState::default(),
         }
     }
 
     pub fn authoring_graph(&self) -> &AuthoringGraph {
-        &self.authoring
+        &self.authoring_session.document().graph
     }
 
-    pub fn replace_authoring_graph(&mut self, authoring: AuthoringGraph) {
-        self.authoring = authoring;
+    pub fn replace_authoring_graph(&mut self, graph: AuthoringGraph) {
+        self.edit_graph("Replace graph", |working| *working = graph);
+    }
+
+    pub fn edit_graph<R>(
+        &mut self,
+        details: &str,
+        edit: impl FnOnce(&mut AuthoringGraph) -> R,
+    ) -> R {
+        let (result, changed) = self
+            .authoring_session
+            .edit_graph(
+                OperationKind::FieldEdited,
+                details,
+                Some("graph".into()),
+                edit,
+            )
+            .expect("a changed graph is a valid replacement");
+        if changed {
+            self.mark_modified();
+        }
+        result
     }
 
     fn apply_authoring_command(&mut self, command: AuthoringCommand) -> Option<AuthoringDelta> {
-        AuthoringCommandBus::apply_to_graph_unlogged(&mut self.authoring, command).ok()
-    }
-
-    pub fn toggle_multi_selection(&mut self, node_id: u32) {
-        if !self.selected_nodes.insert(node_id) {
-            self.selected_nodes.remove(&node_id);
-            if self.selected == Some(node_id) {
-                self.selected = self.selected_nodes.iter().next_back().copied();
-            }
-            return;
+        let result = self
+            .authoring_session
+            .apply(AuthoringDocumentCommand::Graph(command))
+            .ok();
+        if result.is_some() {
+            self.mark_modified();
         }
-        self.selected = Some(node_id);
-    }
-
-    pub fn set_single_selection(&mut self, node_id: Option<u32>) {
-        self.selected = node_id;
-        self.selected_nodes.clear();
-        if let Some(node_id) = node_id {
-            self.selected_nodes.insert(node_id);
-        }
-    }
-
-    pub fn select_nodes_in_rect(&mut self, rect: egui::Rect, additive: bool) -> usize {
-        let selected = self
-            .visible_nodes()
-            .filter_map(|(id, node, pos)| {
-                let node_rect = egui::Rect::from_min_size(
-                    pos,
-                    egui::vec2(node_visual_width(&node), node_visual_height(&node)),
-                );
-                rect.intersects(node_rect).then_some(id)
-            })
-            .collect::<Vec<_>>();
-        if !additive {
-            self.selected_nodes.clear();
-        }
-        for node_id in &selected {
-            self.selected_nodes.insert(*node_id);
-        }
-        self.selected = selected
-            .last()
-            .copied()
-            .or_else(|| additive.then_some(self.selected).flatten());
-        selected.len()
-    }
-
-    pub fn clear_transient_interaction(&mut self) {
-        self.dragging_node = None;
-        self.connecting_from = None;
-        self.connecting_sticky = false;
-        self.marquee_start = None;
-        self.marquee_current = None;
-        self.context_menu = None;
-    }
-
-    pub fn has_active_interaction(&self) -> bool {
-        self.dragging_node.is_some()
-            || self.connecting_from.is_some()
-            || self.marquee_start.is_some()
-            || self.context_menu.is_some()
-            || self.editing.is_some()
-    }
-
-    pub fn queue_operation_hint(
-        &mut self,
-        kind: impl Into<String>,
-        details: impl Into<String>,
-        field_path: Option<String>,
-        push_undo_snapshot: bool,
-    ) {
-        self.queue_operation_hint_with_values(
-            kind,
-            details,
-            field_path,
-            None,
-            None,
-            push_undo_snapshot,
-        );
-    }
-
-    pub fn queue_operation_hint_with_values(
-        &mut self,
-        kind: impl Into<String>,
-        details: impl Into<String>,
-        field_path: Option<String>,
-        before_value: Option<String>,
-        after_value: Option<String>,
-        push_undo_snapshot: bool,
-    ) {
-        self.operation_hint = Some(GraphOperationHint {
-            kind: kind.into(),
-            details: details.into(),
-            field_path,
-            before_value,
-            after_value,
-            push_undo_snapshot,
-        });
-    }
-
-    pub fn operation_hint_pushes_undo(&self) -> bool {
-        self.operation_hint
-            .as_ref()
-            .map(|hint| hint.push_undo_snapshot)
-            .unwrap_or(true)
-    }
-
-    pub fn take_operation_hint(&mut self) -> Option<GraphOperationHint> {
-        self.operation_hint.take()
-    }
-
-    pub fn clear_operation_hint(&mut self) {
-        self.operation_hint = None;
-    }
-
-    pub fn selected_node_ids(&self) -> Vec<u32> {
-        if self.selected_nodes.is_empty() {
-            self.selected.into_iter().collect()
-        } else {
-            self.selected_nodes.iter().copied().collect()
-        }
+        result.and_then(|outcome| match outcome.delta {
+            visual_novel_engine::authoring::AuthoringDocumentDelta::Graph(delta) => Some(*delta),
+            _ => None,
+        })
     }
 }
 

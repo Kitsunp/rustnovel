@@ -11,6 +11,10 @@ use crate::editor::image_asset_cache::{
 use crate::editor::resource_service::EditorResourceService;
 use crate::editor::{AssetImportKind, PreviewQuality};
 
+#[cfg(test)]
+#[path = "asset_browser/tests.rs"]
+mod tests;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AssetBrowserAction {
     Import(AssetImportKind),
@@ -37,6 +41,7 @@ pub struct AssetBrowserPanel<'a> {
     image_failures: &'a mut HashMap<String, String>,
     resource_service: &'a mut EditorResourceService,
     asset_store: Option<vnengine_assets::AssetStore>,
+    audio_playback: Option<visual_novel_runtime::MusicPlayback<'a>>,
 }
 
 impl<'a> AssetBrowserPanel<'a> {
@@ -54,7 +59,16 @@ impl<'a> AssetBrowserPanel<'a> {
             image_failures,
             resource_service,
             asset_store: None,
+            audio_playback: None,
         }
+    }
+
+    pub fn with_audio_playback(
+        mut self,
+        playback: Option<visual_novel_runtime::MusicPlayback<'a>>,
+    ) -> Self {
+        self.audio_playback = playback;
+        self
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) -> Vec<AssetBrowserAction> {
@@ -97,9 +111,12 @@ impl<'a> AssetBrowserPanel<'a> {
                         ui.label("No audio in manifest");
                     } else {
                         for (name, path) in &self.manifest.assets.audio {
-                            ui.horizontal(|ui| {
+                            ui.group(|ui| {
                                 let asset_path = normalize_asset_path(&path.to_string_lossy());
-                                let button = ui.add(egui::Button::new(format!("Audio {name}")));
+                                let button = ui.add(
+                                    egui::Button::new(format!("Audio {name}"))
+                                        .sense(egui::Sense::click_and_drag()),
+                                );
                                 if button.drag_started() {
                                     let payload = format!("asset://audio/{asset_path}");
                                     ui.memory_mut(|mem| {
@@ -108,29 +125,37 @@ impl<'a> AssetBrowserPanel<'a> {
                                     });
                                 }
                                 button.on_hover_text(format!("Drag to scene\nPath: {:?}", path));
-                                let offset_ms = self.render_audio_position(ui, &asset_path);
-                                if ui.small_button("Preview").clicked() {
+                                let (offset_ms, seek) = self.render_audio_position(ui, &asset_path);
+                                if seek {
                                     actions.push(AssetBrowserAction::PreviewAudio {
                                         path: asset_path.clone(),
                                         offset_ms,
                                     });
                                 }
-                                if ui.small_button("Use").clicked() {
-                                    actions.push(AssetBrowserAction::AssignToSelected {
-                                        kind: AssetImportKind::Audio,
-                                        name: name.clone(),
-                                        path: asset_path.clone(),
-                                    });
-                                }
-                                if ui.small_button("Stop").clicked() {
-                                    actions.push(AssetBrowserAction::StopAudio);
-                                }
-                                if ui.small_button("Remove").clicked() {
-                                    actions.push(AssetBrowserAction::Remove {
-                                        kind: AssetImportKind::Audio,
-                                        name: name.clone(),
-                                    });
-                                }
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui.small_button("Preview").clicked() {
+                                        actions.push(AssetBrowserAction::PreviewAudio {
+                                            path: asset_path.clone(),
+                                            offset_ms,
+                                        });
+                                    }
+                                    if ui.small_button("Use").clicked() {
+                                        actions.push(AssetBrowserAction::AssignToSelected {
+                                            kind: AssetImportKind::Audio,
+                                            name: name.clone(),
+                                            path: asset_path.clone(),
+                                        });
+                                    }
+                                    if ui.small_button("Stop").clicked() {
+                                        actions.push(AssetBrowserAction::StopAudio);
+                                    }
+                                    if ui.small_button("Remove").clicked() {
+                                        actions.push(AssetBrowserAction::Remove {
+                                            kind: AssetImportKind::Audio,
+                                            name: name.clone(),
+                                        });
+                                    }
+                                });
                             });
                         }
                     }
@@ -242,12 +267,15 @@ impl<'a> AssetBrowserPanel<'a> {
     ) -> egui::Response {
         let card_size = asset_card_size(ui.available_width());
         let (rect, response) = ui.allocate_exact_size(card_size, egui::Sense::click_and_drag());
+        if !ui.is_rect_visible(rect) {
+            return response;
+        }
         ui.painter()
             .rect_filled(rect, 4.0, egui::Color32::from_rgb(46, 46, 46));
         ui.painter().rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(72)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(72)),
         );
 
         let asset_path = normalize_asset_path(&path.to_string_lossy());
@@ -288,7 +316,17 @@ impl<'a> AssetBrowserPanel<'a> {
     ) -> Option<egui::TextureId> {
         let project_root = self.project_root?;
         let request_cache_key = thumbnail_cache_key(project_root, asset_path);
+        crate::editor::image_asset_cache::prune_image_cache_versions(
+            self.image_cache,
+            &request_cache_key,
+        );
+        crate::editor::image_asset_cache::prune_image_cache_versions(
+            self.image_failures,
+            &request_cache_key,
+        );
         if let Some(texture) = self.image_cache.get(&request_cache_key) {
+            self.resource_service
+                .record_texture_use(texture.id(), ctx.frame_nr());
             return Some(texture.id());
         }
         if let Some(should_retry) = self
@@ -312,8 +350,15 @@ impl<'a> AssetBrowserPanel<'a> {
             }
         };
         let cache_key = thumbnail_cache_key(project_root, &resolved_asset_path);
+        crate::editor::image_asset_cache::prune_image_cache_versions(self.image_cache, &cache_key);
+        crate::editor::image_asset_cache::prune_image_cache_versions(
+            self.image_failures,
+            &cache_key,
+        );
         if let Some(texture) = self.image_cache.get(&cache_key) {
             let texture = texture.clone();
+            self.resource_service
+                .record_texture_use(texture.id(), ctx.frame_nr());
             if request_cache_key != cache_key {
                 self.image_cache.insert(request_cache_key, texture.clone());
             }
@@ -344,6 +389,7 @@ impl<'a> AssetBrowserPanel<'a> {
             egui::TextureOptions::LINEAR,
         );
         let id = texture.id();
+        self.resource_service.record_texture_use(id, ctx.frame_nr());
         if request_cache_key != cache_key {
             self.image_cache.insert(request_cache_key, texture.clone());
         }
@@ -379,26 +425,57 @@ impl<'a> AssetBrowserPanel<'a> {
         self.asset_store.as_ref()
     }
 
-    fn render_audio_position(&mut self, ui: &mut egui::Ui, asset_path: &str) -> u64 {
+    fn render_audio_position(&mut self, ui: &mut egui::Ui, asset_path: &str) -> (u64, bool) {
         let duration = self.audio_duration_secs(asset_path);
         let slider_id = egui::Id::new(("asset_audio_offset", asset_path.to_string()));
         let mut offset_secs = ui
             .data_mut(|data| data.get_persisted::<f32>(slider_id))
             .unwrap_or(0.0);
+        let playback = self.audio_playback.filter(|playback| {
+            let path = Path::new(playback.path);
+            let relative = self
+                .project_root
+                .and_then(|root| path.strip_prefix(root).ok())
+                .unwrap_or(path);
+            normalize_asset_path(&relative.to_string_lossy()) == asset_path
+        });
 
         if let Some(duration_secs) = duration.filter(|value| *value > 0.0) {
+            let seeking_id = slider_id.with("seeking");
+            let was_seeking = ui
+                .data_mut(|data| data.get_temp::<bool>(seeking_id))
+                .unwrap_or(false);
+            if let Some(playback) = playback {
+                if !was_seeking && !ui.input(|input| input.pointer.primary_down()) {
+                    offset_secs = if playback.looping {
+                        playback.position.as_secs_f32() % duration_secs
+                    } else {
+                        playback.position.as_secs_f32().min(duration_secs)
+                    };
+                }
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(50));
+            }
             offset_secs = offset_secs.clamp(0.0, duration_secs);
-            let slider_label = format_audio_position(offset_secs, duration_secs);
-            ui.add(
-                egui::Slider::new(&mut offset_secs, 0.0..=duration_secs)
-                    .show_value(false)
-                    .text(slider_label),
-            );
+            let response = ui
+                .scope(|ui| {
+                    ui.spacing_mut().slider_width = ui.available_width().max(1.0);
+                    ui.add(
+                        egui::Slider::new(&mut offset_secs, 0.0..=duration_secs).show_value(false),
+                    )
+                })
+                .inner;
+            ui.label(format_audio_position(offset_secs, duration_secs));
+            ui.data_mut(|data| data.insert_temp(seeking_id, response.dragged()));
             ui.data_mut(|data| data.insert_persisted(slider_id, offset_secs));
-            secs_to_ms(offset_secs)
+            (
+                secs_to_ms(offset_secs),
+                playback.is_some()
+                    && (response.drag_stopped() || (response.changed() && !response.dragged())),
+            )
         } else {
             ui.label("Duration --:--");
-            0
+            (0, false)
         }
     }
 

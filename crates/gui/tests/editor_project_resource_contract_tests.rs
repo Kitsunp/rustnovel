@@ -10,9 +10,7 @@ use visual_novel_engine::authoring::{
 };
 use visual_novel_engine::runtime::{ChoiceOptionRaw, ChoiceRaw, DialogueRaw, EventRaw, ScriptRaw};
 use visual_novel_gui::editor::authoring_adapter::to_authoring_graph;
-use visual_novel_gui::editor::project_io::{
-    load_project, load_script, save_authoring_document_with_metadata, save_script,
-};
+use visual_novel_gui::editor::project_io::{load_project, load_script, save_script};
 use visual_novel_gui::editor::resource_service::EditorResourceService;
 use visual_novel_gui::editor::{BackgroundFit, EditorError, NodeGraph, StoryNode};
 
@@ -333,21 +331,33 @@ fn authoring_save_load_preserves_operation_log_and_verification_runs() {
         &[],
     );
 
-    save_authoring_document_with_metadata(
-        &path,
-        &graph,
-        &std::collections::HashMap::new(),
-        &std::collections::HashMap::new(),
-        std::slice::from_ref(&operation),
-        std::slice::from_ref(&verification),
-    )
-    .expect("save with metadata");
+    let mut document =
+        visual_novel_engine::authoring::AuthoringDocument::new(to_authoring_graph(&graph));
+    document.operation_log = vec![operation.clone()];
+    document.verification_runs = vec![verification];
+    save_script(&path, &NodeGraph::from_document(document)).expect("save with metadata");
 
     let loaded = load_script(path).expect("load with metadata");
-    assert_eq!(loaded.operation_log.len(), 1);
-    assert_eq!(loaded.verification_runs.len(), 1);
     assert_eq!(
-        loaded.operation_log[0].operation_kind,
+        loaded
+            .graph
+            .authoring_session
+            .document()
+            .operation_log
+            .len(),
+        1
+    );
+    assert_eq!(
+        loaded
+            .graph
+            .authoring_session
+            .document()
+            .verification_runs
+            .len(),
+        1
+    );
+    assert_eq!(
+        loaded.graph.authoring_session.document().operation_log[0].operation_kind,
         operation.operation_kind
     );
 }
@@ -358,7 +368,7 @@ fn authoring_save_load_preserves_composer_overrides() {
     let path = dir.path().join("layers.vnauthoring");
     let mut graph = NodeGraph::new();
     graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
-    let mut layer_overrides = std::collections::HashMap::new();
+    let mut layer_overrides = std::collections::BTreeMap::new();
     layer_overrides.insert(
         "node:1:character:graph.nodes[1].visual.characters[0]:0".to_string(),
         LayerOverride {
@@ -366,23 +376,30 @@ fn authoring_save_load_preserves_composer_overrides() {
             locked: true,
         },
     );
-    let mut background_overrides = std::collections::HashMap::new();
+    let mut background_overrides = std::collections::BTreeMap::new();
     background_overrides.insert("1".to_string(), BackgroundFit::Contain);
 
-    save_authoring_document_with_metadata(
-        &path,
-        &graph,
-        &layer_overrides,
-        &background_overrides,
-        &[],
-        &[],
-    )
-    .expect("save composer overrides");
+    let mut document =
+        visual_novel_engine::authoring::AuthoringDocument::new(to_authoring_graph(&graph));
+    document.composer_layer_overrides = layer_overrides.clone();
+    document.composer_background_fit_overrides = background_overrides.clone();
+    save_script(&path, &NodeGraph::from_document(document)).expect("save composer overrides");
     let loaded = load_script(path).expect("load composer overrides");
 
-    assert_eq!(loaded.composer_layer_overrides, layer_overrides);
     assert_eq!(
-        loaded.composer_background_fit_overrides,
+        loaded
+            .graph
+            .authoring_session
+            .document()
+            .composer_layer_overrides,
+        layer_overrides
+    );
+    assert_eq!(
+        loaded
+            .graph
+            .authoring_session
+            .document()
+            .composer_background_fit_overrides,
         background_overrides
     );
 }

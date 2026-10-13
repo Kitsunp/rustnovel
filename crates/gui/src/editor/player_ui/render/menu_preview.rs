@@ -243,8 +243,14 @@ fn render_preview_saves_tab(
             )
             .clicked()
         {
-            player.quick_save_state = Some(engine.state().clone());
-            *toast = Some(ToastState::success("Quick saved preview state"));
+            execute_preview_menu_action(
+                PlayerMenuAction::QuickSave,
+                engine,
+                toast,
+                player,
+                now_sec,
+                audio_commands,
+            );
         }
         let can_load = player.quick_save_state.is_some();
         let load_response = ui
@@ -256,13 +262,14 @@ fn render_preview_saves_tab(
             })
             .inner;
         if load_response.clicked() {
-            if let Some(state) = player.quick_save_state.clone() {
-                if engine.set_state(state).is_ok() {
-                    player.reset_for_restart(now_sec);
-                    audio_commands.extend(engine.take_audio_commands());
-                    *toast = Some(ToastState::success("Quick loaded preview state"));
-                }
-            }
+            execute_preview_menu_action(
+                PlayerMenuAction::QuickLoad,
+                engine,
+                toast,
+                player,
+                now_sec,
+                audio_commands,
+            );
         }
     });
     ui.label("Preview saves are in-memory and reset when the editor player restarts.");
@@ -341,10 +348,15 @@ fn execute_preview_menu_action(
         }
         PlayerMenuAction::QuickLoad => {
             if let Some(state) = player.quick_save_state.clone() {
-                if engine.set_state(state).is_ok() {
-                    player.reset_for_restart(now_sec);
-                    audio_commands.extend(engine.take_audio_commands());
-                    *toast = Some(ToastState::success("Quick loaded preview state"));
+                match engine.set_state(state) {
+                    Ok(()) => {
+                        player.reset_for_restart(now_sec);
+                        audio_commands.extend(engine.take_audio_commands());
+                        *toast = Some(ToastState::success("Quick loaded preview state"));
+                    }
+                    Err(err) => {
+                        *toast = Some(ToastState::warning(format!("Quick load failed: {err}")))
+                    }
                 }
             } else {
                 *toast = Some(ToastState::warning("No preview quick save yet"));

@@ -71,6 +71,12 @@ pub(super) fn theme_validate_command(theme_path: &Path) -> Result<Option<serde_j
     let theme: UiTheme = serde_json::from_str(&raw)
         .with_context(|| format!("parse theme {}", theme_path.display()))?;
     let report = validate_ui_theme(&theme);
+    if !report.valid {
+        anyhow::bail!(
+            "theme validation failed: {}",
+            serde_json::to_string(&report)?
+        );
+    }
     Ok(Some(serde_json::to_value(report)?))
 }
 
@@ -251,6 +257,10 @@ pub(super) fn trace_script(
             return Err(err).with_context(|| format!("trace advance failed at step {step}"));
         }
     }
+    if !partial && engine.state().position as usize != engine.script().events.len() {
+        partial = true;
+        stopped_reason = Some(format!("step limit reached: {steps}"));
+    }
     let envelope = TraceEnvelope {
         trace_format_version: 1,
         script_schema_version: SCRIPT_SCHEMA_VERSION.to_string(),
@@ -321,26 +331,8 @@ pub(super) fn build_manifest(root: &Path, output: &Path) -> Result<()> {
 }
 
 pub(super) fn sha256_file_hex(path: &Path) -> Result<(String, u64)> {
-    let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut size = 0u64;
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .with_context(|| format!("read {}", path.display()))?;
-        if read == 0 {
-            break;
-        }
-        size = size.saturating_add(read as u64);
-        hasher.update(&buffer[..read]);
-    }
-    let digest = hasher.finalize();
-    Ok((digest_hex(&digest), size))
-}
-
-pub(super) fn digest_hex(digest: &[u8]) -> String {
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    visual_novel_engine::atomic_io::sha256_file(path)
+        .with_context(|| format!("hash {}", path.display()))
 }
 
 pub(super) fn run_repro_bundle(path: &Path, output: Option<&Path>, strict: bool) -> Result<()> {

@@ -92,7 +92,7 @@ fn import_external_audio_copies_into_project_manifest() {
             .map(|path| path.to_string_lossy().replace('\\', "/")),
         Some(imported)
     );
-    let entry = workbench
+    let entry = workbench.document()
         .operation_log
         .last()
         .expect("asset import should be logged");
@@ -113,6 +113,32 @@ fn import_external_audio_copies_into_project_manifest() {
         entry.after_value.as_deref(),
         Some("assets/audio/theme_track.ogg")
     );
+    let operations = workbench.document().operation_log.len();
+    assert_eq!(
+        workbench
+            .import_asset_file(&source, AssetImportKind::Audio)
+            .unwrap(),
+        "assets/audio/theme_track.ogg"
+    );
+    let renamed = outside_root.join("renamed.ogg");
+    std::fs::copy(&source, &renamed).unwrap();
+    assert_eq!(
+        workbench
+            .import_asset_file(&renamed, AssetImportKind::Audio)
+            .unwrap(),
+        "assets/audio/theme_track.ogg"
+    );
+    assert_eq!(workbench.manifest.as_ref().unwrap().assets.audio.len(), 1);
+    assert_eq!(workbench.document().operation_log.len(), operations);
+    assert!(!project_root.join("assets/audio/theme_track-1.ogg").exists());
+    std::fs::write(&source, b"fake-AUDIO").unwrap();
+    assert_eq!(
+        workbench
+            .import_asset_file(&source, AssetImportKind::Audio)
+            .unwrap(),
+        "assets/audio/theme_track-1.ogg"
+    );
+    assert_eq!(workbench.manifest.as_ref().unwrap().assets.audio.len(), 2);
 }
 
 #[test]
@@ -202,18 +228,39 @@ fn imported_asset_can_be_assigned_to_selected_node_field() {
     let imported = workbench
         .import_asset_file(&source, AssetImportKind::Background)
         .expect("background import");
-    let before_assign = workbench.node_graph.clone();
     workbench
         .apply_imported_asset_to_node(node_id, AssetFieldTarget::SceneBackground, imported.clone())
         .expect("assign import");
-    workbench.commit_modified_graph(before_assign);
+    workbench.commit_modified_graph();
 
     let Some(StoryNode::Scene { background, .. }) = workbench.node_graph.get_node(node_id) else {
         panic!("expected scene node");
     };
     assert_eq!(background.as_deref(), Some(imported.as_str()));
+    assert_eq!(
+        workbench
+            .import_asset_file(&source, AssetImportKind::Background)
+            .unwrap(),
+        imported
+    );
+    assert_eq!(
+        workbench
+            .import_asset_file(&project_root.join(&imported), AssetImportKind::Background)
+            .unwrap(),
+        imported
+    );
+    assert_eq!(
+        workbench
+            .manifest
+            .as_ref()
+            .unwrap()
+            .assets
+            .backgrounds
+            .len(),
+        1
+    );
     assert!(!workbench.node_graph.is_modified());
-    let entry = workbench
+    let entry = workbench.document()
         .operation_log
         .last()
         .expect("asset assignment should be logged");
@@ -305,6 +352,46 @@ fn asset_browser_use_button_assigns_background_to_selected_scene_only() {
         panic!("dialogue node should remain unchanged");
     };
     assert_eq!(text, "No visual asset slot here");
+    let start = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::pos2(0.0, -120.0));
+    let end = workbench
+        .node_graph
+        .add_node(StoryNode::End, egui::pos2(0.0, 240.0));
+    workbench.node_graph.connect(start, scene);
+    workbench.node_graph.connect(scene, dialogue);
+    workbench.node_graph.connect(dialogue, end);
+    let image = workbench
+        .scene
+        .spawn(visual_novel_engine::EntityKind::Image(
+            visual_novel_engine::ImageData {
+                path: "assets/backgrounds/classroom.png".into(),
+                tint: None,
+            },
+        ))
+        .expect("displayed background");
+    workbench.composer_entity_owners.insert(image.raw(), scene);
+    workbench.selected_node = None;
+    workbench.node_graph.set_single_selection(None);
+    let assigned = workbench
+        .assign_manifest_asset_to_selected_node(AssetImportKind::Audio, "theme", "audio/theme.ogg")
+        .expect("Use should target the displayed composition without a selection");
+    assert_eq!(assigned, scene);
+    assert!(
+        matches!(workbench.node_graph.get_node(scene), Some(StoryNode::Scene { music: Some(path), .. }) if path == "audio/theme.ogg")
+    );
+    let operations = workbench.document().operation_log.len();
+    assert_eq!(
+        workbench
+            .assign_manifest_asset_to_selected_node(
+                AssetImportKind::Audio,
+                "theme",
+                "audio/theme.ogg",
+            )
+            .expect("reusing assigned music is a valid no-op"),
+        scene
+    );
+    assert_eq!(workbench.document().operation_log.len(), operations);
 }
 
 #[test]
@@ -480,7 +567,7 @@ fn remove_asset_from_manifest_updates_sections_and_records_typed_operation() {
     assert!(!saved.contains("ava.png"));
     assert!(!saved.contains("theme.ogg"));
 
-    let entry = workbench
+    let entry = workbench.document()
         .operation_log
         .last()
         .expect("asset removal should be logged");

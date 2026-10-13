@@ -241,6 +241,10 @@ impl PyComposerPreviewSession {
             .map_err(|err| PyValueError::new_err(err.to_string()))
     }
 
+    fn take_audio_commands(&mut self, py: Python<'_>) -> PyResult<PyObject> {
+        crate::bindings::audio::audio_commands_to_python(py, &self.inner.take_audio_commands())
+    }
+
     #[pyo3(signature = (stage_width=None, stage_height=None, locale=None))]
     fn snapshot(
         &self,

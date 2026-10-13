@@ -16,7 +16,6 @@ use super::node_types::{
     node_visual_height, node_visual_width, ContextMenu, StoryNode, StoryNodeVisualExt,
     CHOICE_HEADER_HEIGHT, CHOICE_OPTION_CELL_WIDTH, CHOICE_OPTION_ROW_HEIGHT, NODE_WIDTH,
 };
-use super::undo::UndoStack;
 
 // =============================================================================
 // NodeEditorPanel - UI Widget
@@ -70,12 +69,39 @@ pub fn node_toolbar_is_compact(available_width: f32) -> bool {
 /// Node editor panel widget with pan/zoom and context menu.
 pub struct NodeEditorPanel<'a> {
     graph: &'a mut NodeGraph,
-    undo_stack: &'a mut UndoStack,
+    history_request: Option<&'a mut Option<NodeEditorHistoryAction>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NodeEditorHistoryAction {
+    Undo,
+    Redo,
 }
 
 impl<'a> NodeEditorPanel<'a> {
-    pub fn new(graph: &'a mut NodeGraph, undo_stack: &'a mut UndoStack) -> Self {
-        Self { graph, undo_stack }
+    pub fn new(graph: &'a mut NodeGraph) -> Self {
+        Self {
+            graph,
+            history_request: None,
+        }
+    }
+
+    /// Lets the workbench refresh compilation and preview after a history action.
+    pub fn for_document(
+        graph: &'a mut NodeGraph,
+        request: &'a mut Option<NodeEditorHistoryAction>,
+    ) -> Self {
+        Self {
+            graph,
+            history_request: Some(request),
+        }
+    }
+
+    fn can_undo(&self) -> bool {
+        self.graph.authoring_session.undo_delta_count() > 0
+    }
+    fn can_redo(&self) -> bool {
+        self.graph.authoring_session.redo_delta_count() > 0
     }
 
     #[inline]
@@ -135,7 +161,7 @@ impl<'a> NodeEditorPanel<'a> {
             painter.line_segment(
                 [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
                 egui::Stroke::new(
-                    1.0,
+                    1.0_f32,
                     if col_idx.is_multiple_of(5) {
                         grid_color_major
                     } else {
@@ -152,7 +178,7 @@ impl<'a> NodeEditorPanel<'a> {
             painter.line_segment(
                 [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
                 egui::Stroke::new(
-                    1.0,
+                    1.0_f32,
                     if row_idx.is_multiple_of(5) {
                         grid_color_major
                     } else {
@@ -258,9 +284,11 @@ impl<'a> NodeEditorPanel<'a> {
         if ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
             let ids = self.graph.selected_node_ids();
             if !ids.is_empty() {
-                for id in ids {
-                    self.graph.remove_node(id);
-                }
+                self.graph.edit_graph("Remove selected nodes", |graph| {
+                    for id in ids {
+                        graph.remove_node(id);
+                    }
+                });
                 self.graph.selected = None;
                 self.graph.selected_nodes.clear();
             }
@@ -276,35 +304,39 @@ impl<'a> NodeEditorPanel<'a> {
     }
 
     pub fn apply_undo_shortcut(&mut self) -> bool {
-        if let Some(previous) = self.undo_stack.undo(self.graph.clone()) {
-            *self.graph = previous;
-            self.graph.queue_operation_hint(
-                "undo",
-                "Undo graph editor mutation",
-                Some("graph".to_string()),
-                false,
-            );
-            self.graph.mark_modified();
-            true
-        } else {
-            false
-        }
+        self.apply_history_action(NodeEditorHistoryAction::Undo)
     }
 
     pub fn apply_redo_shortcut(&mut self) -> bool {
-        if let Some(next) = self.undo_stack.redo(self.graph.clone()) {
-            *self.graph = next;
-            self.graph.queue_operation_hint(
-                "redo",
-                "Redo graph editor mutation",
-                Some("graph".to_string()),
-                false,
-            );
-            self.graph.mark_modified();
-            true
-        } else {
-            false
+        self.apply_history_action(NodeEditorHistoryAction::Redo)
+    }
+
+    fn apply_history_action(&mut self, action: NodeEditorHistoryAction) -> bool {
+        self.graph.commit_drag_positions();
+        let available = match action {
+            NodeEditorHistoryAction::Undo => self.can_undo(),
+            NodeEditorHistoryAction::Redo => self.can_redo(),
+        };
+        if !available {
+            return false;
         }
+        if let Some(request) = &mut self.history_request {
+            **request = Some(action);
+            return true;
+        }
+        use visual_novel_engine::authoring::AuthoringDocumentCommand;
+        let (command, kind) = match action {
+            NodeEditorHistoryAction::Undo => (AuthoringDocumentCommand::UndoLast, "undo"),
+            NodeEditorHistoryAction::Redo => (AuthoringDocumentCommand::RedoLast, "redo"),
+        };
+        if self.graph.authoring_session.apply(command).is_err() {
+            return false;
+        }
+        self.graph.reconcile_view_after_document_change();
+        self.graph
+            .queue_operation_hint(kind, "Document history", Some("graph".into()), false);
+        self.graph.mark_modified();
+        true
     }
 
     fn render_connections(&self, painter: &egui::Painter, rect: egui::Rect) {

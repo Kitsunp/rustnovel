@@ -24,11 +24,10 @@ fn stale_imported_report_blocks_automatic_fixes_but_keeps_issues_readable() {
         .diagnostic_report_json()
         .expect("diagnostic report");
 
-    let Some(StoryNode::Dialogue { speaker, .. }) = workbench.node_graph.get_node_mut(dialogue)
-    else {
-        panic!("dialogue should exist");
-    };
-    *speaker = "Narrator".to_string();
+    workbench.node_graph.edit_node(dialogue, |node| {
+        let StoryNode::Dialogue { speaker, .. } = node else { panic!("dialogue should exist"); };
+        *speaker = "Narrator".to_string();
+    });
 
     workbench
         .apply_diagnostic_report_json(&payload)

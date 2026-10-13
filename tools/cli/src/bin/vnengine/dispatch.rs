@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn run_command(cli: Cli, json_output: bool) -> Result<Option<serde_json::Value>> {
     match cli.command {
+        Command::Asset { command } => asset_import::run(command),
         Command::Validate { script } => {
             validate_script(&script)?;
             Ok(Some(serde_json::json!({
@@ -14,14 +15,12 @@ pub(super) fn run_command(cli: Cli, json_output: bool) -> Result<Option<serde_js
             script,
             project_root,
             output,
-        } => {
-            authoring::validate_authoring_script(
-                &script,
-                project_root.as_deref(),
-                output.as_deref(),
-            )?;
-            Ok(None)
-        }
+        } => authoring::validate_authoring_script(
+            &script,
+            project_root.as_deref(),
+            output.as_deref(),
+            json_output,
+        ),
         Command::Authoring { command } => {
             authoring::run_authoring_command(command)?;
             Ok(None)

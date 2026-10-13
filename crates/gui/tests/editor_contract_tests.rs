@@ -19,7 +19,7 @@ mod compiler_tests {
 
 mod node_editor_tests {
     pub use crate::editor::node_editor::*;
-    pub use crate::editor::{NodeGraph, UndoStack};
+    pub use crate::editor::NodeGraph;
     editor_contract_cases!("node_editor_tests.rs");
 }
 
@@ -90,7 +90,6 @@ mod node_rendering_tests {
 }
 
 mod scene_stage_tests {
-    pub use std::collections::HashMap;
 
     pub use crate::editor::image_asset_cache::*;
     pub use crate::editor::scene_stage::*;
@@ -104,7 +103,6 @@ mod visual_composer_tests {
 }
 
 mod visual_composer_overlays_tests {
-    pub use std::collections::HashMap;
 
     pub use crate::editor::visual_composer::overlays::*;
     pub use crate::editor::visual_composer::*;

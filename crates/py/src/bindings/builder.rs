@@ -1,9 +1,11 @@
+use super::character_input::CharacterInput;
+use super::conversion::parse_cmp_op;
 use pyo3::prelude::*;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use visual_novel_engine::runtime::{
-    AudioActionRaw, CharacterPatchRaw, CharacterPlacementRaw, ChoiceOptionRaw, ChoiceRaw, CmpOp,
-    CondRaw, DialogueRaw, EventRaw, ScenePatchRaw, SceneTransitionRaw, SceneUpdateRaw,
+    AudioActionRaw, CharacterPatchRaw, CharacterPlacementRaw, ChoiceOptionRaw, ChoiceRaw, CondRaw,
+    DialogueRaw, EventRaw, ScenePatchRaw, SceneTransitionRaw, SceneUpdateRaw,
     SetCharacterPositionRaw,
 };
 use visual_novel_engine::SCRIPT_SCHEMA_VERSION;
@@ -28,20 +30,6 @@ impl StableScript {
             events: events.to_vec(),
             labels: labels.clone(),
         }
-    }
-}
-
-fn parse_cmp_op(op: &str) -> PyResult<CmpOp> {
-    match op {
-        "eq" => Ok(CmpOp::Eq),
-        "ne" => Ok(CmpOp::Ne),
-        "lt" => Ok(CmpOp::Lt),
-        "le" => Ok(CmpOp::Le),
-        "gt" => Ok(CmpOp::Gt),
-        "ge" => Ok(CmpOp::Ge),
-        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "Unknown comparison op '{op}'"
-        ))),
     }
 }
 
@@ -86,18 +74,11 @@ impl PyScriptBuilder {
         &mut self,
         background: Option<String>,
         music: Option<String>,
-        characters: Vec<(String, Option<String>, Option<String>)>,
+        characters: Vec<CharacterInput>,
     ) {
         let characters = characters
             .into_iter()
-            .map(|(name, expression, position)| CharacterPlacementRaw {
-                name,
-                expression,
-                position,
-                x: None,
-                y: None,
-                scale: None,
-            })
+            .map(CharacterPlacementRaw::from)
             .collect();
         self.events.push(EventRaw::Scene(SceneUpdateRaw {
             background,
@@ -154,32 +135,12 @@ impl PyScriptBuilder {
         &mut self,
         background: Option<String>,
         music: Option<String>,
-        add: Vec<(String, Option<String>, Option<String>)>,
-        update: Vec<(String, Option<String>, Option<String>)>,
+        add: Vec<CharacterInput>,
+        update: Vec<CharacterInput>,
         remove: Vec<String>,
     ) {
-        let add = add
-            .into_iter()
-            .map(|(name, expression, position)| CharacterPlacementRaw {
-                name,
-                expression,
-                position,
-                x: None,
-                y: None,
-                scale: None,
-            })
-            .collect();
-        let update = update
-            .into_iter()
-            .map(|(name, expression, position)| CharacterPatchRaw {
-                name,
-                expression,
-                position,
-                x: None,
-                y: None,
-                scale: None,
-            })
-            .collect();
+        let add = add.into_iter().map(CharacterPlacementRaw::from).collect();
+        let update = update.into_iter().map(CharacterPatchRaw::from).collect();
         self.events.push(EventRaw::Patch(ScenePatchRaw {
             background,
             music,

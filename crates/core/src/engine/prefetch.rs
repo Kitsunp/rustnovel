@@ -39,7 +39,7 @@ impl Engine {
         let mut seen = HashSet::new();
         let mut paths = Vec::new();
         let start = self.state().position as usize;
-        let end = (start + depth).min(self.script().events.len());
+        let end = start.saturating_add(depth).min(self.script().events.len());
         for event in &self.script().events[start..end] {
             collect_prefetch_paths_from_event(event, &mut seen, &mut paths);
         }

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::editor::{authoring_adapter::to_authoring_graph, node_graph::NodeGraph};
+use crate::editor::node_graph::NodeGraph;
 
 pub use visual_novel_engine::authoring::compiler::{
     compile_authoring_graph, enumerate_choice_routes, simulate_raw_sequence, ChoicePolicy,
@@ -17,6 +17,5 @@ pub fn compile_project_with_project_root(
     graph: &NodeGraph,
     project_root: Option<&Path>,
 ) -> CompilationResult {
-    let authoring = to_authoring_graph(graph);
-    compile_authoring_graph(&authoring, project_root)
+    compile_authoring_graph(graph.authoring_graph(), project_root)
 }

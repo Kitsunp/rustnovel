@@ -34,7 +34,8 @@ pub struct SceneStagePainter<'a> {
     image_failures: &'a mut HashMap<String, String>,
     resource_service: &'a mut EditorResourceService,
     asset_store: Option<vnengine_assets::AssetStore>,
-    layer_overrides: HashMap<String, LayerOverride>,
+    layer_overrides: Option<&'a std::collections::BTreeMap<String, LayerOverride>>,
+    entity_object_ids: HashMap<u32, String>,
     background_fit: crate::editor::BackgroundFit,
 }
 
@@ -68,18 +69,27 @@ impl<'a> SceneStagePainter<'a> {
             image_failures,
             resource_service,
             asset_store: None,
-            layer_overrides: HashMap::new(),
+            layer_overrides: None,
+            entity_object_ids: HashMap::new(),
             background_fit: crate::editor::BackgroundFit::default(),
         }
     }
 
-    pub fn with_layer_overrides(mut self, layer_overrides: HashMap<String, LayerOverride>) -> Self {
-        self.layer_overrides = layer_overrides;
+    pub fn with_layer_overrides(
+        mut self,
+        layer_overrides: &'a std::collections::BTreeMap<String, LayerOverride>,
+    ) -> Self {
+        self.layer_overrides = Some(layer_overrides);
         self
     }
 
     pub fn with_background_fit(mut self, background_fit: crate::editor::BackgroundFit) -> Self {
         self.background_fit = background_fit;
+        self
+    }
+
+    pub fn with_entity_object_ids(mut self, ids: HashMap<u32, String>) -> Self {
+        self.entity_object_ids = ids;
         self
     }
 
@@ -108,7 +118,7 @@ impl<'a> SceneStagePainter<'a> {
                 &geometry,
                 self.background_fit,
             );
-            self.paint_entity(ui, &entity.kind, rect, false);
+            self.paint_entity(ui, &entity.kind, rect, false, entity.transform.opacity);
         }
         ui.set_clip_rect(previous_clip);
     }
@@ -149,9 +159,6 @@ impl<'a> SceneStagePainter<'a> {
                 continue;
             }
             let is_background = is_background_image(&entity.kind, entity.transform.z_order);
-            if is_background && *selected_entity_id == Some(raw_id) {
-                *selected_entity_id = None;
-            }
 
             let rect = entity_rect_with_background_fit(
                 &entity.kind,
@@ -167,7 +174,7 @@ impl<'a> SceneStagePainter<'a> {
                 continue;
             }
             let sense = if is_background || locked {
-                egui::Sense::hover()
+                egui::Sense::click()
             } else {
                 egui::Sense::click_and_drag()
             };
@@ -179,7 +186,7 @@ impl<'a> SceneStagePainter<'a> {
                 sense,
             );
 
-            if !is_background && !locked && (interact.clicked() || interact.double_clicked()) {
+            if interact.clicked() || interact.double_clicked() {
                 *selected_entity_id = Some(raw_id);
                 selected_node = entity_owners.get(&raw_id).copied();
             }
@@ -193,21 +200,35 @@ impl<'a> SceneStagePainter<'a> {
 
             let is_selected = *selected_entity_id == Some(raw_id);
             let is_active = entity_matches_active_node(source_node_id, active_node_id);
+            self.paint_entity(
+                ui,
+                &entity.kind,
+                rect,
+                is_selected,
+                entity.transform.opacity,
+            );
             if is_active && !is_selected {
                 ui.painter().rect_stroke(
-                    rect.expand(3.0),
+                    if is_background {
+                        geometry.stage_rect.shrink(3.0)
+                    } else {
+                        rect.expand(3.0)
+                    },
                     0.0,
-                    egui::Stroke::new(2.0, egui::Color32::from_rgb(120, 220, 255)),
+                    egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(120, 220, 255)),
                 );
             }
-            if is_selected && !is_background {
+            if is_selected {
                 ui.painter().rect_stroke(
-                    rect.expand(2.0),
+                    if is_background {
+                        geometry.stage_rect.shrink(2.0)
+                    } else {
+                        rect.expand(2.0)
+                    },
                     0.0,
-                    egui::Stroke::new(2.0, egui::Color32::YELLOW),
+                    egui::Stroke::new(2.0_f32, egui::Color32::YELLOW),
                 );
             }
-            self.paint_entity(ui, &entity.kind, rect, is_selected);
             ui.set_clip_rect(previous_clip);
         }
 
@@ -231,8 +252,8 @@ impl<'a> SceneStagePainter<'a> {
                 expression.as_deref(),
             );
             let entity = scene.get_mut(id)?;
-            entity.transform.x += delta.x.round() as i32;
-            entity.transform.y += delta.y.round() as i32;
+            entity.transform.x = entity.transform.x.saturating_add(delta.x.round() as i32);
+            entity.transform.y = entity.transform.y.saturating_add(delta.y.round() as i32);
             clamp_transform_to_stage(&mut entity.transform, &entity.kind, &geometry);
             let scale = if entity.transform.scale == 1000 {
                 None
@@ -270,7 +291,7 @@ impl<'a> SceneStagePainter<'a> {
         ui.painter().rect_stroke(
             geometry.stage_rect,
             0.0,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(110)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(110)),
         );
 
         if is_empty {
@@ -290,20 +311,27 @@ impl<'a> SceneStagePainter<'a> {
         source_node_id: Option<u32>,
         index: usize,
     ) -> Option<&LayerOverride> {
+        let overrides = self.layer_overrides?;
         let stable_id = scene_entity_object_id(entity, source_node_id, index);
-        self.layer_overrides.get(&stable_id).or_else(|| {
-            self.layer_overrides
-                .get(&format!("entity:{}", entity.id.raw()))
-        })
+        self.entity_object_ids
+            .get(&entity.id.raw())
+            .and_then(|id| overrides.get(id))
+            .or_else(|| overrides.get(&stable_id))
+            .or_else(|| overrides.get(&format!("entity:{}", entity.id.raw())))
     }
 
     fn paint_entity(
         &mut self,
-        ui: &egui::Ui,
+        ui: &mut egui::Ui,
         kind: &EntityKind,
         rect: egui::Rect,
         is_selected: bool,
+        opacity: u32,
     ) {
+        let mut content_ui = ui.child_ui(rect, *ui.layout());
+        content_ui.set_clip_rect(ui.clip_rect());
+        content_ui.set_opacity(opacity.min(1000) as f32 / 1000.0);
+        let ui = &content_ui;
         match kind {
             EntityKind::Image(image) => {
                 if let Some(texture_id) = self.resolve_image_texture(ui.ctx(), image.path.as_ref())
@@ -369,7 +397,17 @@ impl<'a> SceneStagePainter<'a> {
         let project_root = self.project_root?;
         let request_cache_key =
             scene_stage_cache_key(project_root, self.preview_quality, &asset_path);
+        crate::editor::image_asset_cache::prune_image_cache_versions(
+            self.image_cache,
+            &request_cache_key,
+        );
+        crate::editor::image_asset_cache::prune_image_cache_versions(
+            self.image_failures,
+            &request_cache_key,
+        );
         if let Some(texture) = self.image_cache.get(&request_cache_key) {
+            self.resource_service
+                .record_texture_use(texture.id(), ctx.frame_nr());
             return Some(texture.id());
         }
         if let Some(should_retry) = self
@@ -402,8 +440,15 @@ impl<'a> SceneStagePainter<'a> {
         };
         let cache_key =
             scene_stage_cache_key(project_root, self.preview_quality, &resolved_asset_path);
+        crate::editor::image_asset_cache::prune_image_cache_versions(self.image_cache, &cache_key);
+        crate::editor::image_asset_cache::prune_image_cache_versions(
+            self.image_failures,
+            &cache_key,
+        );
         if let Some(texture) = self.image_cache.get(&cache_key) {
             let texture = texture.clone();
+            self.resource_service
+                .record_texture_use(texture.id(), ctx.frame_nr());
             if request_cache_key != cache_key {
                 self.image_cache.insert(request_cache_key, texture.clone());
             }
@@ -424,6 +469,7 @@ impl<'a> SceneStagePainter<'a> {
             self.preview_quality.texture_options(),
         );
         let id = texture.id();
+        self.resource_service.record_texture_use(id, ctx.frame_nr());
         if request_cache_key != cache_key {
             self.image_cache.insert(request_cache_key, texture.clone());
         }
@@ -488,7 +534,7 @@ pub fn entity_matches_active_node(
     source_node_id.is_some() && source_node_id == active_node_id
 }
 
-fn character_instance_index(
+pub(crate) fn character_instance_index(
     scene: &SceneState,
     entity_owners: &HashMap<u32, u32>,
     moved_raw_id: u32,

@@ -116,7 +116,10 @@ pub(super) fn render_theme_preview(
 
     egui::Frame::none()
         .fill(stage)
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(64, 70, 82)))
+        .stroke(egui::Stroke::new(
+            1.0_f32,
+            egui::Color32::from_rgb(64, 70, 82),
+        ))
         .inner_margin(egui::Margin::same(12.0))
         .show(ui, |ui| {
             ui.set_min_height(150.0);
@@ -183,9 +186,9 @@ fn draw_color_swatch(ui: &mut egui::Ui, color: visual_novel_engine::ThemeColorRg
     let fill = egui::Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a);
     ui.painter().circle_filled(rect.center(), 8.0, fill);
     let stroke = if valid {
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 215, 225))
+        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(210, 215, 225))
     } else {
-        egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 120, 100))
+        egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(255, 120, 100))
     };
     ui.painter().circle_stroke(rect.center(), 8.0, stroke);
 }

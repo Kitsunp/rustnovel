@@ -113,12 +113,7 @@ impl StoryGraph {
 
             EventCompiled::Transition(transition) => {
                 let node_type = NodeType::Transition {
-                    kind: match transition.kind {
-                        0 => "fade".to_string(),
-                        1 => "dissolve".to_string(),
-                        2 => "cut".to_string(),
-                        _ => "unknown".to_string(),
-                    },
+                    kind: crate::event::transition_kind_name(transition.kind).to_string(),
                     duration: transition.duration_ms.into(),
                 };
                 (node_type, sequential_edge(ip, next_ip, has_next))

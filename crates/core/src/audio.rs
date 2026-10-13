@@ -30,3 +30,20 @@ pub enum AudioCommand {
     },
     StopVoice,
 }
+
+pub(crate) const DEFAULT_AUDIO_FADE_MS: u64 = 500;
+
+/// Builds the canonical command for music represented by a scene snapshot.
+pub(crate) fn scene_music_command(music: Option<&SharedStr>) -> AudioCommand {
+    let fade = Duration::from_millis(DEFAULT_AUDIO_FADE_MS);
+    match music {
+        Some(path) => AudioCommand::PlayBgm {
+            resource: AssetId::from_path(path.as_ref()),
+            path: path.clone(),
+            r#loop: true,
+            volume: None,
+            fade_in: fade,
+        },
+        None => AudioCommand::StopBgm { fade_out: fade },
+    }
+}

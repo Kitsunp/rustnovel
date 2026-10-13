@@ -9,6 +9,7 @@ fn audio_duration_reports_decodable_wav_and_fails_for_invalid_audio() {
     let wav = tiny_wav(Duration::from_millis(250), 8_000);
     store.insert("tone.wav", wav);
     store.insert("broken.ogg", b"not audio".to_vec());
+    store.insert("tone.ogg", include_bytes!("fixtures/tone.ogg").to_vec());
 
     let duration = audio_duration(&store, "tone.wav")
         .expect("valid wav duration")
@@ -20,6 +21,13 @@ fn audio_duration_reports_decodable_wav_and_fails_for_invalid_audio() {
 
     let err = audio_duration(&store, "broken.ogg").expect_err("invalid audio should fail");
     assert!(err.contains("Failed to decode audio"));
+    let ogg_duration = audio_duration(&store, "tone.ogg")
+        .unwrap()
+        .expect("Ogg duration");
+    assert!(
+        (ogg_duration.as_secs_f32() - 0.25).abs() < 0.02,
+        "{ogg_duration:?}"
+    );
 }
 
 fn tiny_wav(duration: Duration, sample_rate: u32) -> Vec<u8> {

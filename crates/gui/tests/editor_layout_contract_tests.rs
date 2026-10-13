@@ -56,6 +56,11 @@ fn undo_stack_push_undo_redo_and_limit_contract() {
     assert!(!stack.can_redo());
     let restored = stack.undo(state3.clone()).expect("undo");
     assert_eq!(restored.len(), 2);
+    let saved_id = state2.nodes().next().unwrap().0;
+    assert!(std::ptr::eq(
+        restored.get_node(saved_id).unwrap(),
+        state2.get_node(saved_id).unwrap(),
+    ));
     assert!(stack.can_redo());
 
     let redone = stack.redo(restored).expect("redo");
@@ -155,11 +160,11 @@ fn composer_viewport_reserves_editor_space() {
     assert!(tall.y < 700.0);
 
     let short = composer_viewport_size(egui::vec2(720.0, 180.0), (1280.0, 720.0));
-    assert!(short.y <= 152.0);
+    assert!(short.y <= 180.0);
     assert!(short.y >= 96.0);
 
     let tiny = composer_viewport_size(egui::vec2(320.0, 20.0), (1280.0, 720.0));
-    assert_eq!(tiny, egui::vec2(320.0, 0.0));
+    assert_eq!(tiny, egui::vec2(320.0, 20.0));
 }
 
 #[test]

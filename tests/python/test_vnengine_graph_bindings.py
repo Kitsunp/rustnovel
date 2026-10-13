@@ -116,7 +116,7 @@ class GuiBindingTests(unittest.TestCase):
             self.assertTrue(hasattr(report_obj, "to_dict"))
             report = report_obj.to_dict()
 
-            self.assertEqual(report["runtime_artifact"], "runtime/vn-runtime.exe")
+            self.assertEqual(report["runtime_artifact"], "game.exe")
             self.assertNotIn("warnings", report["capabilities"])
             self.assertEqual(
                 report["runtime_artifact_sha256"],
@@ -128,6 +128,10 @@ class GuiBindingTests(unittest.TestCase):
                 report["smoke_result"]["trace_id"].startswith("export-smoke-")
             )
             self.assertEqual((out / "game.exe").read_bytes(), runtime_bytes)
+            self.assertFalse((out / "runtime/vn-runtime.exe").exists())
+            self.assertEqual(
+                (out / report["runtime_artifact"]).read_bytes(), runtime_bytes
+            )
             package_report = json.loads((out / "meta/package_report.json").read_text())
             compat_report = json.loads((out / "meta/compat_report.json").read_text())
             manifest_bytes = (out / "meta/bundle_file_manifest.json").read_bytes()

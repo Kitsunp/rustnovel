@@ -48,6 +48,10 @@ impl AuthoringCommandBus {
                     .filter(|connection| connection.from == *node_id || connection.to == *node_id)
                     .cloned()
                     .collect::<Vec<_>>();
+                let context = self
+                    .graph
+                    .node_removal_context(*node_id)
+                    .ok_or_else(|| format!("node {node_id} not found"))?;
                 self.graph.remove_node(*node_id);
                 Ok((
                     AuthoringDelta::NodeRemoved {
@@ -55,6 +59,7 @@ impl AuthoringCommandBus {
                         node,
                         position,
                         connections,
+                        context,
                     },
                     OperationKind::NodeRemoved,
                     Some(format!("graph.nodes[{node_id}]")),
@@ -136,19 +141,20 @@ impl AuthoringCommandBus {
                 to,
                 branch_position,
             } => {
-                if !self
+                let undo = self
                     .graph
-                    .connect_or_branch(*from, *from_port, *to, *branch_position)
-                {
-                    return Err(format!(
-                        "node {from} port {from_port} could not branch to node {to}"
-                    ));
-                }
+                    .record_node_edge_mutation(|graph| {
+                        Ok(graph.connect_or_branch(*from, *from_port, *to, *branch_position))
+                    })?
+                    .ok_or_else(|| {
+                        format!("node {from} port {from_port} could not branch to node {to}")
+                    })?;
                 Ok((
                     AuthoringDelta::BranchConnected {
                         from: *from,
                         from_port: *from_port,
                         to: *to,
+                        undo,
                     },
                     OperationKind::NodeConnected,
                     Some(format!("graph.edges[{from}:{from_port}]")),
@@ -162,24 +168,11 @@ impl AuthoringCommandBus {
             AuthoringCommand::EditNode {
                 node_id,
                 replacement,
-            } => {
-                let node = self
-                    .graph
-                    .get_node_mut(*node_id)
-                    .ok_or_else(|| format!("node {node_id} not found"))?;
-                let before = node.clone();
-                *node = replacement.clone();
-                Ok((
-                    AuthoringDelta::NodeEdited {
-                        node_id: *node_id,
-                        before,
-                        after: replacement.clone(),
-                    },
-                    OperationKind::FieldEdited,
-                    Some(format!("graph.nodes[{node_id}]")),
-                    Some(DiagnosticTarget::Node { node_id: *node_id }),
-                ))
-            }
+            } => self.replace_node(
+                *node_id,
+                replacement.clone(),
+                format!("graph.nodes[{node_id}]"),
+            ),
             AuthoringCommand::EditDialogue {
                 node_id,
                 speaker,
@@ -215,10 +208,10 @@ impl AuthoringCommandBus {
             }
             AuthoringCommand::ApplyQuickFix { issue, fix_id } => {
                 let before_sha256 = authoring_graph_sha256(&self.graph);
-                let changed = quick_fix::apply_fix(&mut self.graph, issue, fix_id)?;
-                if !changed {
-                    return Err(format!("quick-fix '{fix_id}' made no changes"));
-                }
+                let undo = self
+                    .graph
+                    .record_node_edge_mutation(|graph| quick_fix::apply_fix(graph, issue, fix_id))?
+                    .ok_or_else(|| format!("quick-fix '{fix_id}' made no changes"))?;
                 let after_sha256 = authoring_graph_sha256(&self.graph);
                 Ok((
                     AuthoringDelta::QuickFixApplied {
@@ -226,6 +219,7 @@ impl AuthoringCommandBus {
                         fix_id: fix_id.clone(),
                         before_sha256,
                         after_sha256,
+                        undo,
                     },
                     OperationKind::QuickFixApplied,
                     issue
@@ -270,7 +264,9 @@ impl AuthoringCommandBus {
                     Some(DiagnosticTarget::Graph),
                 ))
             }
-            AuthoringCommand::RevertLast => unreachable!("handled by apply"),
+            AuthoringCommand::RevertLast | AuthoringCommand::RedoLast => {
+                unreachable!("handled by apply")
+            }
         }
     }
 }

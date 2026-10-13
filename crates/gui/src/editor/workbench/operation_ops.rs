@@ -19,6 +19,11 @@ impl EditorWorkbench {
         after_value: Option<String>,
     ) {
         self.pending_editor_operation = Some(PendingEditorOperation {
+            operation_id: self
+                .document()
+                .operation_log
+                .last()
+                .map(|entry| entry.operation_id.clone()),
             kind: kind.into(),
             details: details.into(),
             field_path,
@@ -32,33 +37,21 @@ impl EditorWorkbench {
     }
 
     pub fn record_pending_editor_operation(&mut self) {
-        self.rebuild_authoring_session_from_fields();
-        let after = match self.current_authoring_fingerprint() {
-            Some(after) => after,
-            None => return,
+        self.node_graph.clear_operation_hint();
+        let Some(operation) = self.pending_editor_operation.take() else {
+            self.last_operation_fingerprint = self.current_authoring_fingerprint();
+            return;
         };
-        let graph_hint = self.node_graph.take_operation_hint();
-        let pending = self.pending_editor_operation.take();
-        let operation = if let Some(operation) = pending {
-            operation
-        } else if let Some(hint) = graph_hint {
-            PendingEditorOperation {
-                kind: hint.kind,
-                details: hint.details,
-                field_path: hint.field_path,
-                before_value: hint.before_value,
-                after_value: hint.after_value,
-            }
-        } else {
-            PendingEditorOperation {
-                kind: "editor_graph_mutation".to_string(),
-                details: "Graph changed through editor UI".to_string(),
-                field_path: None,
-                before_value: None,
-                after_value: None,
-            }
-        };
-        self.append_editor_operation(operation, self.last_operation_fingerprint.clone(), after);
+        if let Some(operation_id) = operation.operation_id {
+            self.node_graph.authoring_session.describe_latest_operation(
+                &operation_id,
+                operation.details,
+                operation.field_path,
+                operation.before_value,
+                operation.after_value,
+            );
+        }
+        self.last_operation_fingerprint = self.current_authoring_fingerprint();
     }
 
     pub fn record_editor_operation_now(
@@ -70,11 +63,11 @@ impl EditorWorkbench {
         after_value: Option<String>,
         before: Option<visual_novel_engine::authoring::AuthoringReportFingerprint>,
     ) {
-        self.rebuild_authoring_session_from_fields();
         let Some(after) = self.current_authoring_fingerprint() else {
             return;
         };
         let operation = PendingEditorOperation {
+            operation_id: None,
             kind: kind.to_string(),
             details: details.into(),
             field_path,
@@ -84,16 +77,13 @@ impl EditorWorkbench {
         self.append_editor_operation(operation, before, after);
     }
 
-    pub fn commit_modified_graph(&mut self, mut undo_snapshot: NodeGraph) {
+    pub fn commit_modified_graph(&mut self) {
+        self.node_graph.commit_drag_positions();
         if !self.node_graph.is_modified() {
             return;
         }
-        let push_undo = self.node_graph.operation_hint_pushes_undo();
         self.record_pending_editor_operation();
-        if push_undo {
-            undo_snapshot.clear_operation_hint();
-            self.undo_stack.push(undo_snapshot);
-        }
+        self.refresh_document_state();
         self.node_graph.clear_modified();
         if let Err(err) = self.sync_graph_to_script() {
             self.toast = Some(ToastState::error(format!(
@@ -103,36 +93,50 @@ impl EditorWorkbench {
     }
 
     pub fn apply_graph_undo(&mut self) -> bool {
-        let before = self.node_graph.clone();
-        let Some(previous) = self.undo_stack.undo(self.node_graph.clone()) else {
-            return false;
-        };
-        self.node_graph = previous;
-        self.node_graph.queue_operation_hint(
-            "undo",
-            "Undo graph editor mutation",
-            Some("graph".to_string()),
-            false,
-        );
-        self.node_graph.mark_modified();
-        self.commit_modified_graph(before);
-        true
+        self.apply_document_history_command(
+            visual_novel_engine::authoring::AuthoringDocumentCommand::UndoLast,
+        )
     }
 
     pub fn apply_graph_redo(&mut self) -> bool {
-        let before = self.node_graph.clone();
-        let Some(next) = self.undo_stack.redo(self.node_graph.clone()) else {
-            return false;
+        self.apply_document_history_command(
+            visual_novel_engine::authoring::AuthoringDocumentCommand::RedoLast,
+        )
+    }
+
+    pub(super) fn apply_document_history_command(
+        &mut self,
+        command: visual_novel_engine::authoring::AuthoringDocumentCommand,
+    ) -> bool {
+        use visual_novel_engine::authoring::AuthoringDocumentCommand;
+        self.node_graph.commit_drag_positions();
+        self.record_pending_editor_operation();
+        let available = match command {
+            AuthoringDocumentCommand::UndoLast | AuthoringDocumentCommand::RevertLast => {
+                self.node_graph.authoring_session.undo_delta_count()
+            }
+            AuthoringDocumentCommand::RedoLast => {
+                self.node_graph.authoring_session.redo_delta_count()
+            }
+            _ => unreachable!("document history command required"),
         };
-        self.node_graph = next;
-        self.node_graph.queue_operation_hint(
-            "redo",
-            "Redo graph editor mutation",
-            Some("graph".to_string()),
-            false,
-        );
-        self.node_graph.mark_modified();
-        self.commit_modified_graph(before);
+        if available == 0 {
+            return false;
+        }
+        if let Err(error) = self.apply_authoring_document_command(command) {
+            self.toast = Some(ToastState::error(error));
+            return false;
+        }
+        self.node_graph.clear_operation_hint();
+        self.node_graph.clear_modified();
+        self.node_graph.reconcile_view_after_document_change();
+        self.selected_node = self.node_graph.selected;
+        self.selected_entity = None;
+        if let Err(error) = self.sync_graph_to_script() {
+            self.toast = Some(ToastState::error(format!(
+                "Graph sync failed after history action: {error}"
+            )));
+        }
         true
     }
 
@@ -155,84 +159,40 @@ impl EditorWorkbench {
         let script = self.node_graph.to_script();
         Some(
             visual_novel_engine::authoring::build_authoring_document_report_fingerprint(
-                self.authoring_session.document(),
+                self.node_graph.authoring_session.document(),
                 &script,
             ),
         )
     }
 
+    pub fn document(&self) -> &visual_novel_engine::authoring::AuthoringDocument {
+        self.node_graph.authoring_session.document()
+    }
+
     pub fn current_authoring_document(&self) -> visual_novel_engine::authoring::AuthoringDocument {
-        self.authoring_session.document().clone()
+        self.node_graph.authoring_session.document().clone()
     }
 
-    fn authoring_document_from_fields(&self) -> visual_novel_engine::authoring::AuthoringDocument {
-        let mut document = visual_novel_engine::authoring::AuthoringDocument::new(
-            self.node_graph.authoring_graph().clone(),
-        );
-        document.composer_layer_overrides = self
-            .composer_layer_overrides
-            .iter()
-            .map(|(key, value)| (key.clone(), *value))
-            .collect();
-        document.composer_background_fit_overrides = self
-            .composer_background_fit_overrides
-            .iter()
-            .map(|(key, value)| (key.clone(), *value))
-            .collect();
-        document.operation_log = self.operation_log.clone();
-        document.verification_runs = self.verification_runs.clone();
-        document
-    }
-
-    pub fn rebuild_authoring_session_from_fields(&mut self) {
-        self.authoring_session = visual_novel_engine::authoring::AuthoringDocumentSession::new(
-            self.authoring_document_from_fields(),
-        );
-    }
-
-    fn authoring_session_matches_fields(&self) -> bool {
-        let document = self.authoring_session.document();
-        document.graph == *self.node_graph.authoring_graph()
-            && document.composer_layer_overrides.len() == self.composer_layer_overrides.len()
-            && document
-                .composer_layer_overrides
-                .iter()
-                .all(|(key, value)| self.composer_layer_overrides.get(key) == Some(value))
-            && document.composer_background_fit_overrides.len()
-                == self.composer_background_fit_overrides.len()
-            && document
-                .composer_background_fit_overrides
-                .iter()
-                .all(|(key, value)| self.composer_background_fit_overrides.get(key) == Some(value))
-            && document.operation_log.len() == self.operation_log.len()
-            && document.verification_runs.len() == self.verification_runs.len()
-    }
-
-    pub fn ensure_authoring_session_matches_fields(&mut self) {
-        if !self.authoring_session_matches_fields() {
-            self.rebuild_authoring_session_from_fields();
+    pub fn refresh_document_state(&mut self) {
+        self.node_graph
+            .authoring_session
+            .limit_undo_history(crate::editor::undo::MAX_UNDO_STATES);
+        if self.last_fix_command_index.is_some_and(|index| {
+            !self
+                .node_graph
+                .authoring_session
+                .is_command_in_history(index)
+        }) {
+            self.last_fix_command_index = None;
         }
-    }
-
-    pub fn sync_authoring_fields_from_session(&mut self) {
-        let document = self.authoring_session.document().clone();
-        self.node_graph.replace_authoring_graph(document.graph);
-        self.composer_layer_overrides = document.composer_layer_overrides.into_iter().collect();
-        self.composer_background_fit_overrides = document
-            .composer_background_fit_overrides
-            .into_iter()
-            .collect();
-        self.operation_log = document.operation_log;
-        self.verification_runs = document.verification_runs;
     }
 
     pub fn apply_authoring_document_command(
         &mut self,
         command: visual_novel_engine::authoring::AuthoringDocumentCommand,
     ) -> Result<visual_novel_engine::authoring::AuthoringDocumentCommandOutcome, String> {
-        self.ensure_authoring_session_matches_fields();
-        let outcome = self.authoring_session.apply(command)?;
-        self.sync_authoring_fields_from_session();
+        let outcome = self.node_graph.authoring_session.apply(command)?;
+        self.refresh_document_state();
         self.last_operation_fingerprint = Some(outcome.after_fingerprint.clone());
         Ok(outcome)
     }
@@ -317,17 +277,16 @@ impl EditorWorkbench {
         let after_issues = visual_novel_engine::authoring::validate_authoring_graph_no_io(
             self.node_graph.authoring_graph(),
         );
-        self.verification_runs.push(
-            visual_novel_engine::authoring::VerificationRun::from_diagnostics(
-                entry.operation_id.clone(),
-                "editor_no_io",
-                &after,
-                &before_issues,
-                &after_issues,
-            ),
+        let verification = visual_novel_engine::authoring::VerificationRun::from_diagnostics(
+            entry.operation_id.clone(),
+            "editor_no_io",
+            &after,
+            &before_issues,
+            &after_issues,
         );
+        self.node_graph
+            .authoring_session
+            .record_external_operation(entry, verification);
         self.last_operation_fingerprint = Some(after);
-        self.operation_log.push(entry);
-        self.rebuild_authoring_session_from_fields();
     }
 }

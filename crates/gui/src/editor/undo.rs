@@ -1,6 +1,7 @@
 //! Undo/Redo system for the node editor.
 //!
 //! Provides an undo stack that stores graph snapshots before each action.
+//! Core graph clones share unchanged node entries and detach mutable entries.
 //! Maximum 50 states to limit memory usage.
 
 use std::collections::VecDeque;
@@ -13,7 +14,7 @@ pub const MAX_UNDO_STATES: usize = 50;
 /// Manages undo/redo history for a NodeGraph.
 ///
 /// # Design
-/// - Stores full clones of NodeGraph (simple but memory-heavy)
+/// - Stores graph snapshots with shared core node entries
 /// - Clears redo stack on new actions (standard behavior)
 /// - Limited to MAX_UNDO_STATES to prevent unbounded growth
 #[derive(Clone, Debug, Default)]

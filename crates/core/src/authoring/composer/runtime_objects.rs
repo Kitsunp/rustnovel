@@ -16,9 +16,10 @@ struct PresentationOwnerHints {
 pub(super) fn collect_visual_objects(
     graph: &NodeGraph,
     engine: &Engine,
+    visited_ips: Option<&[u32]>,
 ) -> Vec<LayeredSceneObject> {
     let visual = engine.visual_state();
-    let mut owners = presentation_owner_hints(graph, engine);
+    let mut owners = presentation_owner_hints(graph, engine, visited_ips);
     let mut objects = Vec::new();
 
     if let Some(background) = &visual.background {
@@ -82,17 +83,35 @@ pub(super) fn collect_visual_objects(
     objects
 }
 
-fn presentation_owner_hints(graph: &NodeGraph, engine: &Engine) -> PresentationOwnerHints {
+fn presentation_owner_hints(
+    graph: &NodeGraph,
+    engine: &Engine,
+    visited_ips: Option<&[u32]>,
+) -> PresentationOwnerHints {
     let mut hints = PresentationOwnerHints::default();
     let upper_bound = engine.state().position;
-    for (idx, event) in engine.script().events.iter().enumerate() {
+    let events = &engine.script().events;
+    let runtime_end = if visited_ips.is_none() {
+        events.len().min(upper_bound as usize + 1)
+    } else {
+        0
+    };
+    let event_indices = visited_ips
+        .unwrap_or_default()
+        .iter()
+        .map(|ip| *ip as usize)
+        .chain(0..runtime_end);
+    for idx in event_indices {
+        let Some(event) = events.get(idx) else {
+            continue;
+        };
         let ip = idx as u32;
-        if ip > upper_bound {
-            break;
-        }
         let owner = graph.node_for_event_ip(ip);
         match event {
             EventCompiled::Scene(scene) => {
+                if !scene.characters.is_empty() {
+                    hints.character_owners.clear();
+                }
                 if scene.background.is_some() {
                     hints.background_owner = owner;
                 }
@@ -127,6 +146,7 @@ fn presentation_owner_hints(graph: &NodeGraph, engine: &Engine) -> PresentationO
                         );
                     }
                     for character in &patch.update {
+                        remove_character_owner_name(&mut hints, character.name.as_ref());
                         push_character_owner(
                             &mut hints,
                             character.name.as_ref(),
@@ -144,6 +164,7 @@ fn presentation_owner_hints(graph: &NodeGraph, engine: &Engine) -> PresentationO
             }
             EventCompiled::SetCharacterPosition(pos) => {
                 if let Some(owner_id) = owner {
+                    remove_character_owner_name(&mut hints, pos.name.as_ref());
                     push_character_owner(&mut hints, pos.name.as_ref(), None, owner_id);
                 }
             }

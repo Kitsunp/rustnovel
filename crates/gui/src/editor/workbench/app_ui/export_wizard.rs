@@ -188,9 +188,51 @@ impl EditorWorkbench {
         if self.export_wizard.entry_script.trim().is_empty() {
             if let Some(manifest) = self.manifest.as_ref() {
                 self.export_wizard.entry_script = manifest.settings.entry_point.clone();
+            } else if let Some(path) = self.pending_save_path.as_ref() {
+                if let Some(name) = path.file_name() {
+                    self.export_wizard.entry_script = name.to_string_lossy().to_string();
+                }
+            }
+        }
+        if self.export_wizard.runtime_artifact.trim().is_empty() {
+            let executable = std::env::current_exe().ok();
+            if let Some(runtime) = Self::discover_export_runtime(
+                executable.as_deref().and_then(std::path::Path::parent),
+                &std::env::current_dir().unwrap_or_default(),
+                self.export_wizard.target,
+            ) {
+                self.export_wizard.runtime_artifact = runtime.to_string_lossy().to_string();
             }
         }
         self.show_export_wizard = true;
+    }
+
+    pub fn discover_export_runtime(
+        executable_dir: Option<&std::path::Path>,
+        working_dir: &std::path::Path,
+        target: visual_novel_engine::ExportTargetPlatform,
+    ) -> Option<std::path::PathBuf> {
+        let name = if target == visual_novel_engine::ExportTargetPlatform::Windows {
+            "vn_player.exe"
+        } else {
+            "vn_player"
+        };
+        let mut candidates = Vec::new();
+        if let Some(dir) = executable_dir {
+            // Installed editor/player pairs work independently of the current directory.
+            if dir.file_name().is_none_or(|part| part != "debug") {
+                candidates.push(dir.join(name));
+            }
+            if let Some(parent) = dir.parent() {
+                candidates.push(parent.join("desktop").join(name));
+                candidates.push(parent.join("release").join(name));
+            }
+        }
+        candidates.push(working_dir.join("target/desktop").join(name));
+        candidates.push(working_dir.join("target/release").join(name));
+        candidates
+            .into_iter()
+            .find_map(|path| path.is_file().then(|| path.canonicalize().ok()).flatten())
     }
 
     fn choose_export_wizard_output(&mut self) {
@@ -349,6 +391,32 @@ impl EditorWorkbench {
                     .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
             })
             .ok_or_else(|| "load/save a project first so project_root is known".to_string())?;
+        let manifest_path = project_root.join("project.vnm");
+        if !manifest_path.is_file() {
+            let mut manifest =
+                visual_novel_engine::ProjectManifest::new("Visual Novel Game", "Author");
+            if let Some(entry) = &self.pending_save_path {
+                if let Some(name) = entry.file_name() {
+                    manifest.settings.entry_point = name.to_string_lossy().to_string();
+                }
+            } else if let Some(entry) = self
+                .export_wizard
+                .entry_script
+                .trim()
+                .split(['/', '\\'])
+                .next_back()
+            {
+                if !entry.is_empty() {
+                    manifest.settings.entry_point = entry.to_string();
+                }
+            }
+            manifest.save(&manifest_path).map_err(|err| {
+                format!(
+                    "could not save export manifest '{}': {err}",
+                    manifest_path.display()
+                )
+            })?;
+        }
         let output_root = self.export_wizard.output_root.trim();
         if output_root.is_empty() {
             return Err("choose an output folder".to_string());
