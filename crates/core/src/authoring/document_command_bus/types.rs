@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use super::super::{
@@ -7,7 +7,8 @@ use super::super::{
     OperationLogEntry, VerificationRun,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AuthoringDocumentCommand {
     Graph(AuthoringCommand),
     /// Records a completed graph edit from a snapshot-based authoring client.

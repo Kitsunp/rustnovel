@@ -43,6 +43,36 @@ pub struct AuthoringDocumentCommandApplyResult {
     pub outcome: AuthoringDocumentCommandOutcome,
 }
 
+#[derive(Clone, Debug)]
+pub struct AuthoringDocumentCommandsApplyResult {
+    pub document: AuthoringDocument,
+    pub outcomes: Vec<AuthoringDocumentCommandOutcome>,
+}
+
+/// Applies a batch in one session, preserving its history and caches.
+/// The owned document is returned only on success; callers must save it afterwards.
+pub fn apply_authoring_document_commands_headless(
+    document: AuthoringDocument,
+    commands: Vec<AuthoringDocumentCommand>,
+) -> Result<AuthoringDocumentCommandsApplyResult, String> {
+    if commands.is_empty() {
+        return Err("command batch must not be empty".to_string());
+    }
+    let mut session = AuthoringDocumentSession::new(document);
+    let mut outcomes = Vec::with_capacity(commands.len());
+    for (index, command) in commands.into_iter().enumerate() {
+        outcomes.push(
+            session
+                .apply(command)
+                .map_err(|error| format!("command {} failed: {error}", index + 1))?,
+        );
+    }
+    Ok(AuthoringDocumentCommandsApplyResult {
+        document: session.into_document(),
+        outcomes,
+    })
+}
+
 pub fn apply_authoring_document_command_headless(
     document: AuthoringDocument,
     command: AuthoringDocumentCommand,

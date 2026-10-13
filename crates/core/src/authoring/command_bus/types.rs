@@ -1,11 +1,12 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::super::{
     AuthoringPosition, GraphConnection, GraphFragment, GraphMutationUndo, GraphStack, LintIssue,
     NodeRemovalContext, OperationLogEntry, StoryNode, VerificationRun,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AuthoringCommand {
     CreateNode {
         node_id: u32,
@@ -82,6 +83,8 @@ pub enum AuthoringCommand {
     RefreshFragmentPorts {
         fragment_id: String,
     },
+    // Diagnostic objects are internal; they are not accepted from command JSON.
+    #[serde(skip)]
     ApplyQuickFix {
         issue: Box<LintIssue>,
         fix_id: String,

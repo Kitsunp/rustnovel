@@ -2,12 +2,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use visual_novel_engine::authoring::{
-    apply_authoring_document_command_headless, composer, load_authoring_document_or_script,
-    source_looks_like_authoring_document, validate_authoring_graph_with_project_root,
-    AuthoringCommand as CoreAuthoringCommand, AuthoringDocument, AuthoringDocumentCommand,
-    AuthoringValidationReport, LintSeverity,
+    apply_authoring_document_command_headless, apply_authoring_document_commands_headless,
+    load_authoring_document_or_script, source_looks_like_authoring_document,
+    validate_authoring_graph_with_project_root, AuthoringCommand as CoreAuthoringCommand,
+    AuthoringDocument, AuthoringDocumentCommand, AuthoringValidationReport, LintSeverity,
 };
 use visual_novel_engine::{run_repro_case, ReproCase};
 
@@ -19,7 +19,7 @@ use report::{print_report, ReportCompareSummary};
 pub enum AuthoringCommand {
     /// Validate an authoring document or runtime script and emit report V2.
     Validate(ValidateArgs),
-    /// Apply a document command JSON and emit the core outcome.
+    /// Apply a Core command object or command array; save only after all commands succeed.
     ApplyCommand(ApplyCommandArgs),
     /// Explain one diagnostic from a report V2 JSON file.
     Explain(ExplainArgs),
@@ -211,10 +211,18 @@ pub fn validate_authoring_script(
 fn run_apply_command(args: ApplyCommandArgs) -> Result<()> {
     let document = load_authoring_document(&args.project)?;
     let command = read_document_command(&args.command)?;
-    let result =
-        apply_authoring_document_command_headless(document, command).map_err(anyhow::Error::msg)?;
-    let document = result.document;
-    let outcome = result.outcome;
+    let (document, outcomes, batch) = match command {
+        CommandInput::Single(command) => {
+            let result = apply_authoring_document_command_headless(document, *command)
+                .map_err(anyhow::Error::msg)?;
+            (result.document, vec![result.outcome], false)
+        }
+        CommandInput::Batch(commands) => {
+            let result = apply_authoring_document_commands_headless(document, commands)
+                .map_err(anyhow::Error::msg)?;
+            (result.document, result.outcomes, true)
+        }
+    };
     let output_path = target_mutation_path(&args.project, args.output.as_deref(), args.in_place);
     if !args.dry_run {
         write_mutated_document(
@@ -224,25 +232,41 @@ fn run_apply_command(args: ApplyCommandArgs) -> Result<()> {
             &document,
         )?;
     }
-    if args.json {
-        if args.dry_run {
-            let report = ApplyCommandReport {
-                dry_run: true,
-                wrote: false,
-                output: output_path.map(|path| path.display().to_string()),
-                outcome,
-            };
-            println!("{}", serde_json::to_string_pretty(&report)?);
-        } else {
-            println!("{}", serde_json::to_string_pretty(&outcome)?);
-        }
-    } else {
+    if args.json && batch {
         println!(
-            "{} {}{}",
-            outcome.operation.operation_id,
-            outcome.operation.operation_kind,
-            if args.dry_run { " dry-run" } else { "" }
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "dry_run": args.dry_run,
+                "wrote": !args.dry_run && output_path.is_some(),
+                "output": output_path.map(|path| path.display().to_string()),
+                "outcomes": outcomes,
+            }))?
         );
+    } else {
+        for outcome in outcomes {
+            if args.json {
+                if args.dry_run {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&ApplyCommandReport {
+                            dry_run: true,
+                            wrote: false,
+                            output: output_path.as_ref().map(|path| path.display().to_string()),
+                            outcome,
+                        })?
+                    );
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&outcome)?);
+                }
+            } else {
+                println!(
+                    "{} {}{}",
+                    outcome.operation.operation_id,
+                    outcome.operation.operation_kind,
+                    if args.dry_run { " dry-run" } else { "" }
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -258,12 +282,29 @@ fn explain_diagnostic(args: &ExplainArgs) -> Result<()> {
     Ok(())
 }
 
-fn read_document_command(path: &Path) -> Result<AuthoringDocumentCommand> {
+enum CommandInput {
+    Single(Box<AuthoringDocumentCommand>),
+    Batch(Vec<AuthoringDocumentCommand>),
+}
+
+fn read_document_command(path: &Path) -> Result<CommandInput> {
     let source =
         std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let command: CliDocumentCommand =
-        serde_json::from_str(&source).context("parse document command json")?;
-    Ok(command.into())
+    let value: serde_json::Value = serde_json::from_str(&source).context("parse command JSON")?;
+    match value {
+        serde_json::Value::Array(values) => values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                serde_json::from_value(value)
+                    .with_context(|| format!("parse Core command {}", index + 1))
+            })
+            .collect::<Result<Vec<_>>>()
+            .map(CommandInput::Batch),
+        value => serde_json::from_value(value)
+            .map(|command| CommandInput::Single(Box::new(command)))
+            .context("parse Core command"),
+    }
 }
 
 fn run_fragment_command(command: FragmentCommand) -> Result<()> {
@@ -507,43 +548,4 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     super::atomic_write(path, json.as_bytes())
         .with_context(|| format!("write {}", path.display()))?;
     Ok(())
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "command", rename_all = "snake_case")]
-enum CliDocumentCommand {
-    SetLayerVisible {
-        object_id: String,
-        visible: bool,
-    },
-    SetLayerLocked {
-        object_id: String,
-        locked: bool,
-    },
-    SetBackgroundFitOverride {
-        node_id: u32,
-        fit: composer::BackgroundFit,
-    },
-    ClearBackgroundFitOverride {
-        node_id: u32,
-    },
-}
-
-impl From<CliDocumentCommand> for AuthoringDocumentCommand {
-    fn from(command: CliDocumentCommand) -> Self {
-        match command {
-            CliDocumentCommand::SetLayerVisible { object_id, visible } => {
-                Self::SetLayerVisible { object_id, visible }
-            }
-            CliDocumentCommand::SetLayerLocked { object_id, locked } => {
-                Self::SetLayerLocked { object_id, locked }
-            }
-            CliDocumentCommand::SetBackgroundFitOverride { node_id, fit } => {
-                Self::SetBackgroundFitOverride { node_id, fit }
-            }
-            CliDocumentCommand::ClearBackgroundFitOverride { node_id } => {
-                Self::ClearBackgroundFitOverride { node_id }
-            }
-        }
-    }
 }
