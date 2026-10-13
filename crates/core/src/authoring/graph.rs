@@ -16,6 +16,7 @@ mod choice_ops;
 mod fragment_ops;
 mod fragments;
 mod mutation;
+mod structural_edits;
 pub use mutation::GraphMutationUndo;
 mod removal;
 pub use removal::NodeRemovalContext;

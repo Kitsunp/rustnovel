@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use super::*;
 use crate::editor::StageFit;
 use visual_novel_engine::{
@@ -32,7 +33,7 @@ fn background_and_locked_character_can_be_inspected_without_moving() {
         };
         let id = scene.spawn_with_transform(transform, kind).unwrap();
         let original = scene.get(id).unwrap().transform;
-        let overrides = HashMap::from([(
+        let overrides = std::collections::BTreeMap::from([(
             scene_entity_object_id(scene.get(id).unwrap(), Some(7), 0),
             LayerOverride {
                 visible: true,
@@ -78,7 +79,7 @@ fn background_and_locked_character_can_be_inspected_without_moving() {
                                     &mut failures,
                                     &mut resources,
                                 )
-                                .with_layer_overrides(overrides.clone())
+                                .with_layer_overrides(&overrides)
                                 .paint_interactive(
                                     ui,
                                     &mut scene,

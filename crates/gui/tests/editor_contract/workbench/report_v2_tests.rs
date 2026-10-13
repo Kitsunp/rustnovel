@@ -223,14 +223,14 @@ fn editor_mutation_operation_log_records_before_after_fingerprints() {
     );
     workbench.record_pending_editor_operation();
 
-    let entry = workbench
+    let entry = workbench.document()
         .operation_log
         .last()
         .expect("operation should be logged");
-    assert_eq!(entry.operation_kind, "field_edited");
+    assert_eq!(entry.operation_kind, "node_created");
     assert_eq!(
         entry.operation_kind_v2.as_ref(),
-        Some(&visual_novel_engine::authoring::OperationKind::FieldEdited)
+        Some(&visual_novel_engine::authoring::OperationKind::NodeCreated)
     );
     assert!(entry.before_fingerprint_sha256.is_some());
     assert!(entry.after_fingerprint_sha256.is_some());
@@ -239,9 +239,9 @@ fn editor_mutation_operation_log_records_before_after_fingerprints() {
         entry.field_paths.first().map(|path| path.value.as_str()),
         Some(expected_path.as_str())
     );
-    assert_eq!(workbench.verification_runs.len(), workbench.operation_log.len());
+    assert_eq!(workbench.document().verification_runs.len(), workbench.document().operation_log.len());
     assert_eq!(
-        workbench
+        workbench.document()
             .verification_runs
             .last()
             .map(|run| run.operation_id.as_str()),
@@ -264,20 +264,15 @@ fn graph_field_edit_hint_records_before_after_values() {
     workbench.node_graph.clear_modified();
     workbench.refresh_operation_fingerprint();
 
-    let before_graph = workbench.node_graph.clone();
     let before_node = workbench
         .node_graph
         .get_node(node_id)
         .cloned()
         .expect("node exists");
-    let StoryNode::Dialogue { text, .. } = workbench
-        .node_graph
-        .get_node_mut(node_id)
-        .expect("node exists")
-    else {
-        panic!("expected dialogue");
-    };
-    *text = "After".to_string();
+    workbench.node_graph.edit_node(node_id, |node| {
+        let StoryNode::Dialogue { text, .. } = node else { panic!("expected dialogue"); };
+        *text = "After".to_string();
+    });
     let after_node = workbench
         .node_graph
         .get_node(node_id)
@@ -292,9 +287,9 @@ fn graph_field_edit_hint_records_before_after_values() {
         true,
     );
     workbench.node_graph.mark_modified();
-    workbench.commit_modified_graph(before_graph);
+    workbench.commit_modified_graph();
 
-    let entry = workbench
+    let entry = workbench.document()
         .operation_log
         .last()
         .expect("field edit should be logged");
@@ -336,17 +331,13 @@ fn fragment_port_refresh_is_logged_as_typed_field_edit() {
         .node_graph
         .add_node(StoryNode::End, egui::pos2(0.0, 200.0));
     workbench.node_graph.connect(start, mid);
-    assert!(workbench
-        .node_graph
-        .authoring
-        .create_fragment("frag", "Fragment", vec![mid]));
+    assert!(workbench.node_graph.edit_graph("Create fragment", |graph| graph.create_fragment("frag", "Fragment", vec![mid])));
 
     workbench.node_graph.connect(mid, end);
     workbench.node_graph.clear_operation_hint();
     workbench.node_graph.clear_modified();
     workbench.refresh_operation_fingerprint();
 
-    let before = workbench.node_graph.clone();
     assert!(workbench.node_graph.refresh_fragment_ports("frag"));
     workbench.node_graph.mark_modified();
     workbench.queue_editor_operation(
@@ -354,9 +345,9 @@ fn fragment_port_refresh_is_logged_as_typed_field_edit() {
         "Refreshed ports for fragment frag",
         Some("graph.fragments[frag].ports".to_string()),
     );
-    workbench.commit_modified_graph(before);
+    workbench.commit_modified_graph();
 
-    let entry = workbench
+    let entry = workbench.document()
         .operation_log
         .last()
         .expect("fragment refresh should be logged");
@@ -377,25 +368,13 @@ fn composer_layer_changes_are_typed_operations() {
     let mut workbench = EditorWorkbench::new(config);
     workbench.refresh_operation_fingerprint();
 
-    let before = workbench.node_graph.clone();
-    workbench.composer_layer_overrides.insert(
-        "node:7:Background:0:graph_nodes_7_visual_background".to_string(),
-        visual_novel_engine::authoring::composer::LayerOverride {
-            visible: false,
-            locked: false,
-        },
-    );
+    let scene = workbench.node_graph.add_node(StoryNode::Scene { profile: None, background: Some("bg.png".into()), music: None, characters: vec![] }, egui::pos2(0.0, 0.0));
+    let object_id = visual_novel_engine::authoring::composer::list_layered_objects(workbench.node_graph.authoring_graph(), Some(scene)).into_iter().next().unwrap().object_id;
+    workbench.apply_authoring_document_command(visual_novel_engine::authoring::AuthoringDocumentCommand::SetLayerVisible { object_id: object_id.clone(), visible: false }).unwrap();
     workbench.node_graph.mark_modified();
-    workbench.queue_editor_operation_with_values(
-        "layer_visibility_changed",
-        "Set layer node:7 visible=false",
-        Some("composer.layers[node:7].visible".to_string()),
-        Some("true".to_string()),
-        Some("false".to_string()),
-    );
-    workbench.commit_modified_graph(before);
+    workbench.commit_modified_graph();
 
-    let entry = workbench
+    let entry = workbench.document()
         .operation_log
         .last()
         .expect("layer operation should be logged");
@@ -406,15 +385,15 @@ fn composer_layer_changes_are_typed_operations() {
     ));
     assert_eq!(
         entry.field_paths.first().map(|path| path.value.as_str()),
-        Some("composer.layers[node:7].visible")
+        Some(format!("composer.layers[{object_id}].visible").as_str())
     );
     assert_ne!(
         entry.before_fingerprint_sha256, entry.after_fingerprint_sha256,
         "layer overrides must be reflected by operation fingerprints"
     );
-    assert_eq!(entry.before_value.as_deref(), Some("true"));
-    assert_eq!(entry.after_value.as_deref(), Some("false"));
-    assert_eq!(workbench.verification_runs.len(), 1);
+    assert_eq!(entry.before_value.as_deref(), Some("null"));
+    assert!(entry.after_value.as_deref().is_some_and(|value| value.contains("\"visible\":false")));
+    assert_eq!(workbench.document().verification_runs.len(), 2);
 }
 
 #[test]
@@ -423,7 +402,6 @@ fn editor_undo_redo_are_typed_operations_and_keep_redo_available() {
     let mut workbench = EditorWorkbench::new(config);
     workbench.refresh_operation_fingerprint();
 
-    let before_create = workbench.node_graph.clone();
     let _created = workbench.node_graph.add_node(
         StoryNode::Dialogue {
             speaker: "Ava".to_string(),
@@ -431,10 +409,10 @@ fn editor_undo_redo_are_typed_operations_and_keep_redo_available() {
         },
         egui::pos2(80.0, 120.0),
     );
-    workbench.commit_modified_graph(before_create);
+    workbench.commit_modified_graph();
     assert_eq!(workbench.node_graph.len(), 1);
     assert_eq!(
-        workbench
+        workbench.document()
             .operation_log
             .last()
             .map(|entry| entry.operation_kind.as_str()),
@@ -444,9 +422,9 @@ fn editor_undo_redo_are_typed_operations_and_keep_redo_available() {
     assert!(workbench.apply_graph_undo());
 
     assert_eq!(workbench.node_graph.len(), 0);
-    assert!(workbench.undo_stack.can_redo());
+    assert!(workbench.node_graph.authoring_session.redo_delta_count() > 0);
     assert_eq!(
-        workbench
+        workbench.document()
             .operation_log
             .last()
             .map(|entry| entry.operation_kind.as_str()),
@@ -457,11 +435,11 @@ fn editor_undo_redo_are_typed_operations_and_keep_redo_available() {
 
     assert_eq!(workbench.node_graph.len(), 1);
     assert_eq!(
-        workbench
+        workbench.document()
             .operation_log
             .last()
             .map(|entry| entry.operation_kind.as_str()),
         Some("redo")
     );
-    assert_eq!(workbench.verification_runs.len(), 3);
+    assert_eq!(workbench.document().verification_runs.len(), 3);
 }

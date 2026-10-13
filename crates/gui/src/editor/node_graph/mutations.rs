@@ -1,50 +1,21 @@
 use super::*;
 
 impl NodeGraph {
-    /// Inserts a new node before the target node, re-routing incoming ports.
     pub fn insert_before(&mut self, target_id: u32, node: StoryNode) {
-        let Some(pos) = self.get_node_pos(target_id) else {
-            debug_assert!(
-                false,
-                "Precondition warning: target_id {} not found in insert_before",
-                target_id
-            );
-            return;
-        };
-        let new_id = self.add_node(node, egui::pos2(pos.x, pos.y - NODE_VERTICAL_SPACING));
-        let incoming = self
-            .connections()
-            .filter(|conn| conn.to == target_id)
-            .map(|conn| (conn.from, conn.from_port))
-            .collect::<Vec<_>>();
-        for (from, port) in incoming {
-            self.connect_port(from, port, new_id);
-        }
-        self.connect(new_id, target_id);
+        self.edit_graph("Insert node before", |graph| {
+            graph.insert_before(target_id, node, NODE_VERTICAL_SPACING)
+        });
     }
-
-    /// Inserts a new node after the target node, re-routing the default output.
     pub fn insert_after(&mut self, target_id: u32, node: StoryNode) {
-        let Some(pos) = self.get_node_pos(target_id) else {
-            return;
-        };
-        let target_node = self.get_node(target_id).cloned();
-        let new_choice_label = choice_route_label_for_inserted_node(&node);
-        let new_id = self.add_node(node, egui::pos2(pos.x, pos.y + NODE_VERTICAL_SPACING));
-
-        if matches!(target_node, Some(StoryNode::Choice { .. })) {
-            self.connect_new_choice_option(target_id, new_id, new_choice_label);
-            return;
+        self.edit_graph("Insert node after", |graph| {
+            graph.insert_after(target_id, node, NODE_VERTICAL_SPACING)
+        });
+    }
+    pub fn create_branch(&mut self, node_id: u32) {
+        if let Some(choice) = self.edit_graph("Create branch", |graph| graph.create_branch(node_id))
+        {
+            self.set_single_selection(Some(choice));
         }
-
-        let old_target = self
-            .connections()
-            .find(|conn| conn.from == target_id && conn.from_port == 0)
-            .map(|conn| conn.to);
-        if let Some(old_target) = old_target {
-            self.connect(new_id, old_target);
-        }
-        self.connect_port(target_id, 0, new_id);
     }
 
     /// Converts a node to a Choice node with default options.
@@ -71,66 +42,22 @@ impl NodeGraph {
         }
     }
 
-    /// Creates a branch from a node (adds a Choice with two paths).
-    pub fn create_branch(&mut self, node_id: u32) {
-        let Some(node) = self.get_node(node_id).cloned() else {
-            return;
-        };
-        if matches!(node, StoryNode::End) {
-            return;
-        }
-        let Some(pos) = self.get_node_pos(node_id) else {
-            return;
-        };
-        if matches!(node, StoryNode::Choice { .. }) {
-            let branch = self.add_path_dialogue("New Route", pos.x + 120.0, pos.y + 140.0);
-            self.connect_new_choice_option(node_id, branch, "New route");
-            self.set_single_selection(Some(node_id));
-            return;
-        }
-
-        let previous_continuation = self
-            .connections()
-            .find(|conn| conn.from == node_id && conn.from_port == 0)
-            .map(|conn| conn.to);
-        if previous_continuation
-            .is_some_and(|id| matches!(self.get_node(id), Some(StoryNode::Choice { .. })))
-        {
-            self.set_single_selection(previous_continuation);
-            return;
-        }
-
-        let choice_pos = egui::pos2(pos.x, pos.y + 120.0);
-        let choice_id = self.add_node(
-            StoryNode::Choice {
-                prompt: "Which path?".to_string(),
-                options: vec!["Path A".to_string(), "Path B".to_string()],
-            },
-            choice_pos,
-        );
-        let branch_a = self.add_path_dialogue("Path A", choice_pos.x - 120.0, choice_pos.y + 140.0);
-        let branch_b = self.add_path_dialogue("Path B", choice_pos.x + 120.0, choice_pos.y + 140.0);
-
-        self.connect_port(node_id, 0, choice_id);
-        self.connect_port(choice_id, 0, branch_a);
-        self.connect_port(choice_id, 1, branch_b);
-        if let Some(continuation) = previous_continuation {
-            self.connect(branch_a, continuation);
-            self.connect(branch_b, continuation);
-        }
-        self.set_single_selection(Some(choice_id));
-    }
-
     pub fn save_scene_profile(&mut self, profile_id: impl Into<String>, node_id: u32) -> bool {
-        self.authoring.save_scene_profile(profile_id, node_id)
+        self.edit_graph("Edit graph metadata", |graph| {
+            graph.save_scene_profile(profile_id, node_id)
+        })
     }
 
     pub fn apply_scene_profile(&mut self, profile_id: &str, node_id: u32) -> bool {
-        self.authoring.apply_scene_profile(profile_id, node_id)
+        self.edit_graph("Edit graph metadata", |graph| {
+            graph.apply_scene_profile(profile_id, node_id)
+        })
     }
 
     pub fn detach_scene_profile(&mut self, node_id: u32) -> bool {
-        self.authoring.detach_scene_profile(node_id)
+        self.edit_graph("Edit graph metadata", |graph| {
+            graph.detach_scene_profile(node_id)
+        })
     }
 
     pub fn set_scene_character_pose(
@@ -139,64 +66,34 @@ impl NodeGraph {
         character_name: &str,
         pose: &str,
     ) -> bool {
-        self.authoring
-            .set_scene_character_pose(node_id, character_name, pose)
+        self.edit_graph("Change character pose", |graph| {
+            graph.set_scene_character_pose(node_id, character_name, pose)
+        })
     }
 
     pub fn scene_profile_names(&self) -> Vec<String> {
-        self.authoring.scene_profile_names()
+        self.authoring_graph().scene_profile_names()
     }
 
     pub fn scene_profile(&self, profile_id: &str) -> Option<&SceneProfile> {
-        self.authoring.scene_profile(profile_id)
+        self.authoring_graph().scene_profile(profile_id)
     }
 
     pub fn set_bookmark(&mut self, name: impl Into<String>, node_id: u32) -> bool {
-        self.authoring.set_bookmark(name, node_id)
+        self.edit_graph("Edit graph metadata", |graph| {
+            graph.set_bookmark(name, node_id)
+        })
     }
 
     pub fn remove_bookmark(&mut self, name: &str) -> bool {
-        self.authoring.remove_bookmark(name)
+        self.edit_graph("Edit graph metadata", |graph| graph.remove_bookmark(name))
     }
 
     pub fn bookmarked_node(&self, name: &str) -> Option<u32> {
-        self.authoring.bookmarked_node(name)
+        self.authoring_graph().bookmarked_node(name)
     }
 
     pub fn bookmarks(&self) -> impl Iterator<Item = (&String, &u32)> {
-        self.authoring.bookmarks()
-    }
-
-    fn add_path_dialogue(&mut self, speaker: &str, x: f32, y: f32) -> u32 {
-        let branch_label = speaker.to_ascii_lowercase();
-        self.add_node(
-            StoryNode::Dialogue {
-                speaker: speaker.to_string(),
-                text: format!("Content for {branch_label}..."),
-            },
-            egui::pos2(x, y),
-        )
-    }
-}
-
-fn choice_route_label_for_inserted_node(node: &StoryNode) -> String {
-    match node {
-        StoryNode::Dialogue { speaker, .. } if !speaker.trim().is_empty() => {
-            format!("Talk to {speaker}")
-        }
-        StoryNode::Scene { background, .. }
-        | StoryNode::ScenePatch(visual_novel_engine::runtime::ScenePatchRaw {
-            background, ..
-        }) => background
-            .as_deref()
-            .and_then(|value| {
-                std::path::Path::new(value)
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-            })
-            .filter(|value| !value.trim().is_empty())
-            .map(|value| format!("Go to {value}"))
-            .unwrap_or_else(|| "New route".to_string()),
-        _ => "New route".to_string(),
+        self.authoring_graph().bookmarks()
     }
 }

@@ -101,3 +101,62 @@ impl PyAudio {
         Ok(())
     }
 }
+
+pub(super) fn audio_commands_to_python(
+    py: Python<'_>,
+    commands: &[AudioCommand],
+) -> PyResult<PyObject> {
+    use pyo3::types::{PyDict, PyList};
+    let list = PyList::empty(py);
+    for cmd in commands {
+        let dict = PyDict::new(py);
+        match cmd {
+            AudioCommand::PlayBgm {
+                resource,
+                path,
+                r#loop,
+                volume,
+                fade_in,
+            } => {
+                dict.set_item("type", "play_bgm")?;
+                dict.set_item("resource", resource.as_u64().to_string())?;
+                dict.set_item("path", path.as_ref())?;
+                dict.set_item("loop", r#loop)?;
+                dict.set_item("volume", volume)?;
+                dict.set_item("fade_in", fade_in.as_secs_f64())?;
+            }
+            AudioCommand::StopBgm { fade_out } => {
+                dict.set_item("type", "stop_bgm")?;
+                dict.set_item("fade_out", fade_out.as_secs_f64())?;
+            }
+            AudioCommand::PlaySfx {
+                resource,
+                path,
+                volume,
+            } => {
+                dict.set_item("type", "play_sfx")?;
+                dict.set_item("resource", resource.as_u64().to_string())?;
+                dict.set_item("path", path.as_ref())?;
+                dict.set_item("volume", volume)?;
+            }
+            AudioCommand::StopSfx => {
+                dict.set_item("type", "stop_sfx")?;
+            }
+            AudioCommand::PlayVoice {
+                resource,
+                path,
+                volume,
+            } => {
+                dict.set_item("type", "play_voice")?;
+                dict.set_item("resource", resource.as_u64().to_string())?;
+                dict.set_item("path", path.as_ref())?;
+                dict.set_item("volume", volume)?;
+            }
+            AudioCommand::StopVoice => {
+                dict.set_item("type", "stop_voice")?;
+            }
+        }
+        list.append(dict)?;
+    }
+    Ok(list.into())
+}

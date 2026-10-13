@@ -10,7 +10,6 @@ impl EditorWorkbench {
     pub fn render_editor_mode(&mut self, ctx: &egui::Context) {
         self.handle_global_editor_shortcuts(ctx);
         let selected_before = self.selected_node;
-        let graph_before_editor_interaction = self.node_graph.clone();
         let layout = super::layout::editor_panel_layout(
             ctx.available_rect().width(),
             ctx.available_rect().height(),
@@ -194,7 +193,11 @@ impl EditorWorkbench {
                         image_failures: &mut self.composer_image_failures,
                         resource_service: &mut self.resource_service,
                         selected_entity_id: &mut self.selected_entity,
-                        layer_overrides: &self.composer_layer_overrides,
+                        layer_overrides: &self
+                            .node_graph
+                            .authoring_session
+                            .document()
+                            .composer_layer_overrides,
                         active_event_node_id,
                         selected_authoring_node_id: composer_selected_node,
                         selected_authoring_node: selected_authoring_node.as_ref(),
@@ -289,12 +292,11 @@ impl EditorWorkbench {
         }
 
         if self.node_graph.is_modified() && self.node_graph.dragging_node.is_none() {
-            self.commit_modified_graph(graph_before_editor_interaction);
+            self.commit_modified_graph();
         }
 
         // 6. Floating/Detached Node Editor
         if self.node_editor_window_open && self.show_graph {
-            let graph_before_detached_interaction = self.node_graph.clone();
             let mut embedded_open = self.node_editor_window_open;
             let mut detached_closed = false;
             let floating_rect = self
@@ -334,26 +336,15 @@ impl EditorWorkbench {
             self.node_editor_window_open = embedded_open && !detached_closed;
 
             if self.node_graph.is_modified() && self.node_graph.dragging_node.is_none() {
-                self.commit_modified_graph(graph_before_detached_interaction);
+                self.commit_modified_graph();
             }
         }
     }
 
     fn render_document_node_editor(&mut self, ui: &mut egui::Ui) {
         use crate::editor::node_editor::NodeEditorHistoryAction;
-        let pending_graph_edit = !self
-            .authoring_session
-            .document()
-            .graph
-            .has_same_content(self.node_graph.authoring_graph());
         let mut request = None;
-        NodeEditorPanel::for_document(
-            &mut self.node_graph,
-            self.authoring_session.undo_delta_count() > 0 || pending_graph_edit,
-            self.authoring_session.redo_delta_count() > 0 && !pending_graph_edit,
-            &mut request,
-        )
-        .ui(ui);
+        NodeEditorPanel::for_document(&mut self.node_graph, &mut request).ui(ui);
         if let Some(node_id) = self.node_graph.composer_inspection_request.take() {
             self.inspect_composer_scene(node_id);
         }

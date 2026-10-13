@@ -67,7 +67,6 @@ impl<'a> NodeEditorPanel<'a> {
                     let size = egui::vec2(node_visual_width(node), height) * self.graph.zoom();
                     let node_rect = egui::Rect::from_min_size(screen_pos, size);
                     if node_rect.contains(pos) {
-                        self.push_drag_snapshot();
                         self.graph.dragging_node = Some(*id);
                         break;
                     }
@@ -99,6 +98,7 @@ impl<'a> NodeEditorPanel<'a> {
 
         // 3. Handle Drag End
         if response.drag_stopped() {
+            self.graph.commit_drag_positions();
             self.graph.dragging_node = None;
             if let Some((from, _)) = self.graph.connecting_from {
                 if let Some(pos) = response.interact_pointer_pos() {

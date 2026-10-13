@@ -17,7 +17,6 @@ use crate::editor::{
     node_graph::NodeGraph,
     node_types::ToastState,
     timeline_panel::TimelinePanel,
-    undo::UndoStack,
     EditorMode,
     LintCode,
     LintIssue,
@@ -50,8 +49,6 @@ pub fn graph_viewport_resize_requires_fit(
 pub struct EditorWorkbench {
     pub config: VnConfig,
     pub node_graph: NodeGraph,
-    pub authoring_session: visual_novel_engine::authoring::AuthoringDocumentSession,
-    pub undo_stack: UndoStack,
     pub manifest: Option<visual_novel_engine::manifest::ProjectManifest>,
     pub manifest_path: Option<std::path::PathBuf>,
     pub project_root: Option<std::path::PathBuf>,
@@ -99,10 +96,6 @@ pub struct EditorWorkbench {
     pub composer_stage_fit: crate::editor::StageFit,
     pub composer_preview_mode: crate::editor::ComposerPreviewMode,
     pub composer_default_background_fit: crate::editor::BackgroundFit,
-    pub composer_background_fit_overrides:
-        std::collections::HashMap<String, crate::editor::BackgroundFit>,
-    pub composer_layer_overrides:
-        std::collections::HashMap<String, crate::editor::visual_composer::LayerOverride>,
 
     // Timeline/Playback
     pub timeline: visual_novel_engine::Timeline,
@@ -128,11 +121,8 @@ pub struct EditorWorkbench {
     pub selected_issue: Option<usize>,
     pub imported_report_stale: bool,
     pub imported_report_untrusted: bool,
-    pub last_fix_snapshot: Option<NodeGraph>,
     last_fix_command_index: Option<usize>,
     pub quick_fix_audit: Vec<QuickFixAuditEntry>,
-    pub operation_log: Vec<visual_novel_engine::authoring::OperationLogEntry>,
-    pub verification_runs: Vec<visual_novel_engine::authoring::VerificationRun>,
     pub last_operation_fingerprint:
         Option<visual_novel_engine::authoring::AuthoringReportFingerprint>,
     pending_editor_operation: Option<PendingEditorOperation>,
@@ -210,20 +200,12 @@ impl EditorWorkbench {
             // Optional: graph.add_node(...)
         }
 
-        let mut undo_stack = UndoStack::new();
-        undo_stack.push(graph.clone());
-        let authoring_session = visual_novel_engine::authoring::AuthoringDocumentSession::new(
-            visual_novel_engine::authoring::AuthoringDocument::new(graph.authoring_graph().clone()),
-        );
-
         let layout_prefs_path = Self::layout_prefs_path();
         let loaded_prefs = Self::load_layout_prefs(&layout_prefs_path);
 
         let mut workbench = Self {
             config,
             node_graph: graph,
-            authoring_session,
-            undo_stack,
             manifest: None,
             manifest_path: None,
             project_root: None,
@@ -265,8 +247,6 @@ impl EditorWorkbench {
             composer_stage_fit: crate::editor::StageFit::default(),
             composer_preview_mode: crate::editor::ComposerPreviewMode::default(),
             composer_default_background_fit: crate::editor::BackgroundFit::default(),
-            composer_background_fit_overrides: std::collections::HashMap::new(),
-            composer_layer_overrides: std::collections::HashMap::new(),
             timeline: visual_novel_engine::Timeline::new(60), // 60 ticks per second
             current_time: 0.0,
             timeline_fractional_ticks: 0.0,
@@ -286,11 +266,8 @@ impl EditorWorkbench {
             selected_issue: None,
             imported_report_stale: false,
             imported_report_untrusted: false,
-            last_fix_snapshot: None,
             last_fix_command_index: None,
             quick_fix_audit: Vec::new(),
-            operation_log: Vec::new(),
-            verification_runs: Vec::new(),
             last_operation_fingerprint: None,
             pending_editor_operation: None,
             show_fix_confirm: false,
@@ -482,8 +459,18 @@ impl EditorWorkbench {
     }
 
     pub fn reset_layout_state(&mut self, ctx: &egui::Context) {
-        if !self.composer_layer_overrides.is_empty()
-            || !self.composer_background_fit_overrides.is_empty()
+        if !self
+            .node_graph
+            .authoring_session
+            .document()
+            .composer_layer_overrides
+            .is_empty()
+            || !self
+                .node_graph
+                .authoring_session
+                .document()
+                .composer_background_fit_overrides
+                .is_empty()
         {
             if let Err(error) = self.apply_authoring_document_command(
                 visual_novel_engine::authoring::AuthoringDocumentCommand::ResetComposerOverrides,

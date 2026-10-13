@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::editor::{NodeGraph, StoryNode};
+use crate::authoring::{AuthoringPosition, NodeGraph, StoryNode};
 
 use super::*;
 
@@ -44,7 +44,7 @@ fn referenced_asset_hash_does_not_follow_relative_symlink_escape() {
             music: None,
             characters: Vec::new(),
         },
-        eframe::egui::pos2(0.0, 0.0),
+        AuthoringPosition::new(0.0, 0.0),
     );
 
     let before = hash_referenced_asset_state(&graph, &project_root);

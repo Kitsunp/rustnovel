@@ -1,5 +1,4 @@
 use eframe::egui;
-use std::collections::HashMap;
 use visual_novel_engine::runtime::{Engine, EventCompiled};
 
 use super::LayerOverride;
@@ -62,7 +61,7 @@ pub fn render_runtime_overlay(
     engine: &Option<Engine>,
     selected_authoring_node: Option<&StoryNode>,
     preview_mode: ComposerPreviewMode,
-    layer_overrides: &HashMap<String, LayerOverride>,
+    layer_overrides: &std::collections::BTreeMap<String, LayerOverride>,
     action: &mut Option<VisualComposerAction>,
 ) {
     let source = match selected_overlay_source(
@@ -87,7 +86,7 @@ pub fn render_authoring_overlay(
     geometry: crate::editor::scene_stage::StageGeometry,
     node_id: u32,
     node: &StoryNode,
-    layer_overrides: &HashMap<String, LayerOverride>,
+    layer_overrides: &std::collections::BTreeMap<String, LayerOverride>,
     action: &mut Option<VisualComposerAction>,
 ) {
     let Some(source) = authoring_overlay_source(Some(node), layer_overrides) else {
@@ -137,7 +136,7 @@ pub fn selected_overlay_source(
     engine: Option<&Engine>,
     selected_authoring_node: Option<&StoryNode>,
     preview_mode: ComposerPreviewMode,
-    layer_overrides: &HashMap<String, LayerOverride>,
+    layer_overrides: &std::collections::BTreeMap<String, LayerOverride>,
 ) -> Result<Option<OverlaySource>, String> {
     let authoring = || authoring_overlay_source(selected_authoring_node, layer_overrides);
     let runtime = || {
@@ -178,7 +177,7 @@ fn render_overlay_error(
 
 pub fn runtime_overlay_visible(
     event: &EventCompiled,
-    layer_overrides: &HashMap<String, LayerOverride>,
+    layer_overrides: &std::collections::BTreeMap<String, LayerOverride>,
 ) -> bool {
     runtime_overlay_object_id(event)
         .and_then(|object_id| layer_overrides.get(object_id))
@@ -196,7 +195,7 @@ pub fn runtime_overlay_object_id(event: &EventCompiled) -> Option<&'static str> 
 
 fn authoring_overlay_source(
     selected_authoring_node: Option<&StoryNode>,
-    layer_overrides: &HashMap<String, LayerOverride>,
+    layer_overrides: &std::collections::BTreeMap<String, LayerOverride>,
 ) -> Option<OverlaySource> {
     match selected_authoring_node? {
         StoryNode::Dialogue { speaker, text }
@@ -221,7 +220,7 @@ fn authoring_overlay_source(
 
 fn runtime_overlay_source(
     event: &EventCompiled,
-    layer_overrides: &HashMap<String, LayerOverride>,
+    layer_overrides: &std::collections::BTreeMap<String, LayerOverride>,
 ) -> Option<OverlaySource> {
     if !runtime_overlay_visible(event, layer_overrides) {
         return None;
@@ -248,7 +247,7 @@ fn runtime_overlay_source(
 
 fn overlay_object_visible(
     object_id: &str,
-    layer_overrides: &HashMap<String, LayerOverride>,
+    layer_overrides: &std::collections::BTreeMap<String, LayerOverride>,
 ) -> bool {
     layer_overrides
         .get(object_id)

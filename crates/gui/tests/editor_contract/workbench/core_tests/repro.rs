@@ -22,15 +22,17 @@ fn workbench_can_import_repro_case_json() {
     let payload = case.to_json().expect("repro case should serialize");
 
     let mut target = EditorWorkbench::new(config);
-    target.composer_layer_overrides.insert("old-layer".to_string(), crate::editor::visual_composer::LayerOverride { visible: false, locked: true });
-    target.composer_background_fit_overrides.insert("0".to_string(), crate::editor::BackgroundFit::Contain);
+    let mut old_document = target.current_authoring_document();
+    old_document.composer_layer_overrides.insert("old-layer".to_string(), crate::editor::visual_composer::LayerOverride { visible: false, locked: true });
+    old_document.composer_background_fit_overrides.insert("0".to_string(), crate::editor::BackgroundFit::Contain);
     target.composer_entity_owners.insert(99, 99);
     target.composer_image_failures.insert("old.png".to_string(), "old failure".to_string());
-    target.operation_log.push(visual_novel_engine::authoring::OperationLogEntry::new_typed(
+    old_document.operation_log.push(visual_novel_engine::authoring::OperationLogEntry::new_typed(
         visual_novel_engine::authoring::OperationKind::FieldEdited,
         visual_novel_engine::authoring::OperationStatus::Applied,
         "old document operation",
     ));
+    target.node_graph = crate::editor::NodeGraph::from_document(old_document);
     target.selected_entity = Some(99);
     target.pending_graph_focus = Some(99);
     target.show_fix_confirm = true;
@@ -42,9 +44,9 @@ fn workbench_can_import_repro_case_json() {
 
     assert!(target.loaded_repro_case.is_some());
     assert!(target.current_script.is_some());
-    assert!(target.composer_layer_overrides.is_empty());
-    assert!(target.composer_background_fit_overrides.is_empty());
-    assert!(target.operation_log.is_empty());
+    assert!(target.document().composer_layer_overrides.is_empty());
+    assert!(target.document().composer_background_fit_overrides.is_empty());
+    assert!(target.document().operation_log.is_empty());
     assert!(target.composer_entity_owners.is_empty());
     assert!(target.composer_image_failures.is_empty());
     assert!(target.selected_entity.is_none());
@@ -52,7 +54,7 @@ fn workbench_can_import_repro_case_json() {
     assert!(!target.show_fix_confirm);
     assert!(!target.imported_report_untrusted);
     target.record_pending_editor_operation();
-    assert_ne!(target.operation_log.last().unwrap().operation_kind, "stale");
+    assert!(target.document().operation_log.iter().all(|entry| entry.operation_kind != "stale"));
     assert!(target
         .node_graph
         .nodes()

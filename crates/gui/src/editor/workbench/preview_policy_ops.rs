@@ -6,7 +6,13 @@ impl EditorWorkbench {
         node_id: Option<u32>,
     ) -> crate::editor::BackgroundFit {
         node_id
-            .and_then(|id| self.composer_background_fit_overrides.get(&id.to_string()))
+            .and_then(|id| {
+                self.node_graph
+                    .authoring_session
+                    .document()
+                    .composer_background_fit_overrides
+                    .get(&id.to_string())
+            })
             .copied()
             .unwrap_or(self.composer_default_background_fit)
     }

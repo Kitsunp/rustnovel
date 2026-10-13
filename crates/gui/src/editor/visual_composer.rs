@@ -277,7 +277,7 @@ pub struct VisualComposerPanel<'a> {
     image_failures: &'a mut HashMap<String, String>,
     resource_service: &'a mut EditorResourceService,
     selected_entity_id: &'a mut Option<u32>,
-    layer_overrides: &'a HashMap<String, LayerOverride>,
+    layer_overrides: &'a std::collections::BTreeMap<String, LayerOverride>,
     active_event_node_id: Option<u32>,
     selected_authoring_node_id: Option<u32>,
     selected_authoring_node: Option<&'a StoryNode>,
@@ -298,7 +298,7 @@ pub struct VisualComposerPanelParams<'a> {
     pub image_failures: &'a mut HashMap<String, String>,
     pub resource_service: &'a mut EditorResourceService,
     pub selected_entity_id: &'a mut Option<u32>,
-    pub layer_overrides: &'a HashMap<String, LayerOverride>,
+    pub layer_overrides: &'a std::collections::BTreeMap<String, LayerOverride>,
     pub active_event_node_id: Option<u32>,
     pub selected_authoring_node_id: Option<u32>,
     pub selected_authoring_node: Option<&'a StoryNode>,
@@ -490,7 +490,7 @@ impl<'a> VisualComposerPanel<'a> {
                 self.image_failures,
                 self.resource_service,
             )
-            .with_layer_overrides(self.layer_overrides.clone());
+            .with_layer_overrides(self.layer_overrides);
             let mut painter = painter
                 .with_background_fit(*self.background_fit)
                 .with_entity_object_ids(self.entity_object_ids.clone());

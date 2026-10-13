@@ -363,9 +363,9 @@ fn failed_compilation_discards_previous_runtime_and_recovers() {
         workbench.is_playing = true;
         workbench.current_time = 42.0;
         workbench.node_graph.disconnect(scene, end);
-        *workbench.node_graph.get_node_mut(scene).unwrap() = StoryNode::Jump {
+        workbench.node_graph.edit_node(scene, |node| *node = StoryNode::Jump {
             target: "missing_label".to_string(),
-        };
+        });
         let failed = match action {
             "sync" => workbench.sync_graph_to_script().is_err(),
             "validate" => !workbench.run_dry_validation(),
@@ -392,10 +392,10 @@ fn failed_compilation_discards_previous_runtime_and_recovers() {
                 .any(|issue| issue.code == LintCode::RuntimeInitError),
             "compile failure is not a runtime init error"
         );
-        *workbench.node_graph.get_node_mut(scene).unwrap() = StoryNode::Dialogue {
+        workbench.node_graph.edit_node(scene, |node| *node = StoryNode::Dialogue {
             speaker: "Ava".to_string(),
             text: "Recovered".to_string(),
-        };
+        });
         workbench.node_graph.connect(scene, end);
         assert!(workbench.run_dry_validation());
         assert!(workbench.engine.is_some());
@@ -521,9 +521,9 @@ fn workbench_reuses_compilation_cache_until_graph_changes() {
     let _ = workbench.build_repro_case_from_current_graph();
     assert_eq!(workbench.compilation_cache_stats(), (1, 1));
 
-    if let Some(StoryNode::Dialogue { text, .. }) = workbench.node_graph.get_node_mut(dialogue) {
-        text.push('!');
-    }
+    workbench.node_graph.edit_node(dialogue, |node| {
+        if let StoryNode::Dialogue { text, .. } = node { text.push('!'); }
+    });
     workbench.node_graph.mark_modified();
 
     let _ = workbench.run_dry_validation();

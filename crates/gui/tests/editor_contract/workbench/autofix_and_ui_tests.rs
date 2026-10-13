@@ -221,9 +221,8 @@ fn apply_revert_fix_flow() {
         .apply_issue_fix(idx, "dialogue_fill_speaker")
         .expect("fix must apply");
     assert!(workbench.can_revert_last_fix());
-    let before = workbench.node_graph.clone();
     let later = workbench.node_graph.add_node(StoryNode::End, egui::pos2(0.0, 200.0));
-    workbench.commit_modified_graph(before);
+    workbench.commit_modified_graph();
     assert!(!workbench.can_revert_last_fix());
     assert!(!workbench.revert_last_fix(), "later edits must not be overwritten");
     assert!(workbench.node_graph.get_node(later).is_some());
@@ -236,9 +235,9 @@ fn apply_revert_fix_flow() {
     assert!(workbench.can_revert_last_fix());
     assert!(workbench.apply_graph_redo(), "later edit remains redoable");
     assert!(workbench.node_graph.get_node(later).is_some());
-    workbench.rebuild_authoring_session_from_fields();
+    workbench.node_graph = crate::editor::NodeGraph::from_document(workbench.current_authoring_document());
     assert!(!workbench.can_revert_last_fix());
-    assert!(workbench.last_fix_snapshot.is_none());
+    assert!(!workbench.can_revert_last_fix());
 }
 
 #[test]

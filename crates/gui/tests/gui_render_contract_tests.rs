@@ -19,7 +19,7 @@ use visual_novel_gui::editor::{
         LayoutOverrides,
     },
     BackgroundFit, ComposerPreviewMode, ContextMenu, NodeEditorPanel, NodeGraph, PreviewQuality,
-    RouteTreeView, StageFit, StoryNode, UndoStack, VisualComposerPanel,
+    RouteTreeView, StageFit, StoryNode, VisualComposerPanel,
 };
 use visual_novel_gui::{EditorMode, EditorWorkbench, VnConfig};
 
@@ -258,6 +258,7 @@ fn composer_pointer_drag_persists_through_sync_and_authoring_save() {
     .object_id;
     assert!(
         workbench
+            .document()
             .composer_layer_overrides
             .get(&object_id)
             .is_some_and(|entry| entry.locked),
@@ -931,7 +932,7 @@ fn visual_composer_panel_renders_real_responsive_rows_without_horizontal_escape(
         let mut image_failures = HashMap::new();
         let mut resource_service = EditorResourceService::new();
         let mut selected_entity_id = None;
-        let layer_overrides = HashMap::new();
+        let layer_overrides = std::collections::BTreeMap::new();
         let entity_owners = HashMap::new();
         let snapshot = stress_presentation_snapshot();
         let selected_node = StoryNode::Choice {
@@ -1030,7 +1031,7 @@ fn visual_composer_dialogue_overlay_keeps_stage_visible_in_compact_window() {
     let mut image_failures = HashMap::new();
     let mut resource_service = EditorResourceService::new();
     let mut selected_entity_id = None;
-    let layer_overrides = HashMap::new();
+    let layer_overrides = std::collections::BTreeMap::new();
     let entity_owners = HashMap::new();
     let snapshot = stress_presentation_snapshot();
     let selected_node = StoryNode::Dialogue {
@@ -1318,18 +1319,71 @@ fn route_tree_view_renders_real_engine_snapshot_inside_viewport() {
     );
 }
 
-fn run_node_editor_frame(
-    ctx: &egui::Context,
-    graph: &mut NodeGraph,
-    undo: &mut UndoStack,
-    events: Vec<egui::Event>,
-) {
+fn run_node_editor_frame(ctx: &egui::Context, graph: &mut NodeGraph, events: Vec<egui::Event>) {
     let output = ctx.run(raw_input(900.0, 640.0, 1.0, events), |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
-            NodeEditorPanel::new(graph, undo).ui(ui);
+            NodeEditorPanel::new(graph).ui(ui);
         });
     });
     drop(output);
+}
+
+#[test]
+fn node_pointer_drag_previews_without_history_then_commits_one_move() {
+    let ctx = egui::Context::default();
+    let mut graph = NodeGraph::new();
+    let node = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Ava".into(),
+            text: "Drag me".into(),
+        },
+        egui::pos2(180.0, 160.0),
+    );
+    let original = graph.authoring_graph().get_node_pos(node).unwrap();
+    let history = graph.authoring_session.undo_delta_count();
+    let press = egui::pos2(220.0, 250.0);
+    let moved = press + egui::vec2(25.0, 12.0);
+    run_node_editor_frame(&ctx, &mut graph, vec![]);
+    run_node_editor_frame(
+        &ctx,
+        &mut graph,
+        vec![
+            egui::Event::PointerMoved(press),
+            pointer_button_event(press, egui::PointerButton::Primary, true),
+        ],
+    );
+    run_node_editor_frame(&ctx, &mut graph, vec![egui::Event::PointerMoved(moved)]);
+    assert_eq!(graph.dragging_node, Some(node));
+    assert_ne!(
+        graph.get_node_pos(node).unwrap(),
+        egui::pos2(original.x, original.y)
+    );
+    assert_eq!(graph.authoring_graph().get_node_pos(node), Some(original));
+    assert_eq!(graph.authoring_session.undo_delta_count(), history);
+    let preview_position = graph.get_node_pos(node).unwrap();
+    assert_eq!(
+        graph
+            .visible_nodes()
+            .find(|(id, _, _)| *id == node)
+            .unwrap()
+            .2,
+        preview_position
+    );
+    run_node_editor_frame(
+        &ctx,
+        &mut graph,
+        vec![pointer_button_event(
+            moved,
+            egui::PointerButton::Primary,
+            false,
+        )],
+    );
+    assert_eq!(graph.dragging_node, None);
+    assert_eq!(graph.authoring_session.undo_delta_count(), history + 1);
+    assert_eq!(graph.get_node_pos(node), Some(preview_position));
+    assert_ne!(graph.authoring_graph().get_node_pos(node), Some(original));
+    assert!(NodeEditorPanel::new(&mut graph).apply_undo_shortcut());
+    assert_eq!(graph.authoring_graph().get_node_pos(node), Some(original));
 }
 
 fn pointer_button_event(
@@ -1434,8 +1488,7 @@ fn egui_pointer_harness_registers_secondary_click_and_drag() {
 fn node_editor_empty_frame_renders_without_hanging() {
     let ctx = egui::Context::default();
     let mut graph = NodeGraph::new();
-    let mut undo = UndoStack::new();
-    run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+    run_node_editor_frame(&ctx, &mut graph, Vec::new());
     assert!(ctx.used_rect().is_finite());
 }
 
@@ -1443,13 +1496,11 @@ fn node_editor_empty_frame_renders_without_hanging() {
 fn node_editor_secondary_press_frame_returns_without_hanging() {
     let ctx = egui::Context::default();
     let mut graph = NodeGraph::new();
-    let mut undo = UndoStack::new();
     let pos = egui::pos2(420.0, 360.0);
-    run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+    run_node_editor_frame(&ctx, &mut graph, Vec::new());
     run_node_editor_frame(
         &ctx,
         &mut graph,
-        &mut undo,
         vec![
             egui::Event::PointerMoved(pos),
             pointer_button_event(pos, egui::PointerButton::Secondary, true),
@@ -1462,13 +1513,11 @@ fn node_editor_secondary_press_frame_returns_without_hanging() {
 fn node_editor_secondary_release_frame_opens_canvas_menu() {
     let ctx = egui::Context::default();
     let mut graph = NodeGraph::new();
-    let mut undo = UndoStack::new();
     let pos = egui::pos2(420.0, 360.0);
-    run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+    run_node_editor_frame(&ctx, &mut graph, Vec::new());
     run_node_editor_frame(
         &ctx,
         &mut graph,
-        &mut undo,
         vec![
             egui::Event::PointerMoved(pos),
             pointer_button_event(pos, egui::PointerButton::Secondary, true),
@@ -1477,7 +1526,6 @@ fn node_editor_secondary_release_frame_opens_canvas_menu() {
     run_node_editor_frame(
         &ctx,
         &mut graph,
-        &mut undo,
         vec![
             egui::Event::PointerMoved(pos),
             pointer_button_event(pos, egui::PointerButton::Secondary, false),
@@ -1490,30 +1538,22 @@ fn node_editor_secondary_release_frame_opens_canvas_menu() {
 fn node_editor_secondary_drag_frame_pans_canvas() {
     let ctx = egui::Context::default();
     let mut graph = NodeGraph::new();
-    let mut undo = UndoStack::new();
     let drag_start = egui::pos2(420.0, 360.0);
     let drag_end = egui::pos2(500.0, 410.0);
-    run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+    run_node_editor_frame(&ctx, &mut graph, Vec::new());
     let pan_before = graph.pan;
     run_node_editor_frame(
         &ctx,
         &mut graph,
-        &mut undo,
         vec![
             egui::Event::PointerMoved(drag_start),
             pointer_button_event(drag_start, egui::PointerButton::Secondary, true),
         ],
     );
+    run_node_editor_frame(&ctx, &mut graph, vec![egui::Event::PointerMoved(drag_end)]);
     run_node_editor_frame(
         &ctx,
         &mut graph,
-        &mut undo,
-        vec![egui::Event::PointerMoved(drag_end)],
-    );
-    run_node_editor_frame(
-        &ctx,
-        &mut graph,
-        &mut undo,
         vec![pointer_button_event(
             drag_end,
             egui::PointerButton::Secondary,
@@ -1529,25 +1569,18 @@ fn node_editor_secondary_drag_frame_pans_canvas() {
 fn node_editor_secondary_drag_move_frame_returns_without_hanging() {
     let ctx = egui::Context::default();
     let mut graph = NodeGraph::new();
-    let mut undo = UndoStack::new();
     let drag_start = egui::pos2(420.0, 360.0);
     let drag_end = egui::pos2(500.0, 410.0);
-    run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+    run_node_editor_frame(&ctx, &mut graph, Vec::new());
     run_node_editor_frame(
         &ctx,
         &mut graph,
-        &mut undo,
         vec![
             egui::Event::PointerMoved(drag_start),
             pointer_button_event(drag_start, egui::PointerButton::Secondary, true),
         ],
     );
-    run_node_editor_frame(
-        &ctx,
-        &mut graph,
-        &mut undo,
-        vec![egui::Event::PointerMoved(drag_end)],
-    );
+    run_node_editor_frame(&ctx, &mut graph, vec![egui::Event::PointerMoved(drag_end)]);
     assert!(ctx.used_rect().is_finite());
 }
 
@@ -1562,12 +1595,10 @@ fn node_editor_right_click_opens_menu_but_right_drag_pans_canvas() {
     .any(|click_pos| {
         let ctx = egui::Context::default();
         let mut graph = NodeGraph::new();
-        let mut undo = UndoStack::new();
-        run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+        run_node_editor_frame(&ctx, &mut graph, Vec::new());
         run_node_editor_frame(
             &ctx,
             &mut graph,
-            &mut undo,
             vec![
                 egui::Event::PointerMoved(click_pos),
                 pointer_button_event(click_pos, egui::PointerButton::Secondary, true),
@@ -1576,7 +1607,6 @@ fn node_editor_right_click_opens_menu_but_right_drag_pans_canvas() {
         run_node_editor_frame(
             &ctx,
             &mut graph,
-            &mut undo,
             vec![
                 egui::Event::PointerMoved(click_pos),
                 pointer_button_event(click_pos, egui::PointerButton::Secondary, false),
@@ -1601,29 +1631,21 @@ fn node_editor_right_click_opens_menu_but_right_drag_pans_canvas() {
     .any(|drag_start| {
         let ctx = egui::Context::default();
         let mut graph = NodeGraph::new();
-        let mut undo = UndoStack::new();
         let drag_end = drag_start + egui::vec2(80.0, 50.0);
-        run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+        run_node_editor_frame(&ctx, &mut graph, Vec::new());
         let pan_before = graph.pan;
         run_node_editor_frame(
             &ctx,
             &mut graph,
-            &mut undo,
             vec![
                 egui::Event::PointerMoved(drag_start),
                 pointer_button_event(drag_start, egui::PointerButton::Secondary, true),
             ],
         );
+        run_node_editor_frame(&ctx, &mut graph, vec![egui::Event::PointerMoved(drag_end)]);
         run_node_editor_frame(
             &ctx,
             &mut graph,
-            &mut undo,
-            vec![egui::Event::PointerMoved(drag_end)],
-        );
-        run_node_editor_frame(
-            &ctx,
-            &mut graph,
-            &mut undo,
             vec![pointer_button_event(
                 drag_end,
                 egui::PointerButton::Secondary,
@@ -1649,13 +1671,11 @@ fn node_editor_right_click_on_node_targets_node_menu() {
     .any(|click_pos| {
         let ctx = egui::Context::default();
         let mut graph = NodeGraph::new();
-        let mut undo = UndoStack::new();
         let node_id = graph.add_node(StoryNode::Start, egui::pos2(180.0, 160.0));
-        run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+        run_node_editor_frame(&ctx, &mut graph, Vec::new());
         run_node_editor_frame(
             &ctx,
             &mut graph,
-            &mut undo,
             vec![
                 egui::Event::PointerMoved(click_pos),
                 pointer_button_event(click_pos, egui::PointerButton::Secondary, true),
@@ -1664,7 +1684,6 @@ fn node_editor_right_click_on_node_targets_node_menu() {
         run_node_editor_frame(
             &ctx,
             &mut graph,
-            &mut undo,
             vec![
                 egui::Event::PointerMoved(click_pos),
                 pointer_button_event(click_pos, egui::PointerButton::Secondary, false),

@@ -1,12 +1,10 @@
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use std::collections::BTreeMap;
-use visual_novel_engine::authoring::composer::{BackgroundFit, LayerOverride};
+
 use visual_novel_engine::authoring::{
-    parse_authoring_document_or_script, validate_authoring_graph,
-    validate_authoring_graph_with_project_root, AuthoringCommand, AuthoringDelta,
-    AuthoringDocument, AuthoringDocumentSession, AuthoringPosition, AuthoringValidationReport,
-    NodeGraph, OperationLogEntry, VerificationRun, NODE_VERTICAL_SPACING,
+    parse_authoring_entry, validate_authoring_graph, validate_authoring_graph_with_project_root,
+    AuthoringCommand, AuthoringDelta, AuthoringDocument, AuthoringDocumentSession,
+    AuthoringPosition, AuthoringValidationReport, NodeGraph, NODE_VERTICAL_SPACING,
 };
 
 use super::api_v2::{
@@ -19,11 +17,6 @@ use super::story_node::PyStoryNode;
 /// A graph of story nodes with connections.
 #[pyclass(name = "NodeGraph")]
 pub struct PyNodeGraph {
-    inner: NodeGraph,
-    layer_overrides: BTreeMap<String, LayerOverride>,
-    background_fit_overrides: BTreeMap<String, BackgroundFit>,
-    operation_log: Vec<OperationLogEntry>,
-    verification_runs: Vec<VerificationRun>,
     session: AuthoringDocumentSession,
 }
 
@@ -48,7 +41,7 @@ impl PyNodeGraph {
     }
 
     fn add_node(&mut self, node: PyStoryNode, x: f32, y: f32) -> PyResult<u32> {
-        let node_id = self.inner.next_node_id();
+        let node_id = self.inner().next_node_id();
         let node = node.into_inner();
         self.apply_authoring_command(AuthoringCommand::CreateNode {
             node_id,
@@ -115,7 +108,7 @@ impl PyNodeGraph {
         let branch_pos = match (branch_x, branch_y) {
             (Some(x), Some(y)) => AuthoringPosition::new(x, y),
             _ => self
-                .inner
+                .inner()
                 .get_node_pos(from_id)
                 .map(|pos| AuthoringPosition::new(pos.x, pos.y + NODE_VERTICAL_SPACING))
                 .unwrap_or_default(),
@@ -137,48 +130,48 @@ impl PyNodeGraph {
     }
 
     fn node_count(&self) -> usize {
-        self.inner.len()
+        self.inner().len()
     }
 
     fn connection_count(&self) -> usize {
-        self.inner.connection_count()
+        self.inner().connection_count()
     }
 
     fn node_ids(&self) -> Vec<u32> {
-        self.inner.nodes().map(|(id, _, _)| *id).collect()
+        self.inner().nodes().map(|(id, _, _)| *id).collect()
     }
 
     fn get_node(&self, node_id: u32) -> Option<PyStoryNode> {
-        self.inner.get_node(node_id).cloned().map(Into::into)
+        self.inner().get_node(node_id).cloned().map(Into::into)
     }
 
     fn node_position(&self, node_id: u32) -> Option<(f32, f32)> {
-        self.inner
+        self.inner()
             .get_node_pos(node_id)
             .map(|position| (position.x, position.y))
     }
 
     fn nodes(&self) -> Vec<(u32, PyStoryNode, f32, f32)> {
-        self.inner
+        self.inner()
             .nodes()
             .map(|(id, node, position)| (*id, node.clone().into(), position.x, position.y))
             .collect()
     }
 
     fn connections(&self) -> Vec<(u32, usize, u32)> {
-        self.inner
+        self.inner()
             .connections()
             .map(|connection| (connection.from, connection.from_port, connection.to))
             .collect()
     }
 
     fn is_empty(&self) -> bool {
-        self.inner.is_empty()
+        self.inner().is_empty()
     }
 
     fn to_script_json(&self) -> PyResult<String> {
         let script = self
-            .inner
+            .inner()
             .to_script_strict()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         script
@@ -188,13 +181,13 @@ impl PyNodeGraph {
 
     #[staticmethod]
     fn from_script_json(script_json: &str) -> PyResult<Self> {
-        let inner = parse_authoring_document_or_script(script_json)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(Self::from_authoring_document(AuthoringDocument::new(inner)))
+        let inner =
+            parse_authoring_entry(script_json).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(Self::from_authoring_document(inner))
     }
 
     fn to_lossy_script_json_for_diagnostics(&self) -> PyResult<String> {
-        let script = self.inner.to_script_lossy_for_diagnostics();
+        let script = self.inner().to_script_lossy_for_diagnostics();
         script
             .to_json()
             .map_err(|e| PyValueError::new_err(e.to_string()))
@@ -214,11 +207,11 @@ impl PyNodeGraph {
     fn validate(&self, project_root: Option<&str>) -> Vec<PyLintIssue> {
         let issues = if let Some(project_root) = project_root {
             validate_authoring_graph_with_project_root(
-                &self.inner,
+                self.inner(),
                 std::path::Path::new(project_root),
             )
         } else {
-            validate_authoring_graph(&self.inner)
+            validate_authoring_graph(self.inner())
         };
         issues.into_iter().map(PyLintIssue::from).collect()
     }
@@ -230,25 +223,24 @@ impl PyNodeGraph {
     ) -> PyResult<PyAuthoringValidationReport> {
         let issues = if let Some(project_root) = project_root {
             validate_authoring_graph_with_project_root(
-                &self.inner,
+                self.inner(),
                 std::path::Path::new(project_root),
             )
         } else {
             self.session.read_model().diagnostics().to_vec()
         };
-        let script = self.inner.to_script_lossy_for_diagnostics();
-        let document = self.to_authoring_document();
-        Ok(AuthoringValidationReport::from_document_and_issues(&document, &script, &issues).into())
+        let script = self.inner().to_script_lossy_for_diagnostics();
+        Ok(
+            AuthoringValidationReport::from_document_and_issues(self.doc(), &script, &issues)
+                .into(),
+        )
     }
 
     #[staticmethod]
     fn from_authoring_or_script_json(source: &str) -> PyResult<Self> {
-        if let Ok(document) = AuthoringDocument::from_json(source) {
-            return Ok(Self::from_authoring_document(document));
-        }
-        let inner = parse_authoring_document_or_script(source)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(Self::from_authoring_document(AuthoringDocument::new(inner)))
+        parse_authoring_entry(source)
+            .map(Self::from_authoring_document)
+            .map_err(|error| PyValueError::new_err(error.to_string()))
     }
 
     fn search_nodes(&self, query: &str) -> Vec<u32> {
@@ -295,6 +287,28 @@ impl PyNodeGraph {
 
     fn validate_fragments(&self) -> Vec<PyLintIssue> {
         self.py_validate_fragments()
+    }
+
+    fn undo(&mut self) -> PyResult<bool> {
+        if self.session.undo_delta_count() == 0 {
+            return Ok(false);
+        }
+        self.apply_document_command(
+            visual_novel_engine::authoring::AuthoringDocumentCommand::UndoLast,
+        )
+        .map(|_| true)
+        .map_err(|error| py_command_error("undo failed", error))
+    }
+
+    fn redo(&mut self) -> PyResult<bool> {
+        if self.session.redo_delta_count() == 0 {
+            return Ok(false);
+        }
+        self.apply_document_command(
+            visual_novel_engine::authoring::AuthoringDocumentCommand::RedoLast,
+        )
+        .map(|_| true)
+        .map_err(|error| py_command_error("redo failed", error))
     }
 
     fn operation_log(&self) -> Vec<PyOperationLogEntry> {
