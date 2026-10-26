@@ -150,9 +150,9 @@ pub struct PyEngine {
 #[pyclass]
 pub struct StepResult {
     #[pyo3(get)]
-    pub event: PyObject,
+    pub event: Py<PyAny>,
     #[pyo3(get)]
-    pub audio: PyObject,
+    pub audio: Py<PyAny>,
 }
 
 #[pymethods]
@@ -189,7 +189,7 @@ impl PyEngine {
         })
     }
 
-    fn current_event<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn current_event<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let event = self.inner.current_event().map_err(vn_error_to_py)?;
         event.to_python_dict(py)
     }
@@ -198,7 +198,7 @@ impl PyEngine {
         Self::dispatch_step(slf, py)
     }
 
-    fn choose<'py>(&mut self, py: Python<'py>, option_index: usize) -> PyResult<PyObject> {
+    fn choose<'py>(&mut self, py: Python<'py>, option_index: usize) -> PyResult<Py<PyAny>> {
         self.ensure_execution_available()?;
         let event = self.inner.choose(option_index).map_err(vn_error_to_py)?;
         self.last_audio_commands = self.inner.take_audio_commands();
@@ -213,7 +213,7 @@ impl PyEngine {
         EventRaw::TYPE_NAMES.to_vec()
     }
 
-    fn visual_state<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn visual_state<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let state = self.inner.visual_state();
         let dict = PyDict::new(py);
         dict.set_item("background", state.background.as_deref())?;
@@ -237,7 +237,7 @@ impl PyEngine {
         self.inner.is_current_dialogue_read()
     }
 
-    fn choice_history<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn choice_history<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let list = PyList::empty(py);
         for entry in self.inner.choice_history() {
             let dict = PyDict::new(py);
@@ -250,7 +250,7 @@ impl PyEngine {
         Ok(list.into())
     }
 
-    fn ui_state<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn ui_state<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let event = self.inner.current_event().map_err(vn_error_to_py)?;
         let ui = UiState::from_event(&event, self.inner.visual_state());
         ui_state_to_python(&ui, py)
@@ -264,7 +264,7 @@ impl PyEngine {
         self.inner.scene_frame().into()
     }
 
-    fn get_last_audio_commands<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn get_last_audio_commands<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         super::audio::audio_commands_to_python(py, &self.last_audio_commands)
     }
 
@@ -274,7 +274,7 @@ impl PyEngine {
         self.asset_cache.evict_over_budget(self.max_texture_memory);
     }
 
-    fn get_memory_usage<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn get_memory_usage<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         dict.set_item("max_texture_memory", self.max_texture_memory)?;
         dict.set_item("max_script_bytes", self.resource_limits.max_script_bytes)?;
@@ -295,7 +295,7 @@ impl PyEngine {
         self.prefetch_depth
     }
 
-    fn prefetch_assets_hint<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn prefetch_assets_hint<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let list = PyList::empty(py);
         for path in self.inner.peek_next_asset_paths(self.prefetch_depth) {
             list.append(path)?;
@@ -324,7 +324,7 @@ impl PyEngine {
         &mut self,
         py: Python<'py>,
         asset_path: &str,
-    ) -> PyResult<Option<PyObject>> {
+    ) -> PyResult<Option<Py<PyAny>>> {
         if let Some(data) = self.asset_cache.get(asset_path.trim()) {
             Ok(Some(PyBytes::new(py, data.as_ref()).into()))
         } else {
@@ -358,7 +358,7 @@ impl PyEngine {
         self.asset_cache.evict_unused(&retained_assets)
     }
 
-    fn asset_cache_stats<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn asset_cache_stats<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         dict.set_item("total_cached_assets", self.asset_cache.len())?;
         dict.set_item("allocated_bytes", self.asset_cache.allocated_bytes)?;
@@ -390,7 +390,7 @@ impl PyEngine {
         self.last_ext_call_error.clone()
     }
 
-    fn pending_external_call<'py>(&self, py: Python<'py>) -> PyResult<Option<PyObject>> {
+    fn pending_external_call<'py>(&self, py: Python<'py>) -> PyResult<Option<Py<PyAny>>> {
         let Some(request) = self.inner.pending_external_call().map_err(vn_error_to_py)? else {
             return Ok(None);
         };

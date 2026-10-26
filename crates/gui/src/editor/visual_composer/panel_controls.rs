@@ -46,7 +46,7 @@ impl VisualComposerPanel<'_> {
                         egui::DragValue::new(&mut scale)
                             .prefix("Scale ")
                             .speed(0.01)
-                            .clamp_range(0.1..=4.0),
+                            .range(0.1..=4.0),
                     )
                     .changed();
             })
@@ -103,7 +103,7 @@ impl VisualComposerPanel<'_> {
                     source,
                     chrome.source_wrap_chars,
                 ))
-                .wrap(true),
+                .wrap(),
             );
         });
     }
@@ -299,9 +299,7 @@ impl VisualComposerPanel<'_> {
                                 let response = ui
                                     .add_sized(
                                         [label_width, ui.spacing().interact_size.y],
-                                        egui::Label::new(text)
-                                            .wrap(true)
-                                            .sense(egui::Sense::click()),
+                                        egui::Label::new(text).wrap().sense(egui::Sense::click()),
                                     )
                                     .on_hover_text(format!(
                                         "{}\nAsset: {}\nPosition: ({:?}, {:?}) | Scale: {:?}",

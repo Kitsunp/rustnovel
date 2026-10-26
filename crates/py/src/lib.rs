@@ -13,7 +13,8 @@ pub use bindings::{
     PyTraceEdge, PyTrack, PyUiThemeValidationReport, PyVerificationRun, PyVnConfig, StepResult,
 };
 
-#[pymodule]
+// Keep Python callbacks serialized while the API is validated with the GIL.
+#[pymodule(gil_used = true)]
 fn visual_novel_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_error_classes(m)?;
     m.add_class::<PyEngine>()?;

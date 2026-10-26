@@ -64,7 +64,7 @@ enum VnErrorKind {
     ExternalCall,
 }
 
-#[pyclass(name = "ResourceConfig")]
+#[pyclass(name = "ResourceConfig", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyResourceConfig {
     #[pyo3(get, set)]
@@ -86,7 +86,7 @@ impl PyResourceConfig {
     }
 }
 
-#[pyclass(name = "VnConfig")]
+#[pyclass(name = "VnConfig", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyVnConfig {
     #[pyo3(get, set)]
@@ -151,37 +151,37 @@ impl PyVnConfig {
     }
 }
 
-#[pyclass(name = "ExportPlan")]
+#[pyclass(name = "ExportPlan", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyExportPlan {
     pub inner: ExportPlan,
 }
 
-#[pyclass(name = "ExportReport")]
+#[pyclass(name = "ExportReport", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyExportReport {
     pub inner: ExportBundleReport,
 }
 
-#[pyclass(name = "RouteTree")]
+#[pyclass(name = "RouteTree", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyRouteTree {
     pub inner: RouteTree,
 }
 
-#[pyclass(name = "SceneFrame")]
+#[pyclass(name = "SceneFrame", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PySceneFrame {
     pub inner: SceneFrame,
 }
 
-#[pyclass(name = "UiThemeValidationReport")]
+#[pyclass(name = "UiThemeValidationReport", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyUiThemeValidationReport {
     pub inner: UiThemeValidationReport,
 }
 
-#[pyclass(name = "LayoutResolution")]
+#[pyclass(name = "LayoutResolution", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyLayoutResolution {
     pub inner: LayoutResolution,
@@ -196,7 +196,7 @@ macro_rules! json_backed_methods {
                     .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
             }
 
-            fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+            fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
                 let value = serde_json::to_value(&self.inner)
                     .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
                 json_value_to_py(py, &value)

@@ -15,7 +15,7 @@ enum PyEventData {
 #[derive(Debug)]
 pub struct PyEvent {
     data: PyEventData,
-    cached_dict: RefCell<Option<PyObject>>,
+    cached_dict: RefCell<Option<Py<PyAny>>>,
 }
 
 impl PyEvent {
@@ -40,11 +40,11 @@ impl PyEvent {
         }
     }
 
-    fn field(&self, py: Python<'_>, key: &str) -> PyResult<Option<PyObject>> {
+    fn field(&self, py: Python<'_>, key: &str) -> PyResult<Option<Py<PyAny>>> {
         let dict = self.as_dict(py)?;
         Ok(dict
             .bind(py)
-            .downcast::<PyDict>()?
+            .cast::<PyDict>()?
             .get_item(key)?
             .map(Bound::unbind))
     }
@@ -58,81 +58,81 @@ impl PyEvent {
     }
 
     #[getter]
-    fn speaker(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn speaker(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "speaker")
     }
 
     #[getter]
-    fn text(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn text(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "text")
     }
 
     #[getter]
-    fn prompt(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn prompt(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "prompt")
     }
 
     #[getter]
-    fn background(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn background(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "background")
     }
 
     #[getter]
-    fn music(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn music(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "music")
     }
 
     #[getter]
-    fn target(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn target(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "target")
     }
 
     #[getter]
-    fn target_ip(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn target_ip(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "target_ip")
     }
 
     #[getter]
-    fn key(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn key(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "key")
     }
 
     #[getter]
-    fn flag_id(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn flag_id(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "flag_id")
     }
 
     #[getter]
-    fn value(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn value(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "value")
     }
 
     #[getter]
-    fn options(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn options(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "options")
     }
 
     #[getter]
-    fn characters(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn characters(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "characters")
     }
 
     #[getter]
-    fn add(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn add(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "add")
     }
 
     #[getter]
-    fn update(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn update(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "update")
     }
 
     #[getter]
-    fn remove(&self, py: Python<'_>) -> PyResult<Option<PyObject>> {
+    fn remove(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
         self.field(py, "remove")
     }
 
-    fn __getattr__(&self, py: Python<'_>, name: &str) -> PyResult<PyObject> {
+    fn __getattr__(&self, py: Python<'_>, name: &str) -> PyResult<Py<PyAny>> {
         self.field(py, name)?.ok_or_else(|| {
             pyo3::exceptions::PyAttributeError::new_err(format!(
                 "event '{}' has no attribute '{name}'",
@@ -141,7 +141,7 @@ impl PyEvent {
         })
     }
 
-    fn as_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn as_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         if let Some(cached) = self.cached_dict.borrow().as_ref() {
             return Ok(cached.clone_ref(py));
         }
@@ -153,7 +153,7 @@ impl PyEvent {
         Ok(dict)
     }
 
-    fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.as_dict(py)
     }
 

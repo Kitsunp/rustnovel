@@ -171,7 +171,15 @@ impl<'a> NodeEditorPanel<'a> {
 
             // Shape
             let bg_color = if is_selected || is_dragging {
-                node.color().linear_multiply(1.3)
+                let color = egui::Rgba::from(node.color());
+                // Brighten RGB without treating opacity as a brightness factor.
+                egui::Rgba::from_rgba_premultiplied(
+                    (color.r() * 1.3).min(color.a()),
+                    (color.g() * 1.3).min(color.a()),
+                    (color.b() * 1.3).min(color.a()),
+                    color.a(),
+                )
+                .into()
             } else if is_connecting {
                 egui::Color32::YELLOW.linear_multiply(0.3)
             } else {

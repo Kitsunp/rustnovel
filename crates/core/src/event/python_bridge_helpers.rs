@@ -3,7 +3,7 @@ use super::{ScenePatchCompiled, SceneUpdateCompiled};
 pub fn scene_compiled_to_python(
     py: pyo3::Python<'_>,
     scene: &SceneUpdateCompiled,
-) -> pyo3::PyResult<pyo3::PyObject> {
+) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
     use pyo3::types::{PyDict, PyDictMethods, PyList, PyListMethods};
     let characters = PyList::empty(py);
     for character in &scene.characters {
@@ -22,7 +22,7 @@ pub fn scene_compiled_to_python(
 pub fn scene_patch_add_compiled_to_python(
     py: pyo3::Python<'_>,
     patch: &ScenePatchCompiled,
-) -> pyo3::PyResult<pyo3::PyObject> {
+) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
     use pyo3::types::{PyDict, PyDictMethods, PyList, PyListMethods};
     let characters = PyList::empty(py);
     for character in &patch.add {
@@ -41,7 +41,7 @@ pub fn scene_patch_add_compiled_to_python(
 pub fn scene_patch_update_compiled_to_python(
     py: pyo3::Python<'_>,
     patch: &ScenePatchCompiled,
-) -> pyo3::PyResult<pyo3::PyObject> {
+) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
     use pyo3::types::{PyDict, PyDictMethods, PyList, PyListMethods};
     let characters = PyList::empty(py);
     for character in &patch.update {
@@ -60,7 +60,7 @@ pub fn scene_patch_update_compiled_to_python(
 pub fn scene_patch_remove_compiled_to_python(
     py: pyo3::Python<'_>,
     patch: &ScenePatchCompiled,
-) -> pyo3::PyResult<pyo3::PyObject> {
+) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
     use pyo3::types::{PyList, PyListMethods};
     let list = PyList::empty(py);
     for name in &patch.remove {

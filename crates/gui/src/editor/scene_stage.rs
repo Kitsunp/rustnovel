@@ -323,7 +323,7 @@ impl<'a> SceneStagePainter<'a> {
         is_selected: bool,
         opacity: u32,
     ) {
-        let mut content_ui = ui.child_ui(rect, *ui.layout());
+        let mut content_ui = ui.child_ui(rect, *ui.layout(), None);
         content_ui.set_clip_rect(ui.clip_rect());
         content_ui.set_opacity(opacity.min(1000) as f32 / 1000.0);
         let ui = &content_ui;

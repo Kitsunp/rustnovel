@@ -10,7 +10,7 @@ use super::super::conversion::parse_cmp_op;
 use super::super::character_input::CharacterInput;
 
 /// A node in the story graph.
-#[pyclass(name = "StoryNode")]
+#[pyclass(name = "StoryNode", from_py_object)]
 #[derive(Clone)]
 pub struct PyStoryNode {
     pub(super) inner: StoryNode,

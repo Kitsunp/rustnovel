@@ -222,7 +222,7 @@ impl VnApp {
                         .color(egui::Color32::WHITE)
                         .size(layout.text_font_size),
                 )
-                .wrap(true),
+                .wrap(),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
@@ -286,7 +286,7 @@ impl VnApp {
                         .strong()
                         .size(layout.prompt_font_size),
                 )
-                .wrap(true),
+                .wrap(),
             );
             ui.add_space(layout.prompt_option_gap);
             egui::ScrollArea::vertical()
@@ -343,7 +343,7 @@ impl VnApp {
                     ))
                     .color(egui::Color32::WHITE),
                 )
-                .wrap(true),
+                .wrap(),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Continue").clicked() {
