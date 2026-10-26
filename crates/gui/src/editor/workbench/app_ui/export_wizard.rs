@@ -191,12 +191,8 @@ impl EditorWorkbench {
             }
         }
         if self.export_wizard.entry_script.trim().is_empty() {
-            if let Some(manifest) = self.manifest.as_ref() {
-                self.export_wizard.entry_script = manifest.settings.entry_point.clone();
-            } else if let Some(path) = self.pending_save_path.as_ref() {
-                if let Some(name) = path.file_name() {
-                    self.export_wizard.entry_script = name.to_string_lossy().to_string();
-                }
+            if let Some(entry) = self.default_export_entry() {
+                self.export_wizard.entry_script = entry.to_string_lossy().to_string();
             }
         }
         if self.export_wizard.runtime_artifact.trim().is_empty() {

@@ -225,7 +225,6 @@ fn export_uses_current_edits_and_script_bundle_ignores_old_runtime_selection() {
             *text = "Current edit".into();
         }
     });
-    workbench.export_wizard.entry_script = "story.json".into();
     workbench.export_wizard.output_root = tmp.path().join("out").to_string_lossy().into();
     workbench.export_wizard.export_kind = ExportWizardKind::CompiledScriptBundle;
     workbench.export_wizard.runtime_artifact = "missing-old-runtime.exe".into();
