@@ -20,14 +20,7 @@ pub fn sha256_file(path: &Path) -> io::Result<(String, u64)> {
         hasher.update(&buffer[..read]);
         total = total.saturating_add(read as u64);
     }
-    Ok((
-        hasher
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect(),
-        total,
-    ))
+    Ok((crate::hashing::hex_digest(&hasher.finalize()), total))
 }
 
 /// Writes and syncs a sibling temporary before replacing a regular destination.

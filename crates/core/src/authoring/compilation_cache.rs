@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use super::compiler::CompilationResult;
 use super::{collect_authoring_asset_refs, should_probe_asset_exists, NodeGraph};
+use crate::hashing::{hex_digest, sha256_json};
 use sha2::{Digest, Sha256};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,9 +60,8 @@ impl CompilationCache {
 
 impl CompilationCacheKey {
     fn from_graph(graph: &NodeGraph, project_root: Option<&Path>) -> Self {
-        let graph_sha256 = serde_json::to_vec(graph)
-            .map(|bytes| sha256_bytes(&bytes))
-            .unwrap_or_else(|err| format!("serialization_error:{err}"));
+        let graph_sha256 =
+            sha256_json(graph).unwrap_or_else(|err| format!("serialization_error:{err}"));
         let project_root = project_root.map(Path::to_path_buf);
         let asset_state_sha256 = project_root
             .as_deref()
@@ -129,27 +129,11 @@ fn hash_referenced_asset_state(graph: &NodeGraph, project_root: &Path) -> String
         }
         hasher.update([0xff]);
     }
-    hex_lower(&hasher.finalize())
+    hex_digest(&hasher.finalize())
 }
 
 fn sha256_file(path: &Path) -> Result<String, std::io::Error> {
     crate::atomic_io::sha256_file(path).map(|(hash, _)| hash)
-}
-
-fn sha256_bytes(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hex_lower(&hasher.finalize())
-}
-
-fn hex_lower(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
 }
 
 #[cfg(test)]

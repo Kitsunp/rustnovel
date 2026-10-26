@@ -1,9 +1,9 @@
-use std::{collections::BTreeMap, io};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::asset_refs::{collect_character_assets, AssetRefSet};
+use crate::hashing::{sha256_hex as sha256_bytes, sha256_json as try_sha256_json};
 use crate::script::ScriptRaw;
 
 use super::{
@@ -282,39 +282,7 @@ fn collect_profile_asset_refs(profile: &SceneProfile, refs: &mut AssetRefSet) {
 }
 
 fn sha256_json<T: Serialize>(value: &T) -> String {
-    let mut writer = Sha256Writer(Sha256::new());
-    match serde_json::to_writer(&mut writer, value) {
-        Ok(()) => hex_digest(writer.0.finalize().as_slice()),
-        Err(error) => sha256_bytes(error.to_string().as_bytes()),
-    }
-}
-
-fn sha256_bytes(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    hex_digest(digest.as_slice())
-}
-
-fn hex_digest(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
-}
-
-struct Sha256Writer(Sha256);
-
-impl io::Write for Sha256Writer {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.update(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
+    try_sha256_json(value).unwrap_or_else(|error| sha256_bytes(error.to_string().as_bytes()))
 }
 
 fn build_profile() -> &'static str {

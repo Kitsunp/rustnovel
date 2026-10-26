@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
-use std::io;
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::asset_refs::{collect_node_asset_refs as collect_behavior_node_asset_refs, AssetRefSet};
+use crate::hashing::{hex_digest, Sha256Writer};
 
 use super::super::report_fingerprint::build_fingerprint_from_parts;
 use super::super::{
@@ -557,28 +557,5 @@ fn hash_json_hex<T: Serialize>(domain: &str, value: &T) -> String {
 fn xor_hash(acc: &mut [u8; 32], hash: [u8; 32]) {
     for (left, right) in acc.iter_mut().zip(hash) {
         *left ^= right;
-    }
-}
-
-fn hex_digest(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
-}
-
-struct Sha256Writer(Sha256);
-
-impl io::Write for Sha256Writer {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.update(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
     }
 }

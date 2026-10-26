@@ -10,13 +10,7 @@ use super::{SaveData, SaveError, ScriptId};
 type HmacSha256 = Hmac<Sha256>;
 
 pub(super) fn script_id_hex(script_id: &ScriptId) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(script_id.len() * 2);
-    for byte in script_id {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
+    crate::hashing::hex_digest(script_id)
 }
 
 pub(super) fn chapter_label_hint(save: &SaveData) -> Option<String> {
