@@ -141,6 +141,7 @@ impl EditorWorkbench {
     pub(super) fn initialize_loaded_document(&mut self, save_path: Option<std::path::PathBuf>) {
         self.node_graph.clear_operation_hint();
         self.node_graph.clear_modified();
+        self.node_graph.authoring_session.clear_dirty_flags();
         self.pending_editor_operation = None;
         self.pending_structural_fix = None;
         self.pending_auto_fix_batch = None;
@@ -389,6 +390,7 @@ impl EditorWorkbench {
         self.pending_save_path = Some(path);
         self.saved_script_snapshot = Some(self.node_graph.to_script());
         self.node_graph.clear_modified();
+        self.node_graph.authoring_session.clear_dirty_flags();
         Ok(())
     }
 

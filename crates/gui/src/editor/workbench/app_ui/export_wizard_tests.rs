@@ -83,7 +83,7 @@ fn export_buttons_plan_test_and_publish_through_real_egui_events() {
     );
     fs::write(&entry, script.to_json().unwrap()).unwrap();
     let mut workbench = EditorWorkbench::new(VnConfig::default());
-    workbench.load_script(entry);
+    workbench.load_script(entry.clone());
     workbench.open_export_wizard();
     workbench.export_wizard.export_kind = ExportWizardKind::CompiledScriptBundle;
     let output = tmp.path().join("out");
@@ -102,14 +102,40 @@ fn export_buttons_plan_test_and_publish_through_real_egui_events() {
         workbench.export_wizard.last_error
     );
     assert!(!output.exists());
+    let node_id = workbench
+        .node_graph
+        .nodes()
+        .find_map(|(id, node, _)| {
+            matches!(node, crate::editor::StoryNode::Dialogue { .. }).then_some(id)
+        })
+        .unwrap();
+    let moved = egui::pos2(450.0, 330.0);
+    assert!(workbench.node_graph.set_node_pos(node_id, moved));
+    workbench.commit_modified_graph();
+    assert!(!workbench.node_graph.is_modified());
+    click_export_button(&mut workbench, &ctx, "Test export", 3.0);
+    assert!(workbench
+        .export_wizard
+        .last_error
+        .as_ref()
+        .is_some_and(|error| error.contains("unsaved changes")));
+    assert!(!output.exists());
     workbench.export_wizard.dry_run = false;
-    click_export_button(&mut workbench, &ctx, "Save and export", 3.0);
+    click_export_button(&mut workbench, &ctx, "Save and export", 4.0);
     assert!(
         workbench.export_wizard.last_report.is_some(),
         "{:?}",
         workbench.export_wizard.last_error
     );
     assert!(output.join("scripts/compiled.vnc").is_file());
+    let saved = visual_novel_engine::authoring::load_authoring_entry(&entry).unwrap();
+    let position = saved.graph.get_node_pos(node_id).unwrap();
+    assert_eq!((position.x, position.y), (moved.x, moved.y));
+    assert!(workbench
+        .node_graph
+        .authoring_session
+        .dirty_flags()
+        .is_clean());
 }
 
 #[test]
