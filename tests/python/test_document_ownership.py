@@ -20,18 +20,30 @@ def make_graph():
 
 def test_bookmarks_keep_layers_and_prior_undo_history(tmp_path):
     graph, scene = make_graph()
-    layer = next(obj for obj in graph.list_layered_objects(scene) if obj.asset_path == "room.png")
+    layer = next(
+        obj for obj in graph.list_layered_objects(scene) if obj.asset_path == "room.png"
+    )
     graph.set_layer_visible(layer.object_id, False)
     assert graph.set_bookmark("intro", scene)
     operations = len(graph.operation_log())
-    assert graph.set_bookmark("intro", scene)  # Existing API reports acceptance, including repeats.
+    assert graph.set_bookmark(
+        "intro", scene
+    )  # Existing API reports acceptance, including repeats.
     assert not graph.remove_bookmark("missing")
     assert len(graph.operation_log()) == operations
     assert graph.undo()
     assert graph.bookmark_target("intro") is None
-    assert not next(obj for obj in graph.list_layered_objects(scene) if obj.object_id == layer.object_id).visible
+    assert not next(
+        obj
+        for obj in graph.list_layered_objects(scene)
+        if obj.object_id == layer.object_id
+    ).visible
     assert graph.undo()
-    assert next(obj for obj in graph.list_layered_objects(scene) if obj.object_id == layer.object_id).visible
+    assert next(
+        obj
+        for obj in graph.list_layered_objects(scene)
+        if obj.object_id == layer.object_id
+    ).visible
     assert graph.redo()
     assert graph.redo()
     assert graph.bookmark_target("intro") == scene
@@ -39,7 +51,11 @@ def test_bookmarks_keep_layers_and_prior_undo_history(tmp_path):
     graph.save(str(path))
     loaded = vn.NodeGraph.load(str(path))
     assert loaded.bookmark_target("intro") == scene
-    assert not next(obj for obj in loaded.list_layered_objects(scene) if obj.object_id == layer.object_id).visible
+    assert not next(
+        obj
+        for obj in loaded.list_layered_objects(scene)
+        if obj.object_id == layer.object_id
+    ).visible
     assert len(loaded.operation_log()) == len(graph.operation_log())
     assert len(loaded.verification_runs()) == len(graph.verification_runs())
     second = tmp_path / "roundtrip.json"
@@ -54,7 +70,10 @@ def test_preview_retains_audio_until_the_client_consumes_it():
     graph, scene = make_graph()
     preview = graph.preview_start_from_node(scene)
     commands = preview.take_audio_commands()
-    assert any(command["type"] == "play_bgm" and command["path"] == "theme.ogg" for command in commands)
+    assert any(
+        command["type"] == "play_bgm" and command["path"] == "theme.ogg"
+        for command in commands
+    )
     assert preview.take_audio_commands() == []
     preview.advance()
     assert isinstance(preview.take_audio_commands(), list)
@@ -65,4 +84,6 @@ def test_empty_history_and_malformed_authoring_document_are_explicit():
     assert not graph.undo()
     assert not graph.redo()
     with pytest.raises(ValueError):
-        vn.NodeGraph.from_authoring_or_script_json('{"authoring_schema_version":999,"graph":{}}')
+        vn.NodeGraph.from_authoring_or_script_json(
+            '{"authoring_schema_version":999,"graph":{}}'
+        )

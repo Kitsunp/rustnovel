@@ -21,7 +21,7 @@ class Engine:
         self._last_audio: Any = []
 
     @classmethod
-    def from_script(cls, script: Union[Script, Mapping[str, Any], str]) -> "Engine":
+    def from_script(cls, script: Union[Script, Mapping[str, Any], str]) -> Engine:
         """Create an engine from a Script object, dict, or JSON string."""
 
         if isinstance(script, Script):

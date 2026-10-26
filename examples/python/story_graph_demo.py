@@ -8,7 +8,6 @@ including detecting unreachable nodes and exporting to DOT format.
 
 import visual_novel_engine as vn
 
-
 # Sample script with branching and an unreachable node
 SCRIPT_JSON = """{
     "script_schema_version": "1.0",

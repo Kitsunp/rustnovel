@@ -3,26 +3,27 @@ import sys
 import types
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 
 from vnengine.app import EngineApp, run_script_headless
 from vnengine.builder import ScriptBuilder
 from vnengine.localization import LocalizationCatalog, collect_script_localization_keys
 from vnengine.types import (
+    LEGACY_READ_ONLY,
+    MIGRATING,
+    SCRIPT_SCHEMA_VERSION,
+    STRICT_CURRENT,
+    SUPPORTED_EVENT_TYPES,
     AudioAction,
     CharacterPlacement,
     Choice,
     Dialogue,
     JumpIf,
-    LEGACY_READ_ONLY,
-    MIGRATING,
     Script,
-    SCRIPT_SCHEMA_VERSION,
     SetCharacterPosition,
     SetFlag,
     SetVar,
-    STRICT_CURRENT,
-    SUPPORTED_EVENT_TYPES,
     Transition,
     event_from_dict,
 )
@@ -31,9 +32,11 @@ SCHEMA_FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "schema
 
 
 def _accepts(callback):
+    from visual_novel_engine import VnValidationError
+
     try:
         callback()
-    except Exception:
+    except (ValueError, VnValidationError):
         return False
     return True
 
@@ -91,8 +94,8 @@ class TypesTests(unittest.TestCase):
         for filename, accepted in cases.items():
             with self.subTest(filename=filename):
                 raw = (SCHEMA_FIXTURE_ROOT / filename).read_text(encoding="utf-8")
-                self.assertEqual(_accepts(lambda: Script.from_json(raw)), accepted)
-                self.assertEqual(_accepts(lambda: native.Engine(raw)), accepted)
+                self.assertEqual(_accepts(partial(Script.from_json, raw)), accepted)
+                self.assertEqual(_accepts(partial(native.Engine, raw)), accepted)
 
     def test_python_uses_native_schema_policy_for_explicit_modes(self):
         import visual_novel_engine as native
@@ -112,12 +115,12 @@ class TypesTests(unittest.TestCase):
                 version = payload.get("script_schema_version")
                 self.assertEqual(
                     _accepts(
-                        lambda: native.validate_script_schema_version(version, policy)
+                        partial(native.validate_script_schema_version, version, policy)
                     ),
                     accepted,
                 )
                 self.assertEqual(
-                    _accepts(lambda: Script.from_json(raw, schema_policy=policy)),
+                    _accepts(partial(Script.from_json, raw, schema_policy=policy)),
                     accepted,
                 )
 
@@ -168,9 +171,10 @@ class TypesTests(unittest.TestCase):
             ),
         ]
         for payload, message in cases:
-            with self.subTest(payload=payload):
-                with self.assertRaisesRegex(ValueError, message):
-                    Choice.from_dict(payload)
+            with self.subTest(payload=payload), self.assertRaisesRegex(
+                ValueError, message
+            ):
+                Choice.from_dict(payload)
 
     def test_character_from_dict_coerces_optional_fields(self):
         placement = CharacterPlacement.from_dict(
@@ -238,9 +242,8 @@ class TypesTests(unittest.TestCase):
             ),
         ]
         for raw, message in cases:
-            with self.subTest(raw=raw):
-                with self.assertRaisesRegex(ValueError, message):
-                    Script.from_json(raw)
+            with self.subTest(raw=raw), self.assertRaisesRegex(ValueError, message):
+                Script.from_json(raw)
 
     def test_script_rejects_malformed_container_fields(self):
         cases = [
@@ -258,9 +261,8 @@ class TypesTests(unittest.TestCase):
             ),
         ]
         for raw, message in cases:
-            with self.subTest(raw=raw):
-                with self.assertRaisesRegex(ValueError, message):
-                    Script.from_json(raw)
+            with self.subTest(raw=raw), self.assertRaisesRegex(ValueError, message):
+                Script.from_json(raw)
 
     def test_set_var_rejects_bool_payload(self):
         with self.assertRaises(ValueError):

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional, Tuple, Union
 
+from .script_types import CharacterInput, CharacterPatchInput
 from .types import (
+    SUPPORTED_EVENT_TYPES,
     AudioAction,
-    CharacterPatch,
-    CharacterPlacement,
     Choice,
     ChoiceOption,
     CondFlag,
@@ -19,18 +19,15 @@ from .types import (
     JumpIf,
     Patch,
     Scene,
-    SetCharacterPosition,
     Script,
+    SetCharacterPosition,
     SetFlag,
     SetVar,
-    SUPPORTED_EVENT_TYPES,
     Transition,
     normalize_character_patches,
     normalize_characters,
     normalize_choice_options,
 )
-
-from .script_types import CharacterInput, CharacterPatchInput
 
 ChoiceOptionInput = Union[ChoiceOption, Tuple[str, str]]
 
