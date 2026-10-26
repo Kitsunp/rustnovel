@@ -122,11 +122,9 @@ impl EditorResourceService {
 
     fn load_bytes_at(&mut self, path: &Path) -> Result<CachedBytes, String> {
         let limit = vnengine_assets::AssetLimits::default().max_bytes;
-        let bytes = vnengine_assets::read_asset_bytes(path, limit)
-            .map_err(|err| format!("read {}: {err}", path.display()))?;
-        let fingerprint = fingerprint_bytes(&bytes);
-
         if let Some(cached) = self.byte_cache.get(path) {
+            let (fingerprint, _) = vnengine_assets::hash_asset_file(path, limit)
+                .map_err(|err| format!("inspect {}: {err}", path.display()))?;
             if cached.fingerprint == fingerprint {
                 let resource = cached.clone();
                 self.metrics.hits = self.metrics.hits.saturating_add(1);
@@ -139,6 +137,9 @@ impl EditorResourceService {
             self.audio_metadata_cache.remove(path);
         }
 
+        let bytes = vnengine_assets::read_asset_bytes(path, limit)
+            .map_err(|err| format!("read {}: {err}", path.display()))?;
+        let fingerprint = fingerprint_bytes(&bytes);
         self.metrics.misses = self.metrics.misses.saturating_add(1);
         let resource = CachedBytes {
             fingerprint,

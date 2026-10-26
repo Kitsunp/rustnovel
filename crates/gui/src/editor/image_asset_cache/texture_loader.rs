@@ -4,8 +4,8 @@ use std::path::Path;
 use eframe::egui;
 
 use super::{
-    image_failure_message, normalize_asset_path, prune_image_cache_versions, scene_stage_cache_key,
-    should_retry_missing_image_failure, thumbnail_cache_key, MAX_IMAGE_CACHE_ENTRIES,
+    image_failure_message, normalize_asset_path, prune_image_cache_versions, record_asset_failure,
+    scene_stage_cache_key, should_retry_missing_image_failure, thumbnail_cache_key,
 };
 use crate::editor::{resource_service::EditorResourceService, PreviewQuality};
 
@@ -84,7 +84,11 @@ impl<'a> ImageTextureCache<'a> {
         let resolved = match resolved {
             Ok(resolved) => normalize_asset_path(&resolved),
             Err(error) => {
-                self.record_failure(request_key, image_failure_message(&path, &error));
+                record_asset_failure(
+                    self.failures,
+                    request_key,
+                    image_failure_message(&path, &error),
+                );
                 return None;
             }
         };
@@ -103,7 +107,11 @@ impl<'a> ImageTextureCache<'a> {
             {
                 Ok(image) => image,
                 Err(error) => {
-                    self.record_failure(key, format!("image '{resolved}' load failed: {error}"));
+                    record_asset_failure(
+                        self.failures,
+                        key,
+                        format!("image '{resolved}' load failed: {error}"),
+                    );
                     return None;
                 }
             };
@@ -125,14 +133,5 @@ impl<'a> ImageTextureCache<'a> {
         }
         self.cache.insert(key, texture);
         Some(id)
-    }
-
-    fn record_failure(&mut self, key: String, error: String) {
-        if self.failures.len() >= MAX_IMAGE_CACHE_ENTRIES && !self.failures.contains_key(&key) {
-            if let Some(cached_key) = self.failures.keys().next().cloned() {
-                self.failures.remove(&cached_key);
-            }
-        }
-        self.failures.insert(key, error);
     }
 }

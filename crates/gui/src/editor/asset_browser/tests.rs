@@ -83,6 +83,11 @@ fn audio_slider_tracks_playback_wraps_and_seeks_on_release() {
 #[test]
 fn clipped_cards_skip_uploads_and_visible_cache_hits_protect_the_texture() {
     let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("tone.ogg"),
+        include_bytes!("../../../../runtime/tests/fixtures/tone.ogg"),
+    )
+    .unwrap();
     image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]))
         .save(dir.path().join("image.png"))
         .unwrap();
@@ -106,6 +111,14 @@ fn clipped_cards_skip_uploads_and_visible_cache_hits_protect_the_texture() {
                 response.rect.height() > 0.0,
                 "clipping preserves card layout"
             );
+            AssetBrowserPanel::new(
+                &manifest,
+                Some(dir.path()),
+                &mut cache,
+                &mut failures,
+                &mut resources,
+            )
+            .render_audio_position(ui, "tone.ogg");
         });
     });
     assert!(
@@ -170,5 +183,10 @@ fn clipped_cards_skip_uploads_and_visible_cache_hits_protect_the_texture() {
             .thumbnail_texture(&ctx, &format!("missing-{missing}.png"))
             .is_none());
     }
-    assert!(failures.len() <= crate::editor::image_asset_cache::MAX_IMAGE_CACHE_ENTRIES);
+    for missing in 0..600 {
+        assert!(panel
+            .audio_duration_secs(&format!("missing-{missing}.wav"))
+            .is_none());
+    }
+    assert!(failures.len() <= crate::editor::image_asset_cache::MAX_ASSET_CACHE_ENTRIES);
 }
