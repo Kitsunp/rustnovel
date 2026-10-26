@@ -12,8 +12,13 @@ impl EditorWorkbench {
         path: std::path::PathBuf,
         show_toasts: bool,
     ) -> Result<(), String> {
-        match crate::editor::project_io::load_project(path.clone()) {
-            Ok(loaded_project) => {
+        let loaded = std::path::absolute(path)
+            .map_err(crate::editor::errors::EditorError::IoError)
+            .and_then(|path| {
+                crate::editor::project_io::load_project(path.clone()).map(|project| (path, project))
+            });
+        match loaded {
+            Ok((path, loaded_project)) => {
                 let migrated_manifest = loaded_project
                     .manifest_migration_report
                     .as_ref()
@@ -68,8 +73,13 @@ impl EditorWorkbench {
     }
 
     pub fn load_script(&mut self, path: std::path::PathBuf) {
-        match crate::editor::project_io::load_script(path.clone()) {
-            Ok(loaded_script) => {
+        let loaded = std::path::absolute(path)
+            .map_err(crate::editor::errors::EditorError::IoError)
+            .and_then(|path| {
+                crate::editor::project_io::load_script(path.clone()).map(|script| (path, script))
+            });
+        match loaded {
+            Ok((path, loaded_script)) => {
                 self.project_root = path.parent().map(std::path::Path::to_path_buf);
                 self.manifest_path = None;
                 self.manifest = None;

@@ -73,6 +73,7 @@ pub fn resolve_existing_project_path(
 }
 
 pub fn load_project(path: PathBuf) -> Result<LoadedProject, EditorError> {
+    let path = std::path::absolute(path).map_err(EditorError::IoError)?;
     // 1. Load Manifest (TOML)
     let manifest_content = std::fs::read_to_string(&path).map_err(EditorError::IoError)?;
 
