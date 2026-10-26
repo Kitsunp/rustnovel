@@ -243,7 +243,7 @@ fn rewrite_path_and_copy(
                 return;
             }
         }
-        match fs::copy(&source, &destination) {
+        match crate::atomic_io::atomic_copy(&source, &destination) {
             Ok(_) => {
                 copied.insert(resolved_rel.clone());
             }
