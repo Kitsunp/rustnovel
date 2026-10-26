@@ -465,7 +465,7 @@ fn build_validation_report(
     let document = load_authoring_document(path).context("load authoring/script entry")?;
     let script = document.graph.to_script_lossy_for_diagnostics();
     let project_root = project_root
-        .or_else(|| path.parent())
+        .or_else(|| path.parent().filter(|root| !root.as_os_str().is_empty()))
         .unwrap_or_else(|| Path::new("."));
     let issues = validate_authoring_graph_with_project_root(&document.graph, project_root);
     Ok(AuthoringValidationReport::from_document_and_issues(

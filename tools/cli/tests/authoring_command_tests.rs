@@ -49,34 +49,44 @@ fn authoring_validate_command_writes_clean_report() {
     ));
     let output_path = script_path.with_file_name("authoring_report.json");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
-        .arg("authoring-validate")
-        .arg(script_path.as_os_str())
-        .arg("--output")
-        .arg(output_path.as_os_str())
-        .output()
-        .expect("run authoring validate command");
+    let mut fingerprints = None;
+    for input in [script_path.clone(), script_path.file_name().unwrap().into()] {
+        let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+            .arg("authoring-validate")
+            .arg(&input)
+            .arg("--output")
+            .arg("authoring_report.json")
+            .current_dir(script_path.parent().unwrap())
+            .output()
+            .expect("run authoring validate command");
 
-    assert!(
-        output.status.success(),
-        "stdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report = fs::read_to_string(output_path).expect("report json");
-    assert!(report.contains("\"issue_count\": 0"), "report={report}");
-    assert!(
-        report.contains("\"schema\": \"vnengine.authoring_validation_report.v2\""),
-        "report={report}"
-    );
-    assert!(
-        report.contains("\"fingerprint_schema_version\": \"vnengine.authoring.fingerprint.v2\""),
-        "report={report}"
-    );
-    assert!(
-        report.contains("\"story_semantic_sha256\""),
-        "report={report}"
-    );
+        assert!(
+            output.status.success(),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report = fs::read_to_string(&output_path).expect("report json");
+        assert!(report.contains("\"issue_count\": 0"), "report={report}");
+        assert!(
+            report.contains("\"schema\": \"vnengine.authoring_validation_report.v2\""),
+            "report={report}"
+        );
+        assert!(
+            report
+                .contains("\"fingerprint_schema_version\": \"vnengine.authoring.fingerprint.v2\""),
+            "report={report}"
+        );
+        assert!(
+            report.contains("\"story_semantic_sha256\""),
+            "report={report}"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&report).unwrap();
+        if let Some(expected) = &fingerprints {
+            assert_eq!(&parsed["fingerprints"], expected);
+        }
+        fingerprints = Some(parsed["fingerprints"].clone());
+    }
 }
 
 #[test]
