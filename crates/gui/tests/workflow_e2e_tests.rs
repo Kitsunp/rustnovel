@@ -12,6 +12,32 @@ use visual_novel_gui::{
 
 #[test]
 fn imported_project_can_be_edited_saved_exported_and_run_by_the_real_player() {
+    if std::env::var_os("RUSTNOVEL_RELATIVE_PATH_PROBE").is_some() {
+        let project = std::env::current_dir().unwrap();
+        let loaded = visual_novel_gui::editor::project_io::load_project("project.vnm".into())
+            .expect("project I/O accepts a manifest in the current directory");
+        assert!(loaded.entry_point_script.is_some());
+        let mut editor = EditorWorkbench::new(VnConfig::default());
+        editor
+            .load_project_with_status("project.vnm".into(), false)
+            .unwrap();
+        assert!(editor.project_root.as_ref().unwrap().is_absolute());
+        editor.load_script("main.json".into());
+        assert!(
+            editor.manifest.is_none(),
+            "standalone script must load successfully"
+        );
+        assert!(editor.project_root.as_ref().unwrap().is_absolute());
+        assert!(editor.pending_save_path.as_ref().unwrap().is_absolute());
+        // This process runs only this probe, so changing its cwd cannot race tests.
+        std::env::set_current_dir(project.parent().unwrap()).unwrap();
+        assert!(
+            editor.run_dry_validation(),
+            "{:?}",
+            editor.validation_issues
+        );
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let source = tmp.path().join("Renpy source with spaces");
     let game = source.join("game");
@@ -55,6 +81,23 @@ fn imported_project_can_be_edited_saved_exported_and_run_by_the_real_player() {
     })
     .unwrap();
     assert_eq!(report.degraded_events, 0);
+    let probe = Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg(std::thread::current().name().unwrap())
+        .env("RUSTNOVEL_RELATIVE_PATH_PROBE", "1")
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    assert!(
+        probe.status.success(),
+        "relative-path probe: {} {}",
+        String::from_utf8_lossy(&probe.stdout),
+        String::from_utf8_lossy(&probe.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&probe.stdout).contains("1 passed"),
+        "the child must execute the probe"
+    );
     let mut editor = EditorWorkbench::new(VnConfig::default());
     editor
         .load_project_with_status(project.join("project.vnm"), false)
