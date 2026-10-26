@@ -101,8 +101,8 @@ function Invoke-LintJob {
         )) {
         Remove-Item -LiteralPath $auditDb -Recurse -Force
     }
-    Invoke-CiStep "cargo audit -D warnings --ignore RUSTSEC-2024-0436" {
-        cargo audit --db $auditDb -D warnings --ignore RUSTSEC-2024-0436
+    Invoke-CiStep "cargo audit (shared repository policy)" {
+        cargo audit --db $auditDb
     }
 }
 
