@@ -52,10 +52,7 @@ fn run_workbench_frame(
     height: f32,
     events: Vec<egui::Event>,
 ) -> egui::FullOutput {
-    ctx.run(raw_input(width, height, 1.0, events), |ctx| {
-        ctx.set_visuals(egui::Visuals::dark());
-        workbench.ui(ctx);
-    })
+    run_panel_frame(ctx, width, height, events, |ctx| workbench.ui(ctx))
 }
 
 fn run_panel_frame(
@@ -68,7 +65,15 @@ fn run_panel_frame(
     ctx.run(raw_input(width, height, 1.0, events), |ctx| {
         ctx.set_visuals(egui::Visuals::dark());
         render(ctx);
+        // egui swaps the live frame state on end_frame. Observe this frame now.
+        let used = ctx.used_rect();
+        ctx.data_mut(|data| data.insert_temp(egui::Id::new("render_contract.used_rect"), used));
     })
+}
+
+fn frame_used_rect(ctx: &egui::Context) -> egui::Rect {
+    ctx.data(|data| data.get_temp(egui::Id::new("render_contract.used_rect")))
+        .expect("rendered frame must record its used rectangle before end_frame")
 }
 
 #[test]
@@ -756,12 +761,12 @@ fn canvas_context_menu_renders_inside_tiny_and_edge_viewports() {
             egui::pos2(10.0, 20.0),
         ));
 
-        let output = ctx.run(raw_input(width, height, 1.0, Vec::new()), |ctx| {
+        let output = run_panel_frame(&ctx, width, height, Vec::new(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 render_context_menu(&mut graph, ui);
             });
         });
-        let used = ctx.used_rect();
+        let used = frame_used_rect(&ctx);
 
         assert!(
             !output.shapes.is_empty(),
@@ -800,7 +805,7 @@ fn node_context_menu_renders_scene_actions_inside_edge_viewports() {
             egui::pos2(width - 4.0, height - 4.0),
         ));
 
-        let output = ctx.run(raw_input(width, height, 1.0, Vec::new()), |ctx| {
+        let output = run_panel_frame(&ctx, width, height, Vec::new(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 render_context_menu(&mut graph, ui);
             });
@@ -840,12 +845,12 @@ fn editor_auxiliary_windows_render_without_escaping_viewports() {
         workbench.show_scene_frame_inspector = true;
         workbench.show_profiler_cache_panel = true;
 
-        let warmup = ctx.run(raw_input(width, height, 1.0, Vec::new()), |ctx| {
+        let warmup = run_panel_frame(&ctx, width, height, Vec::new(), |ctx| {
             ctx.set_visuals(egui::Visuals::dark());
             workbench.ui(ctx);
         });
         drop(warmup);
-        let output = ctx.run(raw_input(width, height, 1.0, Vec::new()), |ctx| {
+        let output = run_panel_frame(&ctx, width, height, Vec::new(), |ctx| {
             ctx.set_visuals(egui::Visuals::dark());
             workbench.ui(ctx);
         });
@@ -861,7 +866,7 @@ fn editor_auxiliary_windows_render_without_escaping_viewports() {
         );
         assert_used_rect_inside_screen(
             &format!("auxiliary windows {width}x{height}"),
-            ctx.used_rect(),
+            frame_used_rect(&ctx),
             screen,
         );
     }
@@ -990,9 +995,9 @@ fn visual_composer_panel_renders_real_responsive_rows_without_horizontal_escape(
             screen,
         );
         assert!(
-            ctx.used_rect().right() <= width + 1.0,
+            frame_used_rect(&ctx).right() <= width + 1.0,
             "visual composer requested horizontal space outside its dock at {width}x{height}: {:?}",
-            ctx.used_rect()
+            frame_used_rect(&ctx)
         );
         if height >= 500.0 {
             let max_visible_shape_height = output
@@ -1320,7 +1325,7 @@ fn route_tree_view_renders_real_engine_snapshot_inside_viewport() {
 }
 
 fn run_node_editor_frame(ctx: &egui::Context, graph: &mut NodeGraph, events: Vec<egui::Event>) {
-    let output = ctx.run(raw_input(900.0, 640.0, 1.0, events), |ctx| {
+    let output = run_panel_frame(ctx, 900.0, 640.0, events, |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
             NodeEditorPanel::new(graph).ui(ui);
         });
@@ -1489,7 +1494,7 @@ fn node_editor_empty_frame_renders_without_hanging() {
     let ctx = egui::Context::default();
     let mut graph = NodeGraph::new();
     run_node_editor_frame(&ctx, &mut graph, Vec::new());
-    assert!(ctx.used_rect().is_finite());
+    assert!(frame_used_rect(&ctx).is_finite());
 }
 
 #[test]
@@ -1506,7 +1511,7 @@ fn node_editor_secondary_press_frame_returns_without_hanging() {
             pointer_button_event(pos, egui::PointerButton::Secondary, true),
         ],
     );
-    assert!(ctx.used_rect().is_finite());
+    assert!(frame_used_rect(&ctx).is_finite());
 }
 
 #[test]
@@ -1581,7 +1586,7 @@ fn node_editor_secondary_drag_move_frame_returns_without_hanging() {
         ],
     );
     run_node_editor_frame(&ctx, &mut graph, vec![egui::Event::PointerMoved(drag_end)]);
-    assert!(ctx.used_rect().is_finite());
+    assert!(frame_used_rect(&ctx).is_finite());
 }
 
 #[test]

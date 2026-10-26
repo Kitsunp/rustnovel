@@ -11,7 +11,7 @@ use pyo3::types::{PyDict, PyDictMethods, PyList, PyListMethods};
 pub(super) fn compiled_event_to_python_dict(
     event: &EventCompiled,
     py: Python<'_>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     match event {
         EventCompiled::Dialogue(dialogue) => {
@@ -111,7 +111,7 @@ pub(super) fn compiled_event_to_python_dict(
     Ok(dict.into())
 }
 
-fn condition_to_python(cond: &CondCompiled, py: Python<'_>) -> PyResult<PyObject> {
+fn condition_to_python(cond: &CondCompiled, py: Python<'_>) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     match cond {
         CondCompiled::Flag { flag_id, is_set } => {

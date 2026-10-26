@@ -58,7 +58,7 @@ fn rep_python_event_object_and_runtime_dict_preserve_compiled_data() {
             color: None,
         }),
     ];
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         for event in events {
             let object = event.to_python(py).unwrap();
             let from_object = object.call_method0(py, "to_dict").unwrap();
@@ -174,7 +174,7 @@ fn rep_python_raw_events_keep_all_fields_and_collect_cached_cycles() {
         json!({"type":"transition", "kind":"dissolve", "duration_ms":250, "color":"#000000"}),
         json!({"type":"set_character_position", "name":"Ava", "x":12, "y":34, "scale":1.25}),
     ];
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let json_module = py.import("json").unwrap();
         for input in events {
             let event: EventRaw = serde_json::from_value(input).unwrap();

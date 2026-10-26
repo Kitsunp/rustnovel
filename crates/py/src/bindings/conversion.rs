@@ -3,7 +3,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyDictMethods, PyList, PyListMethods};
 use visual_novel_engine::runtime::{CmpOp, UiState, UiView};
 
-pub fn ui_state_to_python(ui: &UiState, py: Python<'_>) -> PyResult<PyObject> {
+pub fn ui_state_to_python(ui: &UiState, py: Python<'_>) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     match &ui.view {
         UiView::Dialogue { speaker, text } => {

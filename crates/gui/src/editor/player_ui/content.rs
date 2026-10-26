@@ -198,7 +198,7 @@ pub fn render_dialogue_overlay(
                     .color(egui::Color32::from_rgb(180, 210, 255))
                     .size(layout.speaker_font_size),
             )
-            .wrap(true),
+            .wrap(),
         );
         ui.add_space(layout.speaker_text_gap);
         let text_height = (rect.height()
@@ -214,7 +214,7 @@ pub fn render_dialogue_overlay(
                     .color(egui::Color32::WHITE)
                     .size(layout.text_font_size),
             )
-            .wrap(true),
+            .wrap(),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let label = if text_complete {
@@ -357,7 +357,7 @@ pub fn render_choice_overlay(
                     .color(egui::Color32::WHITE)
                     .size(layout.prompt_font_size),
             )
-            .wrap(true),
+            .wrap(),
         );
         ui.add_space(layout.prompt_option_gap);
         egui::ScrollArea::vertical()
@@ -445,7 +445,7 @@ pub fn render_scene_overlay(
                 ))
                 .color(egui::Color32::WHITE),
             )
-            .wrap(true),
+            .wrap(),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button("Continue").clicked() {

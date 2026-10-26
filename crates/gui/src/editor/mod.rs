@@ -101,7 +101,7 @@ pub fn run_editor_with_project(
         options,
         Box::new(move |cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Box::new(EditorApp::new(initial_project.clone()))
+            Ok(Box::new(EditorApp::new(initial_project.clone())))
         }),
     )
 }

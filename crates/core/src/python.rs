@@ -3,7 +3,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-pub fn json_value_to_py<'py>(py: Python<'py>, value: &serde_json::Value) -> PyResult<PyObject> {
+pub fn json_value_to_py<'py>(py: Python<'py>, value: &serde_json::Value) -> PyResult<Py<PyAny>> {
     match value {
         serde_json::Value::Null => Ok(py.None()),
         serde_json::Value::Bool(value) => {

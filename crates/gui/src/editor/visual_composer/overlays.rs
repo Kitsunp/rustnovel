@@ -282,7 +282,7 @@ fn render_dialogue_overlay(
                     .color(egui::Color32::from_rgb(180, 210, 255))
                     .size(layout.speaker_font_size),
             )
-            .wrap(true),
+            .wrap(),
         );
         ui.add_space(layout.speaker_text_gap);
         let text_height = (rect.height()
@@ -297,7 +297,7 @@ fn render_dialogue_overlay(
                     .color(egui::Color32::WHITE)
                     .size(layout.text_font_size),
             )
-            .wrap(true),
+            .wrap(),
         );
     });
     if ui
@@ -342,7 +342,7 @@ fn render_choice_overlay(
                     .color(egui::Color32::WHITE)
                     .size(layout.prompt_font_size),
             )
-            .wrap(true),
+            .wrap(),
         );
         ui.add_space(layout.prompt_option_gap);
         egui::ScrollArea::vertical()

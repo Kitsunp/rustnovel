@@ -56,13 +56,13 @@ impl VnApp {
                             egui::RichText::new(message)
                                 .color(egui::Color32::from_rgb(130, 220, 160)),
                         )
-                        .wrap(false),
+                        .extend(),
                     );
                 }
                 if let Some(message) = &self.last_error {
                     ui.add(
                         egui::Label::new(egui::RichText::new(message).color(egui::Color32::RED))
-                            .wrap(false),
+                            .extend(),
                     );
                 }
             });
@@ -329,8 +329,7 @@ impl VnApp {
         self.render_audio_status(ui);
         ui.separator();
         ui.add(
-            egui::Label::new(format!("Save folder: {}", self.save_store.root().display()))
-                .wrap(true),
+            egui::Label::new(format!("Save folder: {}", self.save_store.root().display())).wrap(),
         );
         if dirty {
             self.persist_preferences();

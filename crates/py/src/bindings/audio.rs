@@ -105,7 +105,7 @@ impl PyAudio {
 pub(super) fn audio_commands_to_python(
     py: Python<'_>,
     commands: &[AudioCommand],
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     use pyo3::types::{PyDict, PyList};
     let list = PyList::empty(py);
     for cmd in commands {

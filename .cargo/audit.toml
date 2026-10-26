@@ -1,0 +1,14 @@
+[advisories]
+ignore = [
+    # Existing exception for the unmaintained transitive paste dependency.
+    "RUSTSEC-2024-0436",
+    # ttf-parser has no maintained release. GUI fonts are embedded; the software
+    # renderer only reads fixed OS font paths. Revisit before loading project fonts
+    # or when the font stack can migrate to skrifa without changing rendering.
+    # https://rustsec.org/advisories/RUSTSEC-2026-0192.html
+    "RUSTSEC-2026-0192",
+]
+
+[output]
+quiet = false
+deny = ["warnings"]
