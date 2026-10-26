@@ -8,6 +8,9 @@ mod theme_controls;
 #[path = "app_ui/theme_editor.rs"]
 mod theme_editor;
 
+#[cfg(test)]
+mod save_confirmation_tests;
+
 impl EditorWorkbench {
     pub fn ui(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top_menu_bar").show(ctx, |ui| {
@@ -168,18 +171,14 @@ impl EditorWorkbench {
             }
         }
         if !should_save {
+            if !self.show_save_confirm {
+                self.diff_dialog = None;
+            }
             return;
         }
 
-        if self.run_dry_validation() {
-            if let Some(path) = self.pending_save_path.clone() {
-                self.execute_save(&path, "");
-                self.toast = Some(ToastState::success("Saved successfully"));
-            }
-        } else {
-            self.toast = Some(ToastState::error(
-                "Save blocked: fix validation errors first",
-            ));
+        if let Some(path) = self.pending_save_path.clone() {
+            self.execute_save(&path, "");
         }
         self.diff_dialog = None;
         self.show_save_confirm = false;

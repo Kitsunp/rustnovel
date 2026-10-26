@@ -371,15 +371,25 @@ impl EditorWorkbench {
     }
 
     pub fn execute_save(&mut self, path: &std::path::Path, _content_unused: &str) {
+        match self.save_document(path) {
+            Ok(()) => self.toast = Some(ToastState::success("Saved successfully")),
+            Err(error) => {
+                tracing::error!("Failed to save: {error}");
+                self.toast = Some(ToastState::error(format!("Save failed: {error}")));
+            }
+        }
+    }
+
+    pub(super) fn save_document(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let path = std::path::absolute(path).map_err(|error| error.to_string())?;
         self.node_graph.commit_drag_positions();
         self.record_pending_editor_operation();
-        if let Err(e) = crate::editor::project_io::save_authoring_document(path, &self.node_graph) {
-            tracing::error!("Failed to save: {}", e);
-            self.toast = Some(ToastState::error(format!("Save failed: {}", e)));
-        } else {
-            self.saved_script_snapshot = Some(self.node_graph.to_script());
-            self.node_graph.clear_modified();
-        }
+        crate::editor::project_io::save_authoring_document(&path, &self.node_graph)
+            .map_err(|error| error.to_string())?;
+        self.pending_save_path = Some(path);
+        self.saved_script_snapshot = Some(self.node_graph.to_script());
+        self.node_graph.clear_modified();
+        Ok(())
     }
 
     pub fn prepare_save_confirmation(&mut self) {

@@ -245,16 +245,12 @@ impl EditorWorkbench {
         if !save {
             return Err("There are unsaved changes. Save the document to check this export, or use Save and export with Dry-run disabled.".into());
         }
-        self.node_graph.commit_drag_positions();
-        self.record_pending_editor_operation();
         self.node_graph
             .authoring_graph()
             .to_script_strict()
             .map_err(|error| format!("Cannot export the current document: {error}"))?;
-        visual_novel_engine::authoring::save_authoring_document(&current, self.document())
+        self.save_document(&current)
             .map_err(|error| format!("Could not save before export: {error}"))?;
-        self.saved_script_snapshot = Some(self.node_graph.to_script());
-        self.node_graph.clear_modified();
         Ok(())
     }
 }
