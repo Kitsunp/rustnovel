@@ -59,21 +59,26 @@ fn explicit_script_keeps_cli_paths_even_when_executable_has_bundle_files(
         dir.path().join("scripts").join("compiled.vnscript.json"),
         "{}",
     )?;
-    let script_path = PathBuf::from("custom").join("story.json");
-
-    let paths = resolve_launch_paths_for_exe_dir(
-        Some(script_path.clone()),
-        None,
-        None,
-        false,
-        Some(dir.path()),
-    );
-
-    assert_eq!(paths.script_path, script_path);
-    assert_eq!(paths.bundle_root, None);
-    assert_eq!(paths.assets_root, PathBuf::from("custom"));
-    assert!(!paths.require_manifest);
-    assert_eq!(paths.manifest_path, None);
+    for (script_path, expected_root) in [
+        (
+            PathBuf::from("custom").join("story.json"),
+            PathBuf::from("custom"),
+        ),
+        (PathBuf::from("story.json"), PathBuf::from(".")),
+    ] {
+        let paths = resolve_launch_paths_for_exe_dir(
+            Some(script_path.clone()),
+            None,
+            None,
+            false,
+            Some(dir.path()),
+        );
+        assert_eq!(paths.script_path, script_path);
+        assert_eq!(paths.bundle_root, None);
+        assert_eq!(paths.assets_root, expected_root);
+        assert!(!paths.require_manifest);
+        assert_eq!(paths.manifest_path, None);
+    }
     Ok(())
 }
 
