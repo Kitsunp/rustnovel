@@ -27,7 +27,7 @@ pub fn select_choice_index(
 struct RawVisualState {
     background: Option<String>,
     music: Option<String>,
-    characters: HashSet<String>,
+    characters: Vec<(String, Option<String>)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -157,7 +157,7 @@ pub fn enumerate_choice_routes_with_report(
     }
 
     let mut initial_state = RawSimulationState::default();
-    bootstrap_initial_state(script, start_ip, &mut initial_state);
+    apply_scene_at(script, start_ip, &mut initial_state);
     let mut stack = vec![RawRouteFrame {
         ip: start_ip,
         steps: 0,
@@ -210,6 +210,7 @@ pub fn enumerate_choice_routes_with_report(
                 next.steps = next.steps.saturating_add(1);
                 next.choice_depth = next.choice_depth.saturating_add(1);
                 next.ip = target_ip;
+                apply_scene_at(script, target_ip, &mut next.state);
                 next.choices.push(option_idx);
                 stack.push(next);
                 pushed = true;
@@ -234,6 +235,7 @@ pub fn enumerate_choice_routes_with_report(
                     continue;
                 };
                 next_ip = target_ip;
+                apply_scene_at(script, target_ip, &mut next.state);
             }
             EventRaw::JumpIf { cond, target } if eval_cond_raw(cond, &next.state) => {
                 let Some(target_ip) = script.labels.get(target).copied() else {
@@ -245,6 +247,7 @@ pub fn enumerate_choice_routes_with_report(
                     continue;
                 };
                 next_ip = target_ip;
+                apply_scene_at(script, target_ip, &mut next.state);
             }
             _ => {}
         }
@@ -282,7 +285,6 @@ pub fn simulate_raw_sequence(
     let mut state = RawSimulationState::default();
     let mut steps = 0usize;
     let mut choice_cursor = 0usize;
-    let mut visited = HashSet::new();
     let mut ip = match script.start_index() {
         Ok(idx) => idx,
         Err(err) => {
@@ -305,7 +307,7 @@ pub fn simulate_raw_sequence(
         );
         return report;
     }
-    bootstrap_initial_state(script, ip, &mut state);
+    apply_scene_at(script, ip, &mut state);
 
     loop {
         if steps >= max_steps {
@@ -321,14 +323,6 @@ pub fn simulate_raw_sequence(
                 RawSimulationStopReason::Finished,
                 None,
                 format!("Raw simulation finished in {steps} step(s)"),
-            );
-            return report;
-        }
-        if !visited.insert(raw_state_signature(ip, &state)) {
-            report.stop(
-                RawSimulationStopReason::LoopDetected,
-                Some(ip as u32),
-                format!("Raw simulation detected a repeated state at ip {ip}"),
             );
             return report;
         }
@@ -355,6 +349,7 @@ pub fn simulate_raw_sequence(
                     return report;
                 };
                 next_ip = target_ip;
+                apply_scene_at(script, target_ip, &mut state);
             }
             EventRaw::Choice(choice) => {
                 let Some(choice_idx) =
@@ -394,6 +389,7 @@ pub fn simulate_raw_sequence(
                     return report;
                 };
                 next_ip = target_ip;
+                apply_scene_at(script, target_ip, &mut state);
             }
             EventRaw::JumpIf { cond, target } if eval_cond_raw(cond, &state) => {
                 let Some(target_ip) = script.labels.get(target).copied() else {
@@ -405,6 +401,7 @@ pub fn simulate_raw_sequence(
                     return report;
                 };
                 next_ip = target_ip;
+                apply_scene_at(script, target_ip, &mut state);
             }
             _ => {}
         }
@@ -414,36 +411,50 @@ pub fn simulate_raw_sequence(
     }
 }
 
-fn route_frame_signature(frame: &RawRouteFrame) -> String {
-    raw_state_signature(frame.ip, &frame.state)
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct RawStateKey {
+    ip: usize,
+    flags: Vec<(String, bool)>,
+    vars: Vec<(String, i32)>,
+    background: Option<String>,
+    music: Option<String>,
+    characters: Vec<(String, Option<String>)>,
 }
 
-fn raw_state_signature(ip: usize, state: &RawSimulationState) -> String {
+fn route_frame_signature(frame: &RawRouteFrame) -> (Vec<usize>, RawStateKey) {
+    // Convergence across different decision paths is not a loop within a path.
+    (
+        frame.choices.clone(),
+        raw_state_signature(frame.ip, &frame.state),
+    )
+}
+
+fn raw_state_signature(ip: usize, state: &RawSimulationState) -> RawStateKey {
     let mut flags = state
         .flags
         .iter()
-        .map(|(key, value)| format!("{key}={value}"))
+        .map(|(key, value)| (key.clone(), *value))
         .collect::<Vec<_>>();
     flags.sort();
     let mut vars = state
         .vars
         .iter()
-        .map(|(key, value)| format!("{key}={value}"))
+        .map(|(key, value)| (key.clone(), *value))
         .collect::<Vec<_>>();
     vars.sort();
-    let mut characters = state.visual.characters.iter().cloned().collect::<Vec<_>>();
+    let mut characters = state.visual.characters.clone();
     characters.sort();
-    format!(
-        "ip={ip};bg={};music={};flags={};vars={};chars={}",
-        state.visual.background.as_deref().unwrap_or(""),
-        state.visual.music.as_deref().unwrap_or(""),
-        flags.join(","),
-        vars.join(","),
-        characters.join(",")
-    )
+    RawStateKey {
+        ip,
+        flags,
+        vars,
+        background: state.visual.background.clone(),
+        music: state.visual.music.clone(),
+        characters,
+    }
 }
 
-fn bootstrap_initial_state(script: &ScriptRaw, ip: usize, state: &mut RawSimulationState) {
+fn apply_scene_at(script: &ScriptRaw, ip: usize, state: &mut RawSimulationState) {
     if let Some(event @ EventRaw::Scene(_)) = script.events.get(ip) {
         apply_state_mutations(event, state);
     }
@@ -461,25 +472,37 @@ fn apply_state_mutations(event: &EventRaw, state: &mut RawSimulationState) {
             if !scene.characters.is_empty() {
                 state.visual.characters.clear();
                 for character in &scene.characters {
-                    state.visual.characters.insert(character.name.clone());
+                    state
+                        .visual
+                        .characters
+                        .push((character.name.clone(), character.expression.clone()));
                 }
             }
         }
         EventRaw::Patch(patch) => {
-            if let Some(bg) = &patch.background {
-                state.visual.background = Some(bg.clone());
-            }
-            if let Some(music) = &patch.music {
-                state.visual.music = Some(music.clone());
-            }
-            for removed in &patch.remove {
-                state.visual.characters.remove(removed);
+            crate::visual::apply_path_patch(&mut state.visual.background, &patch.background);
+            crate::visual::apply_path_patch(&mut state.visual.music, &patch.music);
+            state
+                .visual
+                .characters
+                .retain(|(name, _)| !patch.remove.contains(name));
+            for updated in &patch.update {
+                let mut matches = state
+                    .visual
+                    .characters
+                    .iter_mut()
+                    .filter(|(name, _)| name == &updated.name);
+                if let (Some((_, current)), None) = (matches.next(), matches.next()) {
+                    if let Some(expression) = &updated.expression {
+                        *current = Some(expression.clone());
+                    }
+                }
             }
             for added in &patch.add {
-                state.visual.characters.insert(added.name.clone());
-            }
-            for updated in &patch.update {
-                state.visual.characters.insert(updated.name.clone());
+                let instance = (added.name.clone(), added.expression.clone());
+                if !state.visual.characters.contains(&instance) {
+                    state.visual.characters.push(instance);
+                }
             }
         }
         EventRaw::AudioAction(action) => {
@@ -496,7 +519,14 @@ fn apply_state_mutations(event: &EventRaw, state: &mut RawSimulationState) {
             }
         }
         EventRaw::SetCharacterPosition(pos) => {
-            state.visual.characters.insert(pos.name.clone());
+            if !state
+                .visual
+                .characters
+                .iter()
+                .any(|(name, _)| name == &pos.name)
+            {
+                state.visual.characters.push((pos.name.clone(), None));
+            }
         }
         EventRaw::SetFlag { key, value } => {
             state.flags.insert(key.clone(), *value);

@@ -3,6 +3,7 @@ mod decorators;
 mod flow;
 mod parser;
 mod postprocess;
+mod publication;
 mod syntax;
 mod types;
 
@@ -11,7 +12,6 @@ pub use types::{
     ImportReport,
 };
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::{VnError, VnResult};
@@ -65,28 +65,26 @@ pub fn import_renpy_project(options: ImportRenpyOptions) -> VnResult<ImportRepor
         )));
     }
 
+    let prepared = publication::ImportOutput::new(&output_root)?;
+    let prepared_root = prepared.root();
     let asset_issues = assets::rewrite_and_copy_assets(
         &project_root,
         &scan_root,
-        &output_root,
+        &prepared_root,
         &mut state.events,
         &mut state.trace_seq,
     )?;
     state.issues.extend(asset_issues);
 
-    let script = ScriptRaw::new(state.events.clone(), state.labels.clone());
+    let script = ScriptRaw::new(
+        std::mem::take(&mut state.events),
+        std::mem::take(&mut state.labels),
+    );
     let json = script
         .to_json()
         .map_err(|e| invalid_import(format!("serialize imported script: {e}")))?;
 
-    fs::create_dir_all(&output_root).map_err(|e| {
-        invalid_import(format!(
-            "create output dir '{}': {e}",
-            output_root.display()
-        ))
-    })?;
-
-    let script_path = output_root.join("main.json");
+    let script_path = prepared_root.join("main.json");
     crate::atomic_io::atomic_replace(&script_path, json.as_bytes())
         .map_err(|e| invalid_import(format!("write '{}': {e}", script_path.display())))?;
 
@@ -95,8 +93,8 @@ pub fn import_renpy_project(options: ImportRenpyOptions) -> VnResult<ImportRepor
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "renpy_import".to_string());
     let mut manifest = ProjectManifest::new(&project_name, "renpy_import");
-    assets::register_imported_assets(&output_root, &script.events, &mut manifest);
-    let manifest_path = output_root.join("project.vnm");
+    assets::register_imported_assets(&prepared_root, &script.events, &mut manifest);
+    let manifest_path = prepared_root.join("project.vnm");
     manifest
         .save(&manifest_path)
         .map_err(|e| invalid_import(format!("write '{}': {e}", manifest_path.display())))?;
@@ -113,8 +111,8 @@ pub fn import_renpy_project(options: ImportRenpyOptions) -> VnResult<ImportRepor
         exclude_patterns: options.exclude_patterns.clone(),
         files_scanned: files.len(),
         files_parsed: files.len(),
-        events_generated: state.events.len(),
-        labels_generated: state.labels.len(),
+        events_generated: script.events.len(),
+        labels_generated: script.labels.len(),
         degraded_events: state.degraded_events,
         issues_by_code: summarize_issues_by_code(&state.issues),
         issues_by_area: summarize_issues_by_area(&state.issues),
@@ -126,8 +124,9 @@ pub fn import_renpy_project(options: ImportRenpyOptions) -> VnResult<ImportRepor
         .unwrap_or_else(|| output_root.join("import_report.json"));
     let report_json = serde_json::to_string_pretty(&report)
         .map_err(|e| invalid_import(format!("serialize import report: {e}")))?;
-    crate::atomic_io::atomic_replace(&report_path, report_json.as_bytes())
+    crate::atomic_io::atomic_replace(&prepared.report_path(), report_json.as_bytes())
         .map_err(|e| invalid_import(format!("write '{}': {e}", report_path.display())))?;
+    prepared.publish(&output_root, &report_path)?;
 
     Ok(report)
 }
