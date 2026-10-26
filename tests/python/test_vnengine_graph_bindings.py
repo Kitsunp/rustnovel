@@ -29,6 +29,26 @@ def minimal_pe_exe() -> bytes:
     return bytes(payload)
 
 
+def write_export_manifest(project: Path, name: str) -> None:
+    (project / "project.vnm").write_text(
+        f"""manifest_schema_version = "1.0"
+
+[metadata]
+name = {json.dumps(name)}
+author = "QA"
+version = "0.1.0"
+
+[settings]
+resolution = [1280, 720]
+default_language = "en"
+supported_languages = ["en"]
+entry_point = "main.json"
+
+[assets]""",
+        encoding="utf-8",
+    )
+
+
 class GuiBindingTests(unittest.TestCase):
     def test_run_visual_novel_rejects_invalid_json(self):
         import visual_novel_engine as vn
@@ -52,27 +72,7 @@ class GuiBindingTests(unittest.TestCase):
         with workspace_tempdir("export-bundle-exe") as root:
             project = root / "project"
             (project / "runtime").mkdir(parents=True)
-            (project / "project.vnm").write_text(
-                "\n".join(
-                    [
-                        'manifest_schema_version = "1.0"',
-                        "",
-                        "[metadata]",
-                        'name = "Python Export"',
-                        'author = "QA"',
-                        'version = "0.1.0"',
-                        "",
-                        "[settings]",
-                        "resolution = [1280, 720]",
-                        'default_language = "en"',
-                        'supported_languages = ["en"]',
-                        'entry_point = "main.json"',
-                        "",
-                        "[assets]",
-                    ]
-                ),
-                encoding="utf-8",
-            )
+            write_export_manifest(project, "Python Export")
             (project / "main.json").write_text(
                 json.dumps(
                     {
@@ -168,27 +168,7 @@ class GuiBindingTests(unittest.TestCase):
         with workspace_tempdir("export-bundle-error") as root:
             project = root / "project"
             project.mkdir(parents=True)
-            (project / "project.vnm").write_text(
-                "\n".join(
-                    [
-                        'manifest_schema_version = "1.0"',
-                        "",
-                        "[metadata]",
-                        'name = "Python Export Error"',
-                        'author = "QA"',
-                        'version = "0.1.0"',
-                        "",
-                        "[settings]",
-                        "resolution = [1280, 720]",
-                        'default_language = "en"',
-                        'supported_languages = ["en"]',
-                        'entry_point = "main.json"',
-                        "",
-                        "[assets]",
-                    ]
-                ),
-                encoding="utf-8",
-            )
+            write_export_manifest(project, "Python Export Error")
             (project / "main.json").write_text(
                 json.dumps(
                     {

@@ -76,7 +76,7 @@ class Dialogue:
         return {"type": "dialogue", "speaker": self.speaker, "text": self.text}
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "Dialogue":
+    def from_dict(cls, data: Mapping[str, Any]) -> Dialogue:
         return cls(speaker=str(data["speaker"]), text=str(data["text"]))
 
 
@@ -91,7 +91,7 @@ class ChoiceOption:
         return {"text": self.text, "target": self.target}
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "ChoiceOption":
+    def from_dict(cls, data: Mapping[str, Any]) -> ChoiceOption:
         return cls(
             text=str(_require_field(data, "text", "ChoiceOption")),
             target=str(_require_field(data, "target", "ChoiceOption")),
@@ -113,7 +113,7 @@ class Choice:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "Choice":
+    def from_dict(cls, data: Mapping[str, Any]) -> Choice:
         options = [
             ChoiceOption.from_dict(item)
             for item in _require_list_field(data, "options", "Choice")
@@ -145,7 +145,7 @@ class CharacterPlacement:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "CharacterPlacement":
+    def from_dict(cls, data: Mapping[str, Any]) -> CharacterPlacement:
         expression = data.get("expression")
         position = data.get("position")
         return cls(
@@ -181,7 +181,7 @@ class Scene:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "Scene":
+    def from_dict(cls, data: Mapping[str, Any]) -> Scene:
         characters = [
             CharacterPlacement.from_dict(item) for item in data.get("characters", [])
         ]
@@ -214,7 +214,7 @@ class CharacterPatch:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "CharacterPatch":
+    def from_dict(cls, data: Mapping[str, Any]) -> CharacterPatch:
         expression = data.get("expression")
         position = data.get("position")
         return cls(
@@ -257,7 +257,7 @@ class Patch:
         return result
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "Patch":
+    def from_dict(cls, data: Mapping[str, Any]) -> Patch:
         add = [CharacterPlacement.from_dict(item) for item in data.get("add", [])]
         update = [CharacterPatch.from_dict(item) for item in data.get("update", [])]
         remove = [str(item) for item in data.get("remove", [])]
@@ -297,7 +297,7 @@ class AudioAction:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "AudioAction":
+    def from_dict(cls, data: Mapping[str, Any]) -> AudioAction:
         return cls(
             channel=str(data.get("channel_name", data["channel"])),
             action=str(data.get("action_name", data["action"])),
@@ -335,7 +335,7 @@ class Transition:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "Transition":
+    def from_dict(cls, data: Mapping[str, Any]) -> Transition:
         return cls(
             kind=str(data.get("kind_name", data["kind"])),
             duration_ms=_require_int(data["duration_ms"], "Transition 'duration_ms'"),
@@ -362,7 +362,7 @@ class SetCharacterPosition:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "SetCharacterPosition":
+    def from_dict(cls, data: Mapping[str, Any]) -> SetCharacterPosition:
         return cls(
             name=str(data["name"]),
             x=_require_int(data["x"], "SetCharacterPosition 'x'"),
@@ -384,7 +384,7 @@ class ExtCall:
         return {"type": "ext_call", "command": self.command, "args": list(self.args)}
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "ExtCall":
+    def from_dict(cls, data: Mapping[str, Any]) -> ExtCall:
         return cls(
             command=str(data["command"]),
             args=[str(item) for item in data.get("args", [])],
@@ -401,7 +401,7 @@ class Jump:
         return {"type": "jump", "target": self.target}
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "Jump":
+    def from_dict(cls, data: Mapping[str, Any]) -> Jump:
         return cls(target=str(data["target"]))
 
 
@@ -416,7 +416,7 @@ class SetFlag:
         return {"type": "set_flag", "key": self.key, "value": self.value}
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "SetFlag":
+    def from_dict(cls, data: Mapping[str, Any]) -> SetFlag:
         value = data["value"]
         if not isinstance(value, bool):
             raise ValueError(
@@ -436,7 +436,7 @@ class SetVar:
         return {"type": "set_var", "key": self.key, "value": self.value}
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "SetVar":
+    def from_dict(cls, data: Mapping[str, Any]) -> SetVar:
         value = data["value"]
         return cls(key=str(data["key"]), value=_require_int(value, "SetVar 'value'"))
 
@@ -450,7 +450,7 @@ class CondFlag:
         return {"kind": "flag", "key": self.key, "is_set": self.is_set}
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "CondFlag":
+    def from_dict(cls, data: Mapping[str, Any]) -> CondFlag:
         value = data["is_set"]
         if not isinstance(value, bool):
             raise ValueError(
@@ -469,7 +469,7 @@ class CondVarCmp:
         return {"kind": "var_cmp", "key": self.key, "op": self.op, "value": self.value}
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "CondVarCmp":
+    def from_dict(cls, data: Mapping[str, Any]) -> CondVarCmp:
         value = data["value"]
         return cls(
             key=str(data["key"]),
@@ -492,7 +492,7 @@ class JumpIf:
         return {"type": "jump_if", "cond": self.cond.to_dict(), "target": self.target}
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "JumpIf":
+    def from_dict(cls, data: Mapping[str, Any]) -> JumpIf:
         cond = cond_from_dict(data.get("cond", {}))
         return cls(cond=cond, target=str(data["target"]))
 
@@ -513,18 +513,18 @@ Event = Union[
 ]
 
 
-from .script_types import (  # noqa: E402,F401  (loaded after event classes exist)
+from ._types_public import TYPES_PUBLIC_API
+from .script_types import (  # noqa: F401  (loaded after event classes exist)
     LEGACY_READ_ONLY,
     MIGRATING,
     STRICT_CURRENT,
-    Script,
     SchemaPolicy,
+    Script,
     cond_from_dict,
     event_from_dict,
     normalize_character_patches,
     normalize_characters,
     normalize_choice_options,
 )
-from ._types_public import TYPES_PUBLIC_API  # noqa: E402
 
-__all__ = TYPES_PUBLIC_API
+__all__ = TYPES_PUBLIC_API  # noqa: PLE0605 - Shared export registry is a list of names.

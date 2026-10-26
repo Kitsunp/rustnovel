@@ -4,16 +4,15 @@ import unittest
 def load_engine():
     try:
         from visual_novel_engine import PyEngine  # type: ignore
-    except Exception as exc:  # pragma: no cover - environment dependent
+    except (ImportError, OSError) as exc:  # pragma: no cover - environment dependent
         return None, exc
     return PyEngine, None
 
 
 class ExampleUsageTests(unittest.TestCase):
     def _supports_event(self, engine_cls, event_name: str) -> bool:
-        try:
-            probe = engine_cls(
-                """
+        probe = engine_cls(
+            """
                 {
                   "script_schema_version": "1.0",
                   "events": [
@@ -22,14 +21,9 @@ class ExampleUsageTests(unittest.TestCase):
                   "labels": {"start": 0}
                 }
                 """
-            )
-        except Exception:
-            return False
+        )
         if hasattr(probe, "supported_event_types"):
-            try:
-                return event_name in set(probe.supported_event_types())
-            except Exception:
-                return False
+            return event_name in set(probe.supported_event_types())
         return False
 
     def test_basic_engine_example(self):
