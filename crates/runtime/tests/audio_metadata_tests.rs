@@ -1,7 +1,7 @@
 use std::f32::consts::PI;
 use std::time::Duration;
 
-use vnengine_runtime::{audio_duration, MemoryAssetStore};
+use vnengine_runtime::{audio_duration, audio_duration_from_bytes, MemoryAssetStore};
 
 #[test]
 fn audio_duration_reports_decodable_wav_and_fails_for_invalid_audio() {
@@ -27,6 +27,15 @@ fn audio_duration_reports_decodable_wav_and_fails_for_invalid_audio() {
     assert!(
         (ogg_duration.as_secs_f32() - 0.25).abs() < 0.02,
         "{ogg_duration:?}"
+    );
+    assert_eq!(
+        audio_duration_from_bytes(
+            std::sync::Arc::from(include_bytes!("fixtures/tone.ogg").as_slice()),
+            "tone.ogg"
+        )
+        .unwrap(),
+        Some(ogg_duration),
+        "metadata from shared bytes must match the asset-store API"
     );
 }
 

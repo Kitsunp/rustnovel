@@ -4,10 +4,7 @@ use std::path::Path;
 use eframe::egui;
 use visual_novel_engine::{EntityId, EntityKind, SceneState};
 
-use crate::editor::image_asset_cache::{
-    image_failure_message, normalize_asset_path, scene_stage_cache_key,
-    should_retry_missing_image_failure,
-};
+use crate::editor::image_asset_cache::{ImageTextureCache, ImageView};
 use crate::editor::resource_service::EditorResourceService;
 use crate::editor::visual_composer::scene_entity_object_id;
 use crate::editor::visual_composer::LayerOverride;
@@ -33,7 +30,6 @@ pub struct SceneStagePainter<'a> {
     image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     image_failures: &'a mut HashMap<String, String>,
     resource_service: &'a mut EditorResourceService,
-    asset_store: Option<vnengine_assets::AssetStore>,
     layer_overrides: Option<&'a std::collections::BTreeMap<String, LayerOverride>>,
     entity_object_ids: HashMap<u32, String>,
     background_fit: crate::editor::BackgroundFit,
@@ -68,7 +64,6 @@ impl<'a> SceneStagePainter<'a> {
             image_cache,
             image_failures,
             resource_service,
-            asset_store: None,
             layer_overrides: None,
             entity_object_ids: HashMap::new(),
             background_fit: crate::editor::BackgroundFit::default(),
@@ -393,137 +388,13 @@ impl<'a> SceneStagePainter<'a> {
         ctx: &egui::Context,
         asset_path: &str,
     ) -> Option<egui::TextureId> {
-        let asset_path = normalize_asset_path(asset_path);
-        let project_root = self.project_root?;
-        let request_cache_key =
-            scene_stage_cache_key(project_root, self.preview_quality, &asset_path);
-        crate::editor::image_asset_cache::prune_image_cache_versions(
-            self.image_cache,
-            &request_cache_key,
-        );
-        crate::editor::image_asset_cache::prune_image_cache_versions(
-            self.image_failures,
-            &request_cache_key,
-        );
-        if let Some(texture) = self.image_cache.get(&request_cache_key) {
-            self.resource_service
-                .record_texture_use(texture.id(), ctx.frame_nr());
-            return Some(texture.id());
-        }
-        if let Some(should_retry) = self
-            .image_failures
-            .get(&request_cache_key)
-            .map(|failure| should_retry_missing_image_failure(failure, project_root, &asset_path))
-        {
-            if should_retry {
-                self.image_failures.remove(&request_cache_key);
-            } else {
-                return None;
-            }
-        }
-
-        self.asset_store(project_root, &asset_path, &request_cache_key)?;
-        let Some(store) = self.asset_store.as_ref() else {
-            self.image_failures.insert(
-                request_cache_key,
-                format!("image '{asset_path}' asset store initialization failed"),
-            );
-            return None;
-        };
-        let resolved_asset_path = match store.resolve_image_path(&asset_path) {
-            Ok(path) => normalize_asset_path(&path),
-            Err(err) => {
-                self.image_failures
-                    .insert(request_cache_key, image_failure_message(&asset_path, &err));
-                return None;
-            }
-        };
-        let cache_key =
-            scene_stage_cache_key(project_root, self.preview_quality, &resolved_asset_path);
-        crate::editor::image_asset_cache::prune_image_cache_versions(self.image_cache, &cache_key);
-        crate::editor::image_asset_cache::prune_image_cache_versions(
-            self.image_failures,
-            &cache_key,
-        );
-        if let Some(texture) = self.image_cache.get(&cache_key) {
-            let texture = texture.clone();
-            self.resource_service
-                .record_texture_use(texture.id(), ctx.frame_nr());
-            if request_cache_key != cache_key {
-                self.image_cache.insert(request_cache_key, texture.clone());
-            }
-            return Some(texture.id());
-        }
-        if self.image_failures.contains_key(&cache_key) {
-            return None;
-        }
-
-        let image = self
-            .load_image(project_root, &resolved_asset_path, &cache_key)
-            .ok()?;
-        let (size, pixels) = self.preview_quality.scaled_image(image.size, &image.pixels);
-        let color_image = egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_ref());
-        let texture = ctx.load_texture(
-            format!("scene_stage::{cache_key}"),
-            color_image,
-            self.preview_quality.texture_options(),
-        );
-        let id = texture.id();
-        self.resource_service.record_texture_use(id, ctx.frame_nr());
-        if request_cache_key != cache_key {
-            self.image_cache.insert(request_cache_key, texture.clone());
-        }
-        self.image_cache.insert(cache_key, texture);
-        Some(id)
-    }
-
-    fn load_image(
-        &mut self,
-        project_root: &Path,
-        asset_path: &str,
-        failure_key: &str,
-    ) -> Result<vnengine_assets::LoadedImage, ()> {
-        self.asset_store(project_root, asset_path, failure_key)
-            .ok_or(())?;
-        match self
-            .resource_service
-            .image_for_view(project_root, asset_path, "scene_stage")
-        {
-            Ok(image) => Ok(image),
-            Err(err) => {
-                self.image_failures.insert(
-                    failure_key.to_string(),
-                    format!("image '{asset_path}' load failed: {err}"),
-                );
-                Err(())
-            }
-        }
-    }
-
-    fn asset_store(
-        &mut self,
-        project_root: &Path,
-        asset_path: &str,
-        failure_key: &str,
-    ) -> Option<&vnengine_assets::AssetStore> {
-        if self.asset_store.is_none() {
-            self.asset_store = match vnengine_assets::AssetStore::new(
-                project_root.to_path_buf(),
-                vnengine_assets::SecurityMode::Trusted,
-                None,
-                false,
-            ) {
-                Ok(store) => Some(store),
-                Err(err) => {
-                    self.image_failures.insert(
-                        failure_key.to_string(),
-                        format!("image '{asset_path}' asset store initialization failed: {err}"),
-                    );
-                    None
-                }
-            };
-        }
-        self.asset_store.as_ref()
+        ImageTextureCache::new(self.image_cache, self.image_failures, self.resource_service)
+            .texture(
+                ctx,
+                self.project_root?,
+                asset_path,
+                ImageView::Scene(self.preview_quality),
+            )
     }
 }
 

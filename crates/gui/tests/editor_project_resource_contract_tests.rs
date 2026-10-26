@@ -436,13 +436,17 @@ fn decoded_image_cache_multiview_and_fingerprint_invalidation() {
     let mut service = EditorResourceService::new();
 
     let first = service
-        .image_for_view(tmp.path(), "assets/bg.png", "browser")
+        .image_for_view_shared(tmp.path(), "assets/bg.png", "browser")
         .expect("first image");
     let decode_ms_after_first = service.metrics().decode_ms;
     let cached = service
-        .image_for_view(tmp.path(), "assets/bg.png", "composer")
+        .image_for_view_shared(tmp.path(), "assets/bg.png", "composer")
         .expect("cached image");
     assert_eq!(cached.pixels, first.pixels);
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &cached),
+        "views must share the decoded pixel buffer"
+    );
     assert_eq!(service.metrics().decode_ms, decode_ms_after_first);
 
     fs::write(&path, tiny_png([0, 0, 255, 255])).expect("new png");
@@ -450,6 +454,10 @@ fn decoded_image_cache_multiview_and_fingerprint_invalidation() {
         .image_for_view(tmp.path(), "assets/bg.png", "player")
         .expect("second image");
     assert_ne!(first.pixels, second.pixels);
+    assert_eq!(
+        first.pixels, cached.pixels,
+        "reloading must preserve images already borrowed by a view"
+    );
     assert!(service.metrics().evictions >= 1);
 }
 

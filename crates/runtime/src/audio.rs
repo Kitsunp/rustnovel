@@ -517,7 +517,11 @@ impl Audio for SilentAudio {
 }
 
 pub fn audio_duration(assets: &dyn AssetStore, id: &str) -> Result<Option<Duration>, String> {
-    let data: Arc<[u8]> = assets.load_bytes(id)?.into();
+    audio_duration_from_bytes(assets.load_bytes(id)?.into(), id)
+}
+
+/// Reads duration from an existing shared buffer without an intermediate store.
+pub fn audio_duration_from_bytes(data: Arc<[u8]>, id: &str) -> Result<Option<Duration>, String> {
     let cursor = Cursor::new(Arc::clone(&data));
     let decoder =
         Decoder::new(cursor).map_err(|e| format!("Failed to decode audio '{id}': {e}"))?;
