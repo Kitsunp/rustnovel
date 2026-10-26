@@ -100,8 +100,9 @@ pub(super) fn default_assets_root(script_path: &Path, bundle_root: Option<&Path>
     }
     script_path
         .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("assets"))
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 pub(super) fn print_help() {

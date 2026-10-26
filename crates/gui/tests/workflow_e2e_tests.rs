@@ -138,6 +138,25 @@ fn imported_project_can_be_edited_saved_exported_and_run_by_the_real_player() {
         .unwrap();
     assert_eq!(imported, again);
     assert!(editor.prepare_player_mode());
+    let local_report = tmp.path().join("relative-player-smoke.json");
+    let local_player = Command::new(env!("CARGO_BIN_EXE_vn_player"))
+        .current_dir(&project)
+        .arg("main.json")
+        .arg("--smoke-report")
+        .arg(&local_report)
+        .arg("--preferences-path")
+        .arg(tmp.path().join("local-preferences.json"))
+        .output()
+        .unwrap();
+    assert!(
+        local_player.status.success(),
+        "local player stdout={} stderr={}",
+        String::from_utf8_lossy(&local_player.stdout),
+        String::from_utf8_lossy(&local_player.stderr)
+    );
+    let local_smoke: serde_json::Value =
+        serde_json::from_slice(&fs::read(local_report).unwrap()).unwrap();
+    assert_eq!(local_smoke["status"], "passed", "{local_smoke}");
     editor.execute_save(&project.join("main.json"), "");
     assert!(!editor.node_graph.is_modified());
     let bundle = tmp.path().join("Exported game with spaces");
