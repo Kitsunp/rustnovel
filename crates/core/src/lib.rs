@@ -13,6 +13,7 @@ mod event_behavior;
 mod event_signature;
 mod execution_contract;
 mod graph;
+mod hashing;
 mod localization;
 pub mod manifest;
 mod migration;
