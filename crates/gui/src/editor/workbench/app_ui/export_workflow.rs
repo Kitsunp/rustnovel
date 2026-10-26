@@ -226,6 +226,7 @@ impl EditorWorkbench {
             });
         let pending_drag = self.node_graph.dragging_node.is_some();
         let changed = pending_drag
+            || (!has_saved_layout && !self.node_graph.authoring_session.dirty_flags().is_clean())
             || stored.as_ref().is_none_or(|document| {
                 (if has_saved_layout {
                     !document
