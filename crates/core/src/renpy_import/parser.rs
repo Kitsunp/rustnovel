@@ -383,6 +383,7 @@ fn count_indent(line: &str) -> usize {
         match ch {
             ' ' => count += 1,
             '\t' => count += 4,
+            ch if ch.is_whitespace() => count += if ch == '\u{3000}' { 2 } else { 1 },
             _ => break,
         }
     }

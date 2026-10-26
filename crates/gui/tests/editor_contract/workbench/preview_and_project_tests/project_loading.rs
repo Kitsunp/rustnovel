@@ -241,6 +241,7 @@ entry_point = "main.json"
 fn load_standalone_script_replaces_previous_project_root_and_manifest_state() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);
+    workbench.composer_preview_mode = crate::editor::ComposerPreviewMode::SelectedRoute;
     let dir = tempdir().expect("tempdir");
     let first_root = dir.path().join("first_project");
     let second_root = dir.path().join("second_project");
@@ -304,7 +305,16 @@ entry_point = "main.json"
     );
     assert!(workbench.manifest.is_some());
 
+    workbench.loaded_repro_case = Some(visual_novel_engine::ReproCase::new("old", workbench.current_script.clone().unwrap()));
+    workbench.show_fix_confirm = true;
+    workbench.imported_report_untrusted = true;
+    workbench.selected_entity = Some(99);
+
     workbench.load_script(second_root.join("main.json"));
+    assert!(workbench.loaded_repro_case.is_none());
+    assert!(!workbench.show_fix_confirm);
+    assert!(!workbench.imported_report_untrusted);
+    assert!(workbench.selected_entity.is_none());
 
     assert_eq!(
         workbench.project_root.as_deref(),
@@ -333,6 +343,14 @@ entry_point = "main.json"
         )),
         "preview scene should come from the newly loaded script"
     );
+    fs::remove_file(first_root.join("main.json")).expect("remove fixture entry script");
+    workbench.load_project_with_status(first_root.join("project.vnm"), false).unwrap();
+    assert!(workbench.node_graph.is_empty(), "a project without an entry script must not keep the previous graph");
+    assert!(workbench.engine.is_none());
+    assert!(workbench.current_script.is_none());
+    assert!(workbench.scene.iter().next().is_none());
+    assert!(workbench.pending_save_path.is_none());
+    assert_eq!(workbench.node_graph.authoring_session.undo_delta_count(), 0);
 }
 
 #[test]

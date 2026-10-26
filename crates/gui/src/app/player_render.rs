@@ -196,7 +196,7 @@ impl VnApp {
         ui.painter().rect_stroke(
             rect,
             layout.corner_radius,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(130)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(130)),
         );
 
         let mut should_advance = false;
@@ -222,7 +222,7 @@ impl VnApp {
                         .color(egui::Color32::WHITE)
                         .size(layout.text_font_size),
                 )
-                .wrap(true),
+                .wrap(),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
@@ -272,7 +272,7 @@ impl VnApp {
         ui.painter().rect_stroke(
             layout.panel,
             corner_radius,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(120)),
         );
 
         let mut selected = None;
@@ -286,7 +286,7 @@ impl VnApp {
                         .strong()
                         .size(layout.prompt_font_size),
                 )
-                .wrap(true),
+                .wrap(),
             );
             ui.add_space(layout.prompt_option_gap);
             egui::ScrollArea::vertical()
@@ -343,7 +343,7 @@ impl VnApp {
                     ))
                     .color(egui::Color32::WHITE),
                 )
-                .wrap(true),
+                .wrap(),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Continue").clicked() {

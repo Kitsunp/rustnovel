@@ -1,13 +1,10 @@
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{self, ExitCode};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use visual_novel_engine::{
     compute_script_id, load_runtime_script_from_entry, resolve_layout, run_repro_case,
     runtime::{Engine, ScriptCompiled, UiTrace},
@@ -18,6 +15,8 @@ use visual_novel_engine::{
 use vnengine_assets::{AssetEntry, AssetManifest};
 use walkdir::WalkDir;
 
+#[path = "vnengine/asset_import.rs"]
+mod asset_import;
 #[path = "vnengine/atomic_io.rs"]
 mod atomic_io;
 #[path = "vnengine/authoring.rs"]
@@ -48,6 +47,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Import a resource through the shared project service.
+    Asset {
+        #[command(subcommand)]
+        command: asset_import::AssetCommand,
+    },
     /// Validate a script JSON file.
     Validate { script: PathBuf },
     /// Validate editor/authoring graph semantics from a script JSON file.
@@ -391,6 +395,16 @@ fn main() -> ExitCode {
                     data,
                     error: None,
                 });
+            } else if !json {
+                if let Some(data) = data {
+                    match serde_json::to_string_pretty(&data) {
+                        Ok(text) => println!("{text}"),
+                        Err(err) => {
+                            eprintln!("failed to serialize command output: {err}");
+                            return ExitCode::from(2);
+                        }
+                    }
+                }
             }
             ExitCode::SUCCESS
         }
@@ -416,6 +430,9 @@ fn classify_error(err: &anyhow::Error) -> (&'static str, u8) {
         cause
             .downcast_ref::<visual_novel_engine::VnError>()
             .is_some()
+            || cause
+                .downcast_ref::<visual_novel_engine::SaveError>()
+                .is_some()
     }) {
         ("engine_error", 2)
     } else if err

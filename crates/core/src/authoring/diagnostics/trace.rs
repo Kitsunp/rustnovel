@@ -456,14 +456,19 @@ fn normalize_semantic_value(value: &str) -> String {
     value.trim().replace('\\', "/")
 }
 
-fn normalize_trace_part(value: &str) -> String {
-    let normalized = normalize_semantic_value(value);
-    let mut out = normalized
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-        .collect::<String>();
-    while out.contains("__") {
-        out = out.replace("__", "_");
+pub(in crate::authoring) fn normalize_trace_part(value: &str) -> String {
+    let mut out = String::new();
+    let mut separator = false;
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() {
+            if separator && !out.is_empty() {
+                out.push('_');
+            }
+            out.push(char::from(byte));
+            separator = false;
+        } else {
+            separator = true;
+        }
     }
-    out.trim_matches('_').to_string()
+    out
 }

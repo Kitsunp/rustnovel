@@ -5,11 +5,14 @@ use eframe::egui;
 use visual_novel_engine::manifest::ProjectManifest;
 
 use crate::editor::image_asset_cache::{
-    image_failure_message, normalize_asset_path, should_retry_missing_image_failure,
-    thumbnail_cache_key,
+    normalize_asset_path, record_asset_failure, ImageTextureCache, ImageView,
 };
 use crate::editor::resource_service::EditorResourceService;
-use crate::editor::{AssetImportKind, PreviewQuality};
+use crate::editor::AssetImportKind;
+
+#[cfg(test)]
+#[path = "asset_browser/tests.rs"]
+mod tests;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AssetBrowserAction {
@@ -36,7 +39,7 @@ pub struct AssetBrowserPanel<'a> {
     image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     image_failures: &'a mut HashMap<String, String>,
     resource_service: &'a mut EditorResourceService,
-    asset_store: Option<vnengine_assets::AssetStore>,
+    audio_playback: Option<visual_novel_runtime::MusicPlayback<'a>>,
 }
 
 impl<'a> AssetBrowserPanel<'a> {
@@ -53,8 +56,16 @@ impl<'a> AssetBrowserPanel<'a> {
             image_cache,
             image_failures,
             resource_service,
-            asset_store: None,
+            audio_playback: None,
         }
+    }
+
+    pub fn with_audio_playback(
+        mut self,
+        playback: Option<visual_novel_runtime::MusicPlayback<'a>>,
+    ) -> Self {
+        self.audio_playback = playback;
+        self
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) -> Vec<AssetBrowserAction> {
@@ -97,9 +108,12 @@ impl<'a> AssetBrowserPanel<'a> {
                         ui.label("No audio in manifest");
                     } else {
                         for (name, path) in &self.manifest.assets.audio {
-                            ui.horizontal(|ui| {
+                            ui.group(|ui| {
                                 let asset_path = normalize_asset_path(&path.to_string_lossy());
-                                let button = ui.add(egui::Button::new(format!("Audio {name}")));
+                                let button = ui.add(
+                                    egui::Button::new(format!("Audio {name}"))
+                                        .sense(egui::Sense::click_and_drag()),
+                                );
                                 if button.drag_started() {
                                     let payload = format!("asset://audio/{asset_path}");
                                     ui.memory_mut(|mem| {
@@ -108,29 +122,37 @@ impl<'a> AssetBrowserPanel<'a> {
                                     });
                                 }
                                 button.on_hover_text(format!("Drag to scene\nPath: {:?}", path));
-                                let offset_ms = self.render_audio_position(ui, &asset_path);
-                                if ui.small_button("Preview").clicked() {
+                                let (offset_ms, seek) = self.render_audio_position(ui, &asset_path);
+                                if seek {
                                     actions.push(AssetBrowserAction::PreviewAudio {
                                         path: asset_path.clone(),
                                         offset_ms,
                                     });
                                 }
-                                if ui.small_button("Use").clicked() {
-                                    actions.push(AssetBrowserAction::AssignToSelected {
-                                        kind: AssetImportKind::Audio,
-                                        name: name.clone(),
-                                        path: asset_path.clone(),
-                                    });
-                                }
-                                if ui.small_button("Stop").clicked() {
-                                    actions.push(AssetBrowserAction::StopAudio);
-                                }
-                                if ui.small_button("Remove").clicked() {
-                                    actions.push(AssetBrowserAction::Remove {
-                                        kind: AssetImportKind::Audio,
-                                        name: name.clone(),
-                                    });
-                                }
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui.small_button("Preview").clicked() {
+                                        actions.push(AssetBrowserAction::PreviewAudio {
+                                            path: asset_path.clone(),
+                                            offset_ms,
+                                        });
+                                    }
+                                    if ui.small_button("Use").clicked() {
+                                        actions.push(AssetBrowserAction::AssignToSelected {
+                                            kind: AssetImportKind::Audio,
+                                            name: name.clone(),
+                                            path: asset_path.clone(),
+                                        });
+                                    }
+                                    if ui.small_button("Stop").clicked() {
+                                        actions.push(AssetBrowserAction::StopAudio);
+                                    }
+                                    if ui.small_button("Remove").clicked() {
+                                        actions.push(AssetBrowserAction::Remove {
+                                            kind: AssetImportKind::Audio,
+                                            name: name.clone(),
+                                        });
+                                    }
+                                });
                             });
                         }
                     }
@@ -242,12 +264,15 @@ impl<'a> AssetBrowserPanel<'a> {
     ) -> egui::Response {
         let card_size = asset_card_size(ui.available_width());
         let (rect, response) = ui.allocate_exact_size(card_size, egui::Sense::click_and_drag());
+        if !ui.is_rect_visible(rect) {
+            return response;
+        }
         ui.painter()
             .rect_filled(rect, 4.0, egui::Color32::from_rgb(46, 46, 46));
         ui.painter().rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(72)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(72)),
         );
 
         let asset_path = normalize_asset_path(&path.to_string_lossy());
@@ -286,120 +311,76 @@ impl<'a> AssetBrowserPanel<'a> {
         ctx: &egui::Context,
         asset_path: &str,
     ) -> Option<egui::TextureId> {
-        let project_root = self.project_root?;
-        let request_cache_key = thumbnail_cache_key(project_root, asset_path);
-        if let Some(texture) = self.image_cache.get(&request_cache_key) {
-            return Some(texture.id());
-        }
-        if let Some(should_retry) = self
-            .image_failures
-            .get(&request_cache_key)
-            .map(|failure| should_retry_missing_image_failure(failure, project_root, asset_path))
-        {
-            if should_retry {
-                self.image_failures.remove(&request_cache_key);
-            } else {
-                return None;
-            }
-        }
-        self.asset_store(project_root, &request_cache_key, asset_path)?;
-        let resolved_asset_path = match self.asset_store.as_ref()?.resolve_image_path(asset_path) {
-            Ok(path) => normalize_asset_path(&path),
-            Err(err) => {
-                self.image_failures
-                    .insert(request_cache_key, image_failure_message(asset_path, &err));
-                return None;
-            }
-        };
-        let cache_key = thumbnail_cache_key(project_root, &resolved_asset_path);
-        if let Some(texture) = self.image_cache.get(&cache_key) {
-            let texture = texture.clone();
-            if request_cache_key != cache_key {
-                self.image_cache.insert(request_cache_key, texture.clone());
-            }
-            return Some(texture.id());
-        }
-        if self.image_failures.contains_key(&cache_key) {
-            return None;
-        }
+        ImageTextureCache::new(self.image_cache, self.image_failures, self.resource_service)
+            .texture(ctx, self.project_root?, asset_path, ImageView::Thumbnail)
+    }
 
-        let image = match self.resource_service.image_for_view(
-            project_root,
-            &resolved_asset_path,
-            "asset_browser",
-        ) {
-            Ok(image) => image,
-            Err(err) => {
-                self.image_failures.insert(
-                    cache_key,
-                    format!("image '{resolved_asset_path}' load failed: {err}"),
-                );
-                return None;
-            }
-        };
-        let (size, pixels) = PreviewQuality::Draft.scaled_image(image.size, &image.pixels);
-        let texture = ctx.load_texture(
-            format!("asset_browser::{cache_key}"),
-            egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_ref()),
-            egui::TextureOptions::LINEAR,
+    fn render_audio_position(&mut self, ui: &mut egui::Ui, asset_path: &str) -> (u64, bool) {
+        let size = egui::vec2(
+            ui.available_width().max(1.0),
+            ui.spacing().interact_size.y
+                + ui.text_style_height(&egui::TextStyle::Body)
+                + ui.spacing().item_spacing.y,
         );
-        let id = texture.id();
-        if request_cache_key != cache_key {
-            self.image_cache.insert(request_cache_key, texture.clone());
-        }
-        self.image_cache.insert(cache_key, texture);
-        Some(id)
-    }
+        ui.allocate_ui_with_layout(size, egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_min_size(size);
+            let slider_id = egui::Id::new(("asset_audio_offset", asset_path.to_string()));
+            let mut offset_secs = ui
+                .data_mut(|data| data.get_persisted::<f32>(slider_id))
+                .unwrap_or(0.0);
+            if !ui.is_rect_visible(ui.min_rect()) {
+                return (secs_to_ms(offset_secs), false);
+            }
+            let duration = self.audio_duration_secs(asset_path);
+            let playback = self.audio_playback.filter(|playback| {
+                let path = Path::new(playback.path);
+                let relative = self
+                    .project_root
+                    .and_then(|root| path.strip_prefix(root).ok())
+                    .unwrap_or(path);
+                normalize_asset_path(&relative.to_string_lossy()) == asset_path
+            });
 
-    fn asset_store(
-        &mut self,
-        project_root: &Path,
-        failure_key: &str,
-        asset_path: &str,
-    ) -> Option<&vnengine_assets::AssetStore> {
-        if self.asset_store.is_none() {
-            self.asset_store = match vnengine_assets::AssetStore::new(
-                project_root.to_path_buf(),
-                vnengine_assets::SecurityMode::Trusted,
-                None,
-                false,
-            ) {
-                Ok(store) => Some(store),
-                Err(err) => {
-                    self.image_failures.insert(
-                        failure_key.to_string(),
-                        format!(
-                            "asset browser image '{asset_path}' asset store initialization failed: {err}"
-                        ),
-                    );
-                    None
+            if let Some(duration_secs) = duration.filter(|value| *value > 0.0) {
+                let seeking_id = slider_id.with("seeking");
+                let was_seeking = ui
+                    .data_mut(|data| data.get_temp::<bool>(seeking_id))
+                    .unwrap_or(false);
+                if let Some(playback) = playback {
+                    if !was_seeking && !ui.input(|input| input.pointer.primary_down()) {
+                        offset_secs = if playback.looping {
+                            playback.position.as_secs_f32() % duration_secs
+                        } else {
+                            playback.position.as_secs_f32().min(duration_secs)
+                        };
+                    }
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(50));
                 }
-            };
-        }
-        self.asset_store.as_ref()
-    }
-
-    fn render_audio_position(&mut self, ui: &mut egui::Ui, asset_path: &str) -> u64 {
-        let duration = self.audio_duration_secs(asset_path);
-        let slider_id = egui::Id::new(("asset_audio_offset", asset_path.to_string()));
-        let mut offset_secs = ui
-            .data_mut(|data| data.get_persisted::<f32>(slider_id))
-            .unwrap_or(0.0);
-
-        if let Some(duration_secs) = duration.filter(|value| *value > 0.0) {
-            offset_secs = offset_secs.clamp(0.0, duration_secs);
-            let slider_label = format_audio_position(offset_secs, duration_secs);
-            ui.add(
-                egui::Slider::new(&mut offset_secs, 0.0..=duration_secs)
-                    .show_value(false)
-                    .text(slider_label),
-            );
-            ui.data_mut(|data| data.insert_persisted(slider_id, offset_secs));
-            secs_to_ms(offset_secs)
-        } else {
-            ui.label("Duration --:--");
-            0
-        }
+                offset_secs = offset_secs.clamp(0.0, duration_secs);
+                let response = ui
+                    .scope(|ui| {
+                        ui.spacing_mut().slider_width = ui.available_width().max(1.0);
+                        ui.add(
+                            egui::Slider::new(&mut offset_secs, 0.0..=duration_secs)
+                                .show_value(false),
+                        )
+                    })
+                    .inner;
+                ui.label(format_audio_position(offset_secs, duration_secs));
+                ui.data_mut(|data| data.insert_temp(seeking_id, response.dragged()));
+                ui.data_mut(|data| data.insert_persisted(slider_id, offset_secs));
+                (
+                    secs_to_ms(offset_secs),
+                    playback.is_some()
+                        && (response.drag_stopped() || (response.changed() && !response.dragged())),
+                )
+            } else {
+                ui.label("Duration --:--");
+                (0, false)
+            }
+        })
+        .inner
     }
 
     pub fn audio_duration_secs(&mut self, asset_path: &str) -> Option<f32> {
@@ -411,7 +392,8 @@ impl<'a> AssetBrowserPanel<'a> {
                 metadata.duration.map(|duration| duration.as_secs_f32())
             }
             Err(err) => {
-                self.image_failures.insert(
+                record_asset_failure(
+                    self.image_failures,
                     failure_key,
                     format!("audio '{asset_path}' metadata unavailable: {err}"),
                 );

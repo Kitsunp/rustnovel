@@ -7,7 +7,6 @@ use uuid::Uuid;
 
 use crate::error::VnResult;
 use crate::load_runtime_script_from_entry;
-use crate::manifest::ProjectManifest;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -112,6 +111,31 @@ impl ExportService {
         self.validate_export_plan(&plan)?;
         export_bundle_atomic(spec)
     }
+
+    /// Shared release requirements for GUI, CLI and API executable exports.
+    pub fn validate_executable_export_plan(
+        &self,
+        plan: &ExportPlan,
+        target: ExportTargetPlatform,
+    ) -> VnResult<()> {
+        self.validate_export_plan(plan)?;
+        if plan.executable.as_deref() != Some(target.expected_executable_name())
+            || plan
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.blocking_release)
+        {
+            return Err(invalid_bundle(format!(
+                "Executable export blocked by diagnostics: {}",
+                reporting::executable_requirement_message(
+                    target,
+                    target.expected_executable_name(),
+                    Some(plan)
+                )
+            )));
+        }
+        Ok(())
+    }
 }
 
 pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
@@ -137,21 +161,21 @@ fn export_bundle_atomic(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> 
 
     let mut staging_spec = spec;
     staging_spec.output_root = staging_root.clone();
-    match export_bundle_materialized(staging_spec, &final_output_root) {
-        Ok(report) => {
-            publish_staged_bundle(&staging_root, &final_output_root, &backup_root)?;
-            Ok(report)
-        }
-        Err(err) => {
-            if let Err(cleanup_err) = fs::remove_dir_all(&staging_root) {
+    let result = export_bundle_materialized(staging_spec, &final_output_root).and_then(|report| {
+        publish_staged_bundle(&staging_root, &final_output_root, &backup_root)?;
+        Ok(report)
+    });
+    if let Err(error) = &result {
+        if let Err(cleanup_error) = fs::remove_dir_all(&staging_root) {
+            if cleanup_error.kind() != std::io::ErrorKind::NotFound {
                 return Err(invalid_bundle(format!(
-                    "{err}; additionally failed to remove staging '{}': {cleanup_err}",
+                    "{error}; additionally failed to remove staging '{}': {cleanup_error}",
                     staging_root.display()
                 )));
             }
-            Err(err)
         }
     }
+    result
 }
 
 fn publish_staged_bundle(staging: &Path, final_output: &Path, backup: &Path) -> VnResult<()> {
@@ -225,10 +249,7 @@ fn export_bundle_materialized(
         .canonicalize()
         .map_err(|e| invalid_bundle(format!("canonicalize output_root: {e}")))?;
 
-    let manifest_path = project_root.join("project.vnm");
-    ensure_regular_file(&manifest_path, "manifest")?;
-    let manifest = ProjectManifest::load(&manifest_path)
-        .map_err(|e| invalid_bundle(format!("load manifest '{}': {e}", manifest_path.display())))?;
+    let manifest = helpers::load_export_manifest(&project_root, spec.entry_script.as_deref())?;
 
     let entry_script = spec
         .entry_script
@@ -342,9 +363,6 @@ fn export_bundle_materialized(
         &project_root,
         &runtime_dir,
     )?;
-    let runtime_artifact_rel = runtime_artifact
-        .as_ref()
-        .map(|runtime| runtime.rel_path.clone());
     let runtime_artifact_sha256 = runtime_artifact
         .as_ref()
         .map(|runtime| runtime.sha256.clone());
@@ -353,11 +371,19 @@ fn export_bundle_materialized(
         &output_root,
         runtime_artifact.as_ref(),
     )?;
-    let launch_target = executable_rel.as_deref().or_else(|| {
-        runtime_artifact
+    let runtime_artifact_rel = match (&executable_rel, &runtime_artifact) {
+        (Some(executable), Some(runtime)) => {
+            // The top-level executable is the runtime; do not ship its second copy.
+            fs::remove_file(&runtime.output_path).map_err(|err| {
+                invalid_bundle(format!("remove duplicate runtime artifact: {err}"))
+            })?;
+            Some(executable.clone())
+        }
+        _ => runtime_artifact
             .as_ref()
-            .map(|runtime| runtime.rel_path.as_str())
-    });
+            .map(|runtime| runtime.rel_path.clone()),
+    };
+    let launch_target = executable_rel.as_deref();
     let launcher_rel = write_launcher(spec.target_platform, &output_root, launch_target)?;
 
     let integrity_scope = "bundle_file_manifest_v2_signed_manifest_covers_payload_files";

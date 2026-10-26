@@ -2,7 +2,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use visual_novel_engine::authoring::{FragmentPort, GraphFragment};
 
-#[pyclass(name = "FragmentPort")]
+#[pyclass(name = "FragmentPort", from_py_object)]
 #[derive(Clone)]
 pub struct PyFragmentPort {
     inner: FragmentPort,
@@ -51,7 +51,7 @@ impl From<FragmentPort> for PyFragmentPort {
     }
 }
 
-#[pyclass(name = "GraphFragment")]
+#[pyclass(name = "GraphFragment", from_py_object)]
 #[derive(Clone)]
 pub struct PyGraphFragment {
     inner: GraphFragment,

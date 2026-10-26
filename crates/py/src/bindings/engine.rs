@@ -1,16 +1,19 @@
 use super::audio::PyAudio;
-use super::conversion::{event_to_python, ui_state_to_python};
+use super::conversion::ui_state_to_python;
 use super::types::{vn_error_to_py, PyResourceConfig, PyRouteTree, PySceneFrame};
 use pyo3::exceptions::{PyMemoryError, PyNotImplementedError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyDictMethods, PyList, PyListMethods};
+use pyo3::{PyTraverseError, PyVisit};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use visual_novel_engine::runtime::{
-    AudioCommand, Engine as CoreEngine, EventCompiled, EventRaw, ExternalCallOutcome, ScriptRaw,
-    UiState,
+    AudioCommand, Engine as CoreEngine, EventRaw, ExternalCallOutcome, ScriptRaw, UiState,
 };
 use visual_novel_engine::{ResourceLimiter, SecurityPolicy};
+
+#[path = "engine/step.rs"]
+mod step;
 
 #[derive(Clone, Debug)]
 struct CachedAsset {
@@ -92,7 +95,10 @@ impl PyAssetCache {
     }
 
     fn evict_over_budget(&mut self, max_bytes: usize) -> usize {
-        if self.allocated_bytes <= max_bytes {
+        if self.allocated_bytes <= max_bytes
+            && self.entries.len() <= 4096
+            && (max_bytes != 0 || self.entries.is_empty())
+        {
             return 0;
         }
         let mut candidates = self
@@ -103,7 +109,10 @@ impl PyAssetCache {
         candidates.sort_by_key(|(_, last_used)| *last_used);
         let mut evicted = 0usize;
         for (asset_path, _) in candidates {
-            if self.allocated_bytes <= max_bytes {
+            if self.allocated_bytes <= max_bytes
+                && self.entries.len() <= 4096
+                && (max_bytes != 0 || self.entries.is_empty())
+            {
                 break;
             }
             if self.remove(&asset_path) {
@@ -131,6 +140,7 @@ pub struct PyEngine {
     max_texture_memory: usize,
     prefetch_depth: usize,
     handler: Option<Py<PyAny>>,
+    dispatching_handler: bool,
     allowed_ext_call_commands: BTreeSet<String>,
     last_ext_call_error: Option<String>,
     last_audio_commands: Vec<AudioCommand>,
@@ -140,13 +150,24 @@ pub struct PyEngine {
 #[pyclass]
 pub struct StepResult {
     #[pyo3(get)]
-    pub event: PyObject,
+    pub event: Py<PyAny>,
     #[pyo3(get)]
-    pub audio: PyObject,
+    pub audio: Py<PyAny>,
 }
 
 #[pymethods]
 impl PyEngine {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if let Some(handler) = &self.handler {
+            visit.call(handler)?;
+        }
+        Ok(())
+    }
+
+    fn __clear__(&mut self) {
+        self.handler = None;
+    }
+
     #[new]
     pub fn new(script_json: &str) -> PyResult<Self> {
         let resource_limits = ResourceLimiter::default();
@@ -160,6 +181,7 @@ impl PyEngine {
             max_texture_memory: 512 * 1024 * 1024,
             prefetch_depth: 0,
             handler: None,
+            dispatching_handler: false,
             allowed_ext_call_commands: BTreeSet::new(),
             last_ext_call_error: None,
             last_audio_commands: Vec::new(),
@@ -167,64 +189,20 @@ impl PyEngine {
         })
     }
 
-    fn current_event<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn current_event<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let event = self.inner.current_event().map_err(vn_error_to_py)?;
-        event_to_python(&event, py)
+        event.to_python_dict(py)
     }
 
-    fn step<'py>(&mut self, py: Python<'py>) -> PyResult<StepResult> {
-        let (audio, change) = self.inner.step().map_err(vn_error_to_py)?;
-        self.last_audio_commands = audio;
-        let event = change.event;
-        if let EventCompiled::ExtCall { command, args } = &event {
-            let event_ip = self.inner.state().position;
-            if !self.allowed_ext_call_commands.contains(command.as_str()) {
-                let msg = format!("ext_call '{command}' denied by capability policy");
-                self.last_ext_call_error = Some(msg.clone());
-                return Err(PyRuntimeError::new_err(msg));
-            } else if let Some(handler) = &self.handler {
-                let handler = handler.clone_ref(py);
-                if let Err(e) = handler.call1(py, (command.as_str(), args.clone())) {
-                    let msg = format!("ExtCall handler error for '{command}': {e}");
-                    self.last_ext_call_error = Some(msg.clone());
-                    let err = self
-                        .inner
-                        .complete_external_call(ExternalCallOutcome::failed(
-                            event_ip,
-                            command.clone(),
-                            msg,
-                        ))
-                        .expect_err("failed ext_call outcome must not advance");
-                    return Err(PyRuntimeError::new_err(err.to_string()));
-                }
-                self.inner
-                    .complete_external_call(ExternalCallOutcome::succeeded(
-                        event_ip,
-                        command.clone(),
-                    ))
-                    .map_err(vn_error_to_py)?;
-                self.last_audio_commands = self.inner.take_audio_commands();
-                self.last_ext_call_error = None;
-            } else {
-                let msg = format!("ext_call '{command}' requires a registered handler");
-                self.last_ext_call_error = Some(msg.clone());
-                return Err(PyRuntimeError::new_err(msg));
-            }
-        } else {
-            self.last_ext_call_error = None;
-        }
-        let event_obj = event_to_python(&event, py)?;
-        let audio_obj = self.get_last_audio_commands(py)?;
-        Ok(StepResult {
-            event: event_obj,
-            audio: audio_obj,
-        })
+    fn step(slf: Py<Self>, py: Python<'_>) -> PyResult<StepResult> {
+        Self::dispatch_step(slf, py)
     }
 
-    fn choose<'py>(&mut self, py: Python<'py>, option_index: usize) -> PyResult<PyObject> {
+    fn choose<'py>(&mut self, py: Python<'py>, option_index: usize) -> PyResult<Py<PyAny>> {
+        self.ensure_execution_available()?;
         let event = self.inner.choose(option_index).map_err(vn_error_to_py)?;
         self.last_audio_commands = self.inner.take_audio_commands();
-        event_to_python(&event, py)
+        event.to_python_dict(py)
     }
 
     fn current_event_json(&self) -> PyResult<String> {
@@ -235,7 +213,7 @@ impl PyEngine {
         EventRaw::TYPE_NAMES.to_vec()
     }
 
-    fn visual_state<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn visual_state<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let state = self.inner.visual_state();
         let dict = PyDict::new(py);
         dict.set_item("background", state.background.as_deref())?;
@@ -259,7 +237,7 @@ impl PyEngine {
         self.inner.is_current_dialogue_read()
     }
 
-    fn choice_history<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn choice_history<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let list = PyList::empty(py);
         for entry in self.inner.choice_history() {
             let dict = PyDict::new(py);
@@ -272,7 +250,7 @@ impl PyEngine {
         Ok(list.into())
     }
 
-    fn ui_state<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn ui_state<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let event = self.inner.current_event().map_err(vn_error_to_py)?;
         let ui = UiState::from_event(&event, self.inner.visual_state());
         ui_state_to_python(&ui, py)
@@ -286,59 +264,8 @@ impl PyEngine {
         self.inner.scene_frame().into()
     }
 
-    fn get_last_audio_commands<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
-        let list = PyList::empty(py);
-        for cmd in &self.last_audio_commands {
-            let dict = PyDict::new(py);
-            match cmd {
-                AudioCommand::PlayBgm {
-                    resource,
-                    path,
-                    r#loop,
-                    volume,
-                    fade_in,
-                } => {
-                    dict.set_item("type", "play_bgm")?;
-                    dict.set_item("resource", resource.as_u64().to_string())?;
-                    dict.set_item("path", path.as_ref())?;
-                    dict.set_item("loop", r#loop)?;
-                    dict.set_item("volume", volume)?;
-                    dict.set_item("fade_in", fade_in.as_secs_f64())?;
-                }
-                AudioCommand::StopBgm { fade_out } => {
-                    dict.set_item("type", "stop_bgm")?;
-                    dict.set_item("fade_out", fade_out.as_secs_f64())?;
-                }
-                AudioCommand::PlaySfx {
-                    resource,
-                    path,
-                    volume,
-                } => {
-                    dict.set_item("type", "play_sfx")?;
-                    dict.set_item("resource", resource.as_u64().to_string())?;
-                    dict.set_item("path", path.as_ref())?;
-                    dict.set_item("volume", volume)?;
-                }
-                AudioCommand::StopSfx => {
-                    dict.set_item("type", "stop_sfx")?;
-                }
-                AudioCommand::PlayVoice {
-                    resource,
-                    path,
-                    volume,
-                } => {
-                    dict.set_item("type", "play_voice")?;
-                    dict.set_item("resource", resource.as_u64().to_string())?;
-                    dict.set_item("path", path.as_ref())?;
-                    dict.set_item("volume", volume)?;
-                }
-                AudioCommand::StopVoice => {
-                    dict.set_item("type", "stop_voice")?;
-                }
-            }
-            list.append(dict)?;
-        }
-        Ok(list.into())
+    fn get_last_audio_commands<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+        super::audio::audio_commands_to_python(py, &self.last_audio_commands)
     }
 
     fn set_resources(&mut self, config: PyResourceConfig) {
@@ -347,7 +274,7 @@ impl PyEngine {
         self.asset_cache.evict_over_budget(self.max_texture_memory);
     }
 
-    fn get_memory_usage<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn get_memory_usage<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         dict.set_item("max_texture_memory", self.max_texture_memory)?;
         dict.set_item("max_script_bytes", self.resource_limits.max_script_bytes)?;
@@ -368,7 +295,7 @@ impl PyEngine {
         self.prefetch_depth
     }
 
-    fn prefetch_assets_hint<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn prefetch_assets_hint<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let list = PyList::empty(py);
         for path in self.inner.peek_next_asset_paths(self.prefetch_depth) {
             list.append(path)?;
@@ -397,8 +324,8 @@ impl PyEngine {
         &mut self,
         py: Python<'py>,
         asset_path: &str,
-    ) -> PyResult<Option<PyObject>> {
-        if let Some(data) = self.asset_cache.get(asset_path) {
+    ) -> PyResult<Option<Py<PyAny>>> {
+        if let Some(data) = self.asset_cache.get(asset_path.trim()) {
             Ok(Some(PyBytes::new(py, data.as_ref()).into()))
         } else {
             Ok(None)
@@ -406,7 +333,7 @@ impl PyEngine {
     }
 
     fn invalidate_cached_asset(&mut self, asset_path: &str) -> bool {
-        self.asset_cache.remove(asset_path)
+        self.asset_cache.remove(asset_path.trim())
     }
 
     fn clear_asset_cache(&mut self) {
@@ -431,7 +358,7 @@ impl PyEngine {
         self.asset_cache.evict_unused(&retained_assets)
     }
 
-    fn asset_cache_stats<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+    fn asset_cache_stats<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         dict.set_item("total_cached_assets", self.asset_cache.len())?;
         dict.set_item("allocated_bytes", self.asset_cache.allocated_bytes)?;
@@ -463,7 +390,7 @@ impl PyEngine {
         self.last_ext_call_error.clone()
     }
 
-    fn pending_external_call<'py>(&self, py: Python<'py>) -> PyResult<Option<PyObject>> {
+    fn pending_external_call<'py>(&self, py: Python<'py>) -> PyResult<Option<Py<PyAny>>> {
         let Some(request) = self.inner.pending_external_call().map_err(vn_error_to_py)? else {
             return Ok(None);
         };
@@ -476,6 +403,7 @@ impl PyEngine {
 
     #[pyo3(signature = (success = true, message = None))]
     fn complete_external_call(&mut self, success: bool, message: Option<String>) -> PyResult<()> {
+        self.ensure_execution_available()?;
         let request = self
             .inner
             .pending_external_call()
@@ -496,6 +424,7 @@ impl PyEngine {
     }
 
     fn resume(&mut self) -> PyResult<()> {
+        self.ensure_execution_available()?;
         self.inner.resume().map_err(vn_error_to_py)?;
         Ok(())
     }

@@ -129,6 +129,7 @@ impl ImportState {
         self.events
             .push(EventRaw::Choice(ChoiceRaw { prompt, options }));
 
+        let end_label = self.next_synthetic_label("menu_end");
         for (target, start, end, opt_line) in block_plan {
             self.labels.insert(target, self.events.len());
             let mut inner_idx = start;
@@ -144,7 +145,11 @@ impl ImportState {
                     None,
                 );
             }
+            self.events.push(EventRaw::Jump {
+                target: end_label.clone(),
+            });
         }
+        self.labels.insert(end_label, self.events.len());
     }
 
     pub(super) fn parse_if_chain(

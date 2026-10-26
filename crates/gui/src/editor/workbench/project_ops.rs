@@ -12,8 +12,13 @@ impl EditorWorkbench {
         path: std::path::PathBuf,
         show_toasts: bool,
     ) -> Result<(), String> {
-        match crate::editor::project_io::load_project(path.clone()) {
-            Ok(loaded_project) => {
+        let loaded = std::path::absolute(path)
+            .map_err(crate::editor::errors::EditorError::IoError)
+            .and_then(|path| {
+                crate::editor::project_io::load_project(path.clone()).map(|project| (path, project))
+            });
+        match loaded {
+            Ok((path, loaded_project)) => {
                 let migrated_manifest = loaded_project
                     .manifest_migration_report
                     .as_ref()
@@ -26,14 +31,6 @@ impl EditorWorkbench {
                     Self::load_localization_catalog(&project_root, &loaded_project.manifest)?;
                 self.project_root = Some(project_root.clone());
                 self.manifest_path = Some(path.clone());
-                self.composer_image_cache.clear();
-                self.composer_image_failures.clear();
-                self.resource_service.clear();
-                self.composer_layer_overrides.clear();
-                self.composer_background_fit_overrides.clear();
-                self.rebuild_authoring_session_from_fields();
-                self.player_audio_backend = None;
-                self.player_audio_root = None;
                 self.localization_catalog = localization_catalog;
                 self.player_locale = loaded_project.manifest.settings.default_language.clone();
                 self.manifest = Some(loaded_project.manifest);
@@ -46,16 +43,21 @@ impl EditorWorkbench {
                             ));
                         }
                     }
-                } else if show_toasts {
-                    self.toast = Some(if let Some(steps) = migrated_manifest {
-                        crate::editor::node_types::ToastState::warning(format!(
+                } else {
+                    self.node_graph = NodeGraph::default();
+                    self.initialize_loaded_document(None);
+                    self.refresh_operation_fingerprint();
+                    if show_toasts {
+                        self.toast = Some(if let Some(steps) = migrated_manifest {
+                            crate::editor::node_types::ToastState::warning(format!(
                             "Project loaded without entry script (manifest migrated in {steps} step(s))"
                         ))
-                    } else {
-                        crate::editor::node_types::ToastState::success(
-                            "Project loaded (No entry script)",
-                        )
-                    });
+                        } else {
+                            crate::editor::node_types::ToastState::success(
+                                "Project loaded (No entry script)",
+                            )
+                        });
+                    }
                 }
                 Ok(())
             }
@@ -71,8 +73,13 @@ impl EditorWorkbench {
     }
 
     pub fn load_script(&mut self, path: std::path::PathBuf) {
-        match crate::editor::project_io::load_script(path.clone()) {
-            Ok(loaded_script) => {
+        let loaded = std::path::absolute(path)
+            .map_err(crate::editor::errors::EditorError::IoError)
+            .and_then(|path| {
+                crate::editor::project_io::load_script(path.clone()).map(|script| (path, script))
+            });
+        match loaded {
+            Ok((path, loaded_script)) => {
                 self.project_root = path.parent().map(std::path::Path::to_path_buf);
                 self.manifest_path = None;
                 self.manifest = None;
@@ -109,24 +116,7 @@ impl EditorWorkbench {
         show_toast: bool,
     ) {
         self.node_graph = loaded_script.graph;
-        self.pending_graph_fit = true;
-        self.pending_graph_focus = None;
-        self.operation_log = loaded_script.operation_log;
-        self.verification_runs = loaded_script.verification_runs;
-        self.composer_layer_overrides = loaded_script.composer_layer_overrides;
-        self.composer_background_fit_overrides = loaded_script.composer_background_fit_overrides;
-        self.rebuild_authoring_session_from_fields();
-        let mut stack = UndoStack::new();
-        stack.push(self.node_graph.clone());
-        self.undo_stack = stack;
-        self.pending_save_path = Some(path);
-        self.saved_script_snapshot = Some(self.node_graph.to_script());
-        self.composer_entity_owners.clear();
-        self.composer_image_cache.clear();
-        self.composer_image_failures.clear();
-        self.resource_service.clear();
-        self.player_audio_backend = None;
-        self.player_audio_root = None;
+        self.initialize_loaded_document(Some(path));
 
         let msg = if loaded_script.was_imported {
             "Imported script"
@@ -146,6 +136,44 @@ impl EditorWorkbench {
             }
         }
         self.refresh_operation_fingerprint();
+    }
+
+    pub(super) fn initialize_loaded_document(&mut self, save_path: Option<std::path::PathBuf>) {
+        self.node_graph.clear_operation_hint();
+        self.node_graph.clear_modified();
+        self.node_graph.authoring_session.clear_dirty_flags();
+        self.pending_editor_operation = None;
+        self.pending_structural_fix = None;
+        self.pending_auto_fix_batch = None;
+        self.fix_diff_dialog = None;
+        self.show_fix_confirm = false;
+        self.diff_dialog = None;
+        self.show_save_confirm = false;
+        self.quick_fix_audit.clear();
+        self.loaded_repro_case = None;
+        self.last_repro_report = None;
+        self.last_dry_run_report = None;
+        self.export_wizard = ExportWizardState::default();
+        self.last_export_report = None;
+        self.show_export_report_panel = false;
+        self.imported_report_stale = false;
+        self.imported_report_untrusted = false;
+        self.selected_node = None;
+        self.selected_entity = None;
+        self.selected_issue = None;
+        self.pending_graph_fit = true;
+        self.pending_graph_focus = None;
+        self.composer_entity_owners.clear();
+        self.composer_image_cache.clear();
+        self.composer_image_failures.clear();
+        self.resource_service.clear();
+        self.clear_runtime_preview();
+        self.current_script = None;
+        self.compilation_cache.invalidate();
+        self.validation_issues.clear();
+        self.last_fix_command_index = None;
+        self.pending_save_path = save_path;
+        self.saved_script_snapshot = Some(self.node_graph.to_script());
     }
 
     fn load_localization_catalog(
@@ -344,20 +372,26 @@ impl EditorWorkbench {
     }
 
     pub fn execute_save(&mut self, path: &std::path::Path, _content_unused: &str) {
-        if let Err(e) = crate::editor::project_io::save_authoring_document_with_metadata(
-            path,
-            &self.node_graph,
-            &self.composer_layer_overrides,
-            &self.composer_background_fit_overrides,
-            &self.operation_log,
-            &self.verification_runs,
-        ) {
-            tracing::error!("Failed to save: {}", e);
-            self.toast = Some(ToastState::error(format!("Save failed: {}", e)));
-        } else {
-            self.saved_script_snapshot = Some(self.node_graph.to_script());
-            self.node_graph.clear_modified();
+        match self.save_document(path) {
+            Ok(()) => self.toast = Some(ToastState::success("Saved successfully")),
+            Err(error) => {
+                tracing::error!("Failed to save: {error}");
+                self.toast = Some(ToastState::error(format!("Save failed: {error}")));
+            }
         }
+    }
+
+    pub(super) fn save_document(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let path = std::path::absolute(path).map_err(|error| error.to_string())?;
+        self.node_graph.commit_drag_positions();
+        self.record_pending_editor_operation();
+        crate::editor::project_io::save_authoring_document(&path, &self.node_graph)
+            .map_err(|error| error.to_string())?;
+        self.pending_save_path = Some(path);
+        self.saved_script_snapshot = Some(self.node_graph.to_script());
+        self.node_graph.clear_modified();
+        self.node_graph.authoring_session.clear_dirty_flags();
+        Ok(())
     }
 
     pub fn prepare_save_confirmation(&mut self) {

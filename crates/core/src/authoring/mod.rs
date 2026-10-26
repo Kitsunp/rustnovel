@@ -2,6 +2,8 @@
 //!
 //! This module keeps semantic story editing independent from egui/eframe.
 
+mod compilation_cache;
+pub use compilation_cache::CompilationCache;
 mod command_bus;
 pub mod compiler;
 pub mod composer;
@@ -33,20 +35,22 @@ pub use document::{
     AUTHORING_DOCUMENT_SCHEMA_VERSION,
 };
 pub use document_command_bus::{
-    apply_authoring_document_command_headless, AssetRefIndex, AuthoringDirtyFlags,
-    AuthoringDocumentCommand, AuthoringDocumentCommandApplyResult, AuthoringDocumentCommandBus,
-    AuthoringDocumentCommandOutcome, AuthoringDocumentDelta, AuthoringDocumentSession,
-    AuthoringReadModel, AuthoringReportStaleState, ComposerLayerIndex, DiagnosticsIndex, NodeIndex,
-    RouteIndex,
+    apply_authoring_document_command_headless, apply_authoring_document_commands_headless,
+    AssetRefIndex, AuthoringDirtyFlags, AuthoringDocumentCommand,
+    AuthoringDocumentCommandApplyResult, AuthoringDocumentCommandBus,
+    AuthoringDocumentCommandOutcome, AuthoringDocumentCommandsApplyResult, AuthoringDocumentDelta,
+    AuthoringDocumentSession, AuthoringReadModel, AuthoringReportStaleState, ComposerLayerIndex,
+    DiagnosticsIndex, NodeIndex, RouteIndex,
 };
 pub use entry::{
-    export_runtime_script_from_authoring, load_authoring_document_or_script,
-    load_runtime_script_from_entry, parse_authoring_document_or_script,
-    parse_runtime_script_from_entry,
+    export_runtime_script_from_authoring, load_authoring_document_or_script, load_authoring_entry,
+    load_runtime_script_from_entry, parse_authoring_document_or_script, parse_authoring_entry,
+    parse_runtime_script_from_entry, save_authoring_document,
 };
 pub use graph::{
-    CharacterPoseBinding, DecisionHub, FragmentPort, GraphConnection, GraphFragment, GraphStack,
-    NodeGraph, PortalNode, SceneLayer, SceneProfile,
+    CharacterPoseBinding, DecisionHub, FragmentPort, GraphConnection, GraphFragment,
+    GraphMutationUndo, GraphStack, NodeGraph, NodeRemovalContext, PortalNode, SceneLayer,
+    SceneProfile,
 };
 pub use lint::{LintCode, LintIssue, LintSeverity, ValidationPhase};
 pub use operation_log::{

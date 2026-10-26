@@ -19,7 +19,7 @@ use visual_novel_gui::editor::{
         LayoutOverrides,
     },
     BackgroundFit, ComposerPreviewMode, ContextMenu, NodeEditorPanel, NodeGraph, PreviewQuality,
-    RouteTreeView, StageFit, StoryNode, UndoStack, VisualComposerPanel,
+    RouteTreeView, StageFit, StoryNode, VisualComposerPanel,
 };
 use visual_novel_gui::{EditorMode, EditorWorkbench, VnConfig};
 
@@ -52,10 +52,7 @@ fn run_workbench_frame(
     height: f32,
     events: Vec<egui::Event>,
 ) -> egui::FullOutput {
-    ctx.run(raw_input(width, height, 1.0, events), |ctx| {
-        ctx.set_visuals(egui::Visuals::dark());
-        workbench.ui(ctx);
-    })
+    run_panel_frame(ctx, width, height, events, |ctx| workbench.ui(ctx))
 }
 
 fn run_panel_frame(
@@ -68,7 +65,333 @@ fn run_panel_frame(
     ctx.run(raw_input(width, height, 1.0, events), |ctx| {
         ctx.set_visuals(egui::Visuals::dark());
         render(ctx);
+        // egui swaps the live frame state on end_frame. Observe this frame now.
+        let used = ctx.used_rect();
+        ctx.data_mut(|data| data.insert_temp(egui::Id::new("render_contract.used_rect"), used));
     })
+}
+
+fn frame_used_rect(ctx: &egui::Context) -> egui::Rect {
+    ctx.data(|data| data.get_temp(egui::Id::new("render_contract.used_rect")))
+        .expect("rendered frame must record its used rectangle before end_frame")
+}
+
+#[test]
+fn timeline_scrubbing_moves_the_actual_composer_without_editing_the_authored_pose() {
+    let ctx = egui::Context::default();
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    workbench.show_timeline = false;
+    workbench.show_graph = false;
+    workbench.show_inspector = false;
+    workbench.show_asset_browser = false;
+    let id = workbench
+        .scene
+        .spawn_with_transform(
+            visual_novel_engine::Transform::at(20, 40),
+            visual_novel_engine::EntityKind::Character(visual_novel_engine::CharacterData {
+                name: "Animated Ava".into(),
+                expression: None,
+            }),
+        )
+        .unwrap();
+    for (time, value) in [(0, 20), (60, 320)] {
+        add_keyframe(
+            &mut workbench.timeline,
+            id.raw(),
+            PropertyType::PositionX,
+            time,
+            value,
+        )
+        .unwrap();
+    }
+    let mut label_x = Vec::new();
+    for time in [0, 60, 0] {
+        workbench.timeline.seek(time);
+        workbench.current_time = time as f32;
+        let output = run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+        let x = output
+            .shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::epaint::Shape::Text(text) = &shape.shape {
+                    (text.galley.text() == "Animated Ava").then_some(text.pos.x)
+                } else {
+                    None
+                }
+            })
+            .expect("Composer must paint the animated character");
+        label_x.push(x);
+        assert_eq!(workbench.scene.get(id).unwrap().transform.x, 20);
+    }
+    assert!(
+        label_x[1] > label_x[0] + 100.0,
+        "scrubbing must move the rendered character"
+    );
+    assert!(
+        (label_x[2] - label_x[0]).abs() < 1.0,
+        "rewinding must restore the preview pose"
+    );
+}
+
+#[test]
+fn composer_pointer_drag_persists_through_sync_and_authoring_save() {
+    let ctx = egui::Context::default();
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    workbench.show_timeline = false;
+    workbench.show_graph = false;
+    workbench.show_inspector = false;
+    workbench.show_asset_browser = false;
+    let start = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::Pos2::ZERO);
+    let scene = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("room.png".into()),
+            music: None,
+            characters: vec![visual_novel_engine::runtime::CharacterPlacementRaw {
+                name: "Drag me".into(),
+                expression: None,
+                position: None,
+                x: Some(20),
+                y: Some(40),
+                scale: None,
+            }],
+        },
+        egui::pos2(0.0, 120.0),
+    );
+    workbench.node_graph.connect(start, scene);
+    workbench.node_graph.set_single_selection(Some(scene));
+    workbench.selected_node = Some(scene);
+    workbench.sync_graph_to_script().unwrap();
+    run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+    let output = run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+    let from = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            if let egui::epaint::Shape::Text(text) = &shape.shape {
+                (text.galley.text() == "Drag me").then_some(text.pos + text.galley.size() * 0.5)
+            } else {
+                None
+            }
+        })
+        .expect("character must be painted");
+    run_workbench_frame(
+        &ctx,
+        &mut workbench,
+        1280.0,
+        720.0,
+        vec![
+            egui::Event::PointerMoved(from),
+            pointer_button_event(from, egui::PointerButton::Primary, true),
+        ],
+    );
+    let to = from + egui::vec2(80.0, 25.0);
+    run_workbench_frame(
+        &ctx,
+        &mut workbench,
+        1280.0,
+        720.0,
+        vec![egui::Event::PointerMoved(to)],
+    );
+    run_workbench_frame(
+        &ctx,
+        &mut workbench,
+        1280.0,
+        720.0,
+        vec![pointer_button_event(
+            to,
+            egui::PointerButton::Primary,
+            false,
+        )],
+    );
+    let StoryNode::Scene { characters, .. } = workbench.node_graph.get_node(scene).unwrap() else {
+        panic!("scene")
+    };
+    assert!(
+        characters[0].x.unwrap() > 20,
+        "pointer drag must reach the authoring graph"
+    );
+    let moved_x = characters[0].x;
+    workbench.sync_graph_to_script().unwrap();
+    assert_eq!(
+        workbench
+            .scene
+            .iter()
+            .find_map(|entity| match &entity.kind {
+                visual_novel_engine::EntityKind::Character(_) => Some(entity.transform.x),
+                _ => None,
+            }),
+        moved_x
+    );
+    // The missing-image fixture intentionally uses the stage fallback; keep its
+    // validation window from covering the layer controls being tested.
+    workbench.show_validation = false;
+    let output = run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+    let lock_point = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            if let egui::epaint::Shape::Text(text) = &shape.shape {
+                let center = text.pos + text.galley.size() * 0.5;
+                (text.galley.text() == "Lock" && shape.clip_rect.contains(center)).then_some(center)
+            } else {
+                None
+            }
+        })
+        .expect("character layer must expose its lock");
+    for pressed in [true, false] {
+        run_workbench_frame(
+            &ctx,
+            &mut workbench,
+            1280.0,
+            720.0,
+            vec![
+                egui::Event::PointerMoved(lock_point),
+                pointer_button_event(lock_point, egui::PointerButton::Primary, pressed),
+            ],
+        );
+    }
+    let object_id = visual_novel_engine::authoring::composer::list_layered_objects(
+        workbench.node_graph.authoring_graph(),
+        Some(scene),
+    )
+    .into_iter()
+    .find(|object| object.character_name.as_deref() == Some("Drag me"))
+    .unwrap()
+    .object_id;
+    assert!(
+        workbench
+            .document()
+            .composer_layer_overrides
+            .get(&object_id)
+            .is_some_and(|entry| entry.locked),
+        "layer controls must use the same object ID as the interactive stage"
+    );
+    let output = run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+    let locked_from = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            if let egui::epaint::Shape::Text(text) = &shape.shape {
+                (text.galley.text() == "Drag me").then_some(text.pos + text.galley.size() * 0.5)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    let locked_to = locked_from + egui::vec2(40.0, 15.0);
+    for events in [
+        vec![
+            egui::Event::PointerMoved(locked_from),
+            pointer_button_event(locked_from, egui::PointerButton::Primary, true),
+        ],
+        vec![egui::Event::PointerMoved(locked_to)],
+        vec![pointer_button_event(
+            locked_to,
+            egui::PointerButton::Primary,
+            false,
+        )],
+    ] {
+        run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, events);
+    }
+    let StoryNode::Scene { characters, .. } = workbench.node_graph.get_node(scene).unwrap() else {
+        panic!("scene")
+    };
+    assert_eq!(characters[0].x, moved_x, "locked layers must not move");
+    let path = std::env::temp_dir().join(format!(
+        "composer-drag-{}.vnauthoring",
+        uuid::Uuid::new_v4()
+    ));
+    workbench.execute_save(&path, "");
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let document =
+        visual_novel_engine::authoring::AuthoringDocument::from_json(&saved.to_string()).unwrap();
+    let StoryNode::Scene { characters, .. } = document.graph.get_node(scene).unwrap() else {
+        panic!("saved scene")
+    };
+    assert_eq!(characters[0].x, moved_x);
+    assert!(
+        document
+            .composer_layer_overrides
+            .get(&object_id)
+            .unwrap()
+            .locked
+    );
+}
+
+#[test]
+fn graph_double_click_opens_the_composed_scene_without_a_property_popup() {
+    let ctx = egui::Context::default();
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    workbench.show_timeline = false;
+    workbench.show_graph = true;
+    workbench.node_editor_window_open = false;
+    workbench.show_inspector = false;
+    workbench.show_asset_browser = false;
+    workbench.composer_preview_mode = ComposerPreviewMode::IsolatedNode;
+    let start = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::Pos2::ZERO);
+    let scene = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("room.png".into()),
+            music: None,
+            characters: Vec::new(),
+        },
+        egui::pos2(0.0, 160.0),
+    );
+    workbench.node_graph.connect(start, scene);
+    workbench.sync_graph_to_script().unwrap();
+    run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+    let output = run_workbench_frame(&ctx, &mut workbench, 1280.0, 720.0, Vec::new());
+    let point = output
+        .shapes
+        .iter()
+        .find_map(|shape| {
+            if let egui::epaint::Shape::Text(text) = &shape.shape {
+                text.galley
+                    .text()
+                    .ends_with(" Scene")
+                    .then_some(text.pos + text.galley.size() * 0.5)
+            } else {
+                None
+            }
+        })
+        .expect("graph must paint a Scene node");
+    for _ in 0..2 {
+        run_workbench_frame(
+            &ctx,
+            &mut workbench,
+            1280.0,
+            720.0,
+            vec![
+                egui::Event::PointerMoved(point),
+                pointer_button_event(point, egui::PointerButton::Primary, true),
+            ],
+        );
+        run_workbench_frame(
+            &ctx,
+            &mut workbench,
+            1280.0,
+            720.0,
+            vec![pointer_button_event(
+                point,
+                egui::PointerButton::Primary,
+                false,
+            )],
+        );
+    }
+    assert_eq!(workbench.selected_node, Some(scene));
+    assert_eq!(
+        workbench.composer_preview_mode,
+        ComposerPreviewMode::SelectedRoute
+    );
+    assert_eq!(workbench.node_graph.editing, None);
+    assert!(workbench.scene.iter().any(|entity| matches!(&entity.kind, visual_novel_engine::EntityKind::Image(image) if image.path.as_ref() == "room.png")));
 }
 
 fn assert_rect_finite(label: &str, rect: egui::Rect) {
@@ -438,12 +761,12 @@ fn canvas_context_menu_renders_inside_tiny_and_edge_viewports() {
             egui::pos2(10.0, 20.0),
         ));
 
-        let output = ctx.run(raw_input(width, height, 1.0, Vec::new()), |ctx| {
+        let output = run_panel_frame(&ctx, width, height, Vec::new(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 render_context_menu(&mut graph, ui);
             });
         });
-        let used = ctx.used_rect();
+        let used = frame_used_rect(&ctx);
 
         assert!(
             !output.shapes.is_empty(),
@@ -482,7 +805,7 @@ fn node_context_menu_renders_scene_actions_inside_edge_viewports() {
             egui::pos2(width - 4.0, height - 4.0),
         ));
 
-        let output = ctx.run(raw_input(width, height, 1.0, Vec::new()), |ctx| {
+        let output = run_panel_frame(&ctx, width, height, Vec::new(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
                 render_context_menu(&mut graph, ui);
             });
@@ -522,12 +845,12 @@ fn editor_auxiliary_windows_render_without_escaping_viewports() {
         workbench.show_scene_frame_inspector = true;
         workbench.show_profiler_cache_panel = true;
 
-        let warmup = ctx.run(raw_input(width, height, 1.0, Vec::new()), |ctx| {
+        let warmup = run_panel_frame(&ctx, width, height, Vec::new(), |ctx| {
             ctx.set_visuals(egui::Visuals::dark());
             workbench.ui(ctx);
         });
         drop(warmup);
-        let output = ctx.run(raw_input(width, height, 1.0, Vec::new()), |ctx| {
+        let output = run_panel_frame(&ctx, width, height, Vec::new(), |ctx| {
             ctx.set_visuals(egui::Visuals::dark());
             workbench.ui(ctx);
         });
@@ -543,7 +866,7 @@ fn editor_auxiliary_windows_render_without_escaping_viewports() {
         );
         assert_used_rect_inside_screen(
             &format!("auxiliary windows {width}x{height}"),
-            ctx.used_rect(),
+            frame_used_rect(&ctx),
             screen,
         );
     }
@@ -614,7 +937,7 @@ fn visual_composer_panel_renders_real_responsive_rows_without_horizontal_escape(
         let mut image_failures = HashMap::new();
         let mut resource_service = EditorResourceService::new();
         let mut selected_entity_id = None;
-        let layer_overrides = HashMap::new();
+        let layer_overrides = std::collections::BTreeMap::new();
         let entity_owners = HashMap::new();
         let snapshot = stress_presentation_snapshot();
         let selected_node = StoryNode::Choice {
@@ -672,9 +995,9 @@ fn visual_composer_panel_renders_real_responsive_rows_without_horizontal_escape(
             screen,
         );
         assert!(
-            ctx.used_rect().right() <= width + 1.0,
+            frame_used_rect(&ctx).right() <= width + 1.0,
             "visual composer requested horizontal space outside its dock at {width}x{height}: {:?}",
-            ctx.used_rect()
+            frame_used_rect(&ctx)
         );
         if height >= 500.0 {
             let max_visible_shape_height = output
@@ -713,7 +1036,7 @@ fn visual_composer_dialogue_overlay_keeps_stage_visible_in_compact_window() {
     let mut image_failures = HashMap::new();
     let mut resource_service = EditorResourceService::new();
     let mut selected_entity_id = None;
-    let layer_overrides = HashMap::new();
+    let layer_overrides = std::collections::BTreeMap::new();
     let entity_owners = HashMap::new();
     let snapshot = stress_presentation_snapshot();
     let selected_node = StoryNode::Dialogue {
@@ -1001,18 +1324,71 @@ fn route_tree_view_renders_real_engine_snapshot_inside_viewport() {
     );
 }
 
-fn run_node_editor_frame(
-    ctx: &egui::Context,
-    graph: &mut NodeGraph,
-    undo: &mut UndoStack,
-    events: Vec<egui::Event>,
-) {
-    let output = ctx.run(raw_input(900.0, 640.0, 1.0, events), |ctx| {
+fn run_node_editor_frame(ctx: &egui::Context, graph: &mut NodeGraph, events: Vec<egui::Event>) {
+    let output = run_panel_frame(ctx, 900.0, 640.0, events, |ctx| {
         egui::CentralPanel::default().show(ctx, |ui| {
-            NodeEditorPanel::new(graph, undo).ui(ui);
+            NodeEditorPanel::new(graph).ui(ui);
         });
     });
     drop(output);
+}
+
+#[test]
+fn node_pointer_drag_previews_without_history_then_commits_one_move() {
+    let ctx = egui::Context::default();
+    let mut graph = NodeGraph::new();
+    let node = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Ava".into(),
+            text: "Drag me".into(),
+        },
+        egui::pos2(180.0, 160.0),
+    );
+    let original = graph.authoring_graph().get_node_pos(node).unwrap();
+    let history = graph.authoring_session.undo_delta_count();
+    let press = egui::pos2(220.0, 250.0);
+    let moved = press + egui::vec2(25.0, 12.0);
+    run_node_editor_frame(&ctx, &mut graph, vec![]);
+    run_node_editor_frame(
+        &ctx,
+        &mut graph,
+        vec![
+            egui::Event::PointerMoved(press),
+            pointer_button_event(press, egui::PointerButton::Primary, true),
+        ],
+    );
+    run_node_editor_frame(&ctx, &mut graph, vec![egui::Event::PointerMoved(moved)]);
+    assert_eq!(graph.dragging_node, Some(node));
+    assert_ne!(
+        graph.get_node_pos(node).unwrap(),
+        egui::pos2(original.x, original.y)
+    );
+    assert_eq!(graph.authoring_graph().get_node_pos(node), Some(original));
+    assert_eq!(graph.authoring_session.undo_delta_count(), history);
+    let preview_position = graph.get_node_pos(node).unwrap();
+    assert_eq!(
+        graph
+            .visible_nodes()
+            .find(|(id, _, _)| *id == node)
+            .unwrap()
+            .2,
+        preview_position
+    );
+    run_node_editor_frame(
+        &ctx,
+        &mut graph,
+        vec![pointer_button_event(
+            moved,
+            egui::PointerButton::Primary,
+            false,
+        )],
+    );
+    assert_eq!(graph.dragging_node, None);
+    assert_eq!(graph.authoring_session.undo_delta_count(), history + 1);
+    assert_eq!(graph.get_node_pos(node), Some(preview_position));
+    assert_ne!(graph.authoring_graph().get_node_pos(node), Some(original));
+    assert!(NodeEditorPanel::new(&mut graph).apply_undo_shortcut());
+    assert_eq!(graph.authoring_graph().get_node_pos(node), Some(original));
 }
 
 fn pointer_button_event(
@@ -1117,41 +1493,36 @@ fn egui_pointer_harness_registers_secondary_click_and_drag() {
 fn node_editor_empty_frame_renders_without_hanging() {
     let ctx = egui::Context::default();
     let mut graph = NodeGraph::new();
-    let mut undo = UndoStack::new();
-    run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
-    assert!(ctx.used_rect().is_finite());
+    run_node_editor_frame(&ctx, &mut graph, Vec::new());
+    assert!(frame_used_rect(&ctx).is_finite());
 }
 
 #[test]
 fn node_editor_secondary_press_frame_returns_without_hanging() {
     let ctx = egui::Context::default();
     let mut graph = NodeGraph::new();
-    let mut undo = UndoStack::new();
     let pos = egui::pos2(420.0, 360.0);
-    run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+    run_node_editor_frame(&ctx, &mut graph, Vec::new());
     run_node_editor_frame(
         &ctx,
         &mut graph,
-        &mut undo,
         vec![
             egui::Event::PointerMoved(pos),
             pointer_button_event(pos, egui::PointerButton::Secondary, true),
         ],
     );
-    assert!(ctx.used_rect().is_finite());
+    assert!(frame_used_rect(&ctx).is_finite());
 }
 
 #[test]
 fn node_editor_secondary_release_frame_opens_canvas_menu() {
     let ctx = egui::Context::default();
     let mut graph = NodeGraph::new();
-    let mut undo = UndoStack::new();
     let pos = egui::pos2(420.0, 360.0);
-    run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+    run_node_editor_frame(&ctx, &mut graph, Vec::new());
     run_node_editor_frame(
         &ctx,
         &mut graph,
-        &mut undo,
         vec![
             egui::Event::PointerMoved(pos),
             pointer_button_event(pos, egui::PointerButton::Secondary, true),
@@ -1160,7 +1531,6 @@ fn node_editor_secondary_release_frame_opens_canvas_menu() {
     run_node_editor_frame(
         &ctx,
         &mut graph,
-        &mut undo,
         vec![
             egui::Event::PointerMoved(pos),
             pointer_button_event(pos, egui::PointerButton::Secondary, false),
@@ -1173,30 +1543,22 @@ fn node_editor_secondary_release_frame_opens_canvas_menu() {
 fn node_editor_secondary_drag_frame_pans_canvas() {
     let ctx = egui::Context::default();
     let mut graph = NodeGraph::new();
-    let mut undo = UndoStack::new();
     let drag_start = egui::pos2(420.0, 360.0);
     let drag_end = egui::pos2(500.0, 410.0);
-    run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+    run_node_editor_frame(&ctx, &mut graph, Vec::new());
     let pan_before = graph.pan;
     run_node_editor_frame(
         &ctx,
         &mut graph,
-        &mut undo,
         vec![
             egui::Event::PointerMoved(drag_start),
             pointer_button_event(drag_start, egui::PointerButton::Secondary, true),
         ],
     );
+    run_node_editor_frame(&ctx, &mut graph, vec![egui::Event::PointerMoved(drag_end)]);
     run_node_editor_frame(
         &ctx,
         &mut graph,
-        &mut undo,
-        vec![egui::Event::PointerMoved(drag_end)],
-    );
-    run_node_editor_frame(
-        &ctx,
-        &mut graph,
-        &mut undo,
         vec![pointer_button_event(
             drag_end,
             egui::PointerButton::Secondary,
@@ -1212,26 +1574,19 @@ fn node_editor_secondary_drag_frame_pans_canvas() {
 fn node_editor_secondary_drag_move_frame_returns_without_hanging() {
     let ctx = egui::Context::default();
     let mut graph = NodeGraph::new();
-    let mut undo = UndoStack::new();
     let drag_start = egui::pos2(420.0, 360.0);
     let drag_end = egui::pos2(500.0, 410.0);
-    run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+    run_node_editor_frame(&ctx, &mut graph, Vec::new());
     run_node_editor_frame(
         &ctx,
         &mut graph,
-        &mut undo,
         vec![
             egui::Event::PointerMoved(drag_start),
             pointer_button_event(drag_start, egui::PointerButton::Secondary, true),
         ],
     );
-    run_node_editor_frame(
-        &ctx,
-        &mut graph,
-        &mut undo,
-        vec![egui::Event::PointerMoved(drag_end)],
-    );
-    assert!(ctx.used_rect().is_finite());
+    run_node_editor_frame(&ctx, &mut graph, vec![egui::Event::PointerMoved(drag_end)]);
+    assert!(frame_used_rect(&ctx).is_finite());
 }
 
 #[test]
@@ -1245,12 +1600,10 @@ fn node_editor_right_click_opens_menu_but_right_drag_pans_canvas() {
     .any(|click_pos| {
         let ctx = egui::Context::default();
         let mut graph = NodeGraph::new();
-        let mut undo = UndoStack::new();
-        run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+        run_node_editor_frame(&ctx, &mut graph, Vec::new());
         run_node_editor_frame(
             &ctx,
             &mut graph,
-            &mut undo,
             vec![
                 egui::Event::PointerMoved(click_pos),
                 pointer_button_event(click_pos, egui::PointerButton::Secondary, true),
@@ -1259,7 +1612,6 @@ fn node_editor_right_click_opens_menu_but_right_drag_pans_canvas() {
         run_node_editor_frame(
             &ctx,
             &mut graph,
-            &mut undo,
             vec![
                 egui::Event::PointerMoved(click_pos),
                 pointer_button_event(click_pos, egui::PointerButton::Secondary, false),
@@ -1284,29 +1636,21 @@ fn node_editor_right_click_opens_menu_but_right_drag_pans_canvas() {
     .any(|drag_start| {
         let ctx = egui::Context::default();
         let mut graph = NodeGraph::new();
-        let mut undo = UndoStack::new();
         let drag_end = drag_start + egui::vec2(80.0, 50.0);
-        run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+        run_node_editor_frame(&ctx, &mut graph, Vec::new());
         let pan_before = graph.pan;
         run_node_editor_frame(
             &ctx,
             &mut graph,
-            &mut undo,
             vec![
                 egui::Event::PointerMoved(drag_start),
                 pointer_button_event(drag_start, egui::PointerButton::Secondary, true),
             ],
         );
+        run_node_editor_frame(&ctx, &mut graph, vec![egui::Event::PointerMoved(drag_end)]);
         run_node_editor_frame(
             &ctx,
             &mut graph,
-            &mut undo,
-            vec![egui::Event::PointerMoved(drag_end)],
-        );
-        run_node_editor_frame(
-            &ctx,
-            &mut graph,
-            &mut undo,
             vec![pointer_button_event(
                 drag_end,
                 egui::PointerButton::Secondary,
@@ -1332,13 +1676,11 @@ fn node_editor_right_click_on_node_targets_node_menu() {
     .any(|click_pos| {
         let ctx = egui::Context::default();
         let mut graph = NodeGraph::new();
-        let mut undo = UndoStack::new();
         let node_id = graph.add_node(StoryNode::Start, egui::pos2(180.0, 160.0));
-        run_node_editor_frame(&ctx, &mut graph, &mut undo, Vec::new());
+        run_node_editor_frame(&ctx, &mut graph, Vec::new());
         run_node_editor_frame(
             &ctx,
             &mut graph,
-            &mut undo,
             vec![
                 egui::Event::PointerMoved(click_pos),
                 pointer_button_event(click_pos, egui::PointerButton::Secondary, true),
@@ -1347,7 +1689,6 @@ fn node_editor_right_click_on_node_targets_node_menu() {
         run_node_editor_frame(
             &ctx,
             &mut graph,
-            &mut undo,
             vec![
                 egui::Event::PointerMoved(click_pos),
                 pointer_button_event(click_pos, egui::PointerButton::Secondary, false),

@@ -36,8 +36,13 @@ fn main() {
     if let Err(err) = tracing_subscriber::fmt::try_init() {
         eprintln!("Player logging already initialized or unavailable: {err}");
     }
-    if let Err(err) = run_from_args(std::env::args().skip(1)) {
-        eprintln!("Error running player: {err}");
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let interactive = args.is_empty() || (args.len() == 1 && !args[0].starts_with('-'));
+    if let Err(err) = run_from_args(args) {
+        visual_novel_gui::report_startup_error(
+            &format!("Error running player: {err}"),
+            interactive,
+        );
         std::process::exit(1);
     }
 }
@@ -71,7 +76,10 @@ fn run_from_args(args: impl IntoIterator<Item = String>) -> Result<(), Box<dyn s
             }
             "--title" => title = Some(next_value(&mut iter, "--title")?),
             "--smoke" => smoke = true,
-            "--smoke-report" => smoke_report_path = Some(next_path(&mut iter, "--smoke-report")?),
+            "--smoke-report" => {
+                smoke_report_path = Some(next_path(&mut iter, "--smoke-report")?);
+                smoke = true;
+            }
             "--require-manifest" => require_manifest = true,
             "--untrusted" => security_mode = SecurityMode::Untrusted,
             "--trusted" => security_mode = SecurityMode::Trusted,

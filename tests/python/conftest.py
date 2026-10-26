@@ -1,5 +1,4 @@
 import pytest
-
 from native_healthcheck import python_native_module_origin_healthcheck
 
 

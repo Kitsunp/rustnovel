@@ -11,7 +11,6 @@ Run with:
 
 from vnengine import run_script_headless
 
-
 script_json = """
 {
   "script_schema_version": "1.0",

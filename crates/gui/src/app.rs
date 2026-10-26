@@ -193,7 +193,7 @@ pub fn run_app(script_json: String, config: Option<VnConfig>) -> Result<(), GuiE
         &title,
         options,
         Box::new(move |cc| {
-            Box::new(VnApp::new(
+            Ok(Box::new(VnApp::new(
                 engine,
                 resolved,
                 preferences,
@@ -201,7 +201,7 @@ pub fn run_app(script_json: String, config: Option<VnConfig>) -> Result<(), GuiE
                 script_id,
                 assets,
                 cc,
-            ))
+            )))
         }),
     )?;
     Ok(())

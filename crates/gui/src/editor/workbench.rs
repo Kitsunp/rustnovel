@@ -17,7 +17,6 @@ use crate::editor::{
     node_graph::NodeGraph,
     node_types::ToastState,
     timeline_panel::TimelinePanel,
-    undo::UndoStack,
     EditorMode,
     LintCode,
     LintIssue,
@@ -50,8 +49,6 @@ pub fn graph_viewport_resize_requires_fit(
 pub struct EditorWorkbench {
     pub config: VnConfig,
     pub node_graph: NodeGraph,
-    pub authoring_session: visual_novel_engine::authoring::AuthoringDocumentSession,
-    pub undo_stack: UndoStack,
     pub manifest: Option<visual_novel_engine::manifest::ProjectManifest>,
     pub manifest_path: Option<std::path::PathBuf>,
     pub project_root: Option<std::path::PathBuf>,
@@ -99,14 +96,11 @@ pub struct EditorWorkbench {
     pub composer_stage_fit: crate::editor::StageFit,
     pub composer_preview_mode: crate::editor::ComposerPreviewMode,
     pub composer_default_background_fit: crate::editor::BackgroundFit,
-    pub composer_background_fit_overrides:
-        std::collections::HashMap<String, crate::editor::BackgroundFit>,
-    pub composer_layer_overrides:
-        std::collections::HashMap<String, crate::editor::visual_composer::LayerOverride>,
 
     // Timeline/Playback
     pub timeline: visual_novel_engine::Timeline,
     pub current_time: f32,
+    timeline_fractional_ticks: f64,
     pub is_playing: bool,
     pub player_state: crate::editor::player_ui::PlayerSessionState,
 
@@ -127,10 +121,8 @@ pub struct EditorWorkbench {
     pub selected_issue: Option<usize>,
     pub imported_report_stale: bool,
     pub imported_report_untrusted: bool,
-    pub last_fix_snapshot: Option<NodeGraph>,
+    last_fix_command_index: Option<usize>,
     pub quick_fix_audit: Vec<QuickFixAuditEntry>,
-    pub operation_log: Vec<visual_novel_engine::authoring::OperationLogEntry>,
-    pub verification_runs: Vec<visual_novel_engine::authoring::VerificationRun>,
     pub last_operation_fingerprint:
         Option<visual_novel_engine::authoring::AuthoringReportFingerprint>,
     pending_editor_operation: Option<PendingEditorOperation>,
@@ -208,20 +200,12 @@ impl EditorWorkbench {
             // Optional: graph.add_node(...)
         }
 
-        let mut undo_stack = UndoStack::new();
-        undo_stack.push(graph.clone());
-        let authoring_session = visual_novel_engine::authoring::AuthoringDocumentSession::new(
-            visual_novel_engine::authoring::AuthoringDocument::new(graph.authoring_graph().clone()),
-        );
-
         let layout_prefs_path = Self::layout_prefs_path();
         let loaded_prefs = Self::load_layout_prefs(&layout_prefs_path);
 
         let mut workbench = Self {
             config,
             node_graph: graph,
-            authoring_session,
-            undo_stack,
             manifest: None,
             manifest_path: None,
             project_root: None,
@@ -263,10 +247,9 @@ impl EditorWorkbench {
             composer_stage_fit: crate::editor::StageFit::default(),
             composer_preview_mode: crate::editor::ComposerPreviewMode::default(),
             composer_default_background_fit: crate::editor::BackgroundFit::default(),
-            composer_background_fit_overrides: std::collections::HashMap::new(),
-            composer_layer_overrides: std::collections::HashMap::new(),
             timeline: visual_novel_engine::Timeline::new(60), // 60 ticks per second
             current_time: 0.0,
+            timeline_fractional_ticks: 0.0,
             is_playing: false,
             player_state: crate::editor::player_ui::PlayerSessionState::default(),
             engine: None,
@@ -283,10 +266,8 @@ impl EditorWorkbench {
             selected_issue: None,
             imported_report_stale: false,
             imported_report_untrusted: false,
-            last_fix_snapshot: None,
+            last_fix_command_index: None,
             quick_fix_audit: Vec::new(),
-            operation_log: Vec::new(),
-            verification_runs: Vec::new(),
             last_operation_fingerprint: None,
             pending_editor_operation: None,
             show_fix_confirm: false,
@@ -332,22 +313,48 @@ impl EditorWorkbench {
     }
 
     pub fn update(&mut self, dt: usize) {
-        if self.is_playing {
-            let delta_ticks = u32::try_from(dt).unwrap_or(u32::MAX).max(1);
+        if self.is_playing && dt > 0 {
+            let delta_ticks = u32::try_from(dt).unwrap_or(u32::MAX);
             self.timeline.advance(delta_ticks);
             self.current_time = self.timeline.current_time() as f32;
-            if self.timeline.current_time() > self.timeline.duration() {
-                self.current_time = 0.0;
-                self.timeline.seek(0);
+            if self.timeline.current_time() >= self.timeline.duration() {
+                self.timeline.seek(self.timeline.duration());
+                self.current_time = self.timeline.current_time() as f32;
+                self.timeline_fractional_ticks = 0.0;
                 self.is_playing = false;
             }
         }
     }
 
     pub fn update_seconds(&mut self, dt_seconds: f32) {
-        let ticks_per_second = self.timeline.ticks_per_second.max(1) as f32;
-        let ticks = (dt_seconds.max(0.0) * ticks_per_second).round().max(1.0) as usize;
-        self.update(ticks);
+        if !self.is_playing || !dt_seconds.is_finite() || dt_seconds <= 0.0 {
+            return;
+        }
+        self.timeline_fractional_ticks +=
+            f64::from(dt_seconds) * f64::from(self.timeline.ticks_per_second.max(1));
+        let ticks = self.timeline_fractional_ticks.floor();
+        self.timeline_fractional_ticks -= ticks;
+        self.update(ticks as usize);
+    }
+
+    /// Evaluate the scratch timeline on a copy, leaving authored poses intact.
+    pub fn composer_animated_scene(&self) -> visual_novel_engine::SceneState {
+        use visual_novel_engine::PropertyType;
+        let mut scene = self.scene.clone();
+        for (id, property, value) in self.timeline.evaluate_at(self.current_time as u32) {
+            let Some(entity) = scene.get_mut(id) else {
+                continue;
+            };
+            match property {
+                PropertyType::PositionX => entity.transform.x = value,
+                PropertyType::PositionY => entity.transform.y = value,
+                PropertyType::ZOrder => entity.transform.z_order = value,
+                PropertyType::Scale => entity.transform.scale = value.max(0) as u32,
+                PropertyType::Opacity => entity.transform.opacity = value.clamp(0, 1000) as u32,
+                PropertyType::Rotation => {}
+            }
+        }
+        scene
     }
 
     fn layout_prefs_path() -> std::path::PathBuf {
@@ -452,6 +459,28 @@ impl EditorWorkbench {
     }
 
     pub fn reset_layout_state(&mut self, ctx: &egui::Context) {
+        if !self
+            .node_graph
+            .authoring_session
+            .document()
+            .composer_layer_overrides
+            .is_empty()
+            || !self
+                .node_graph
+                .authoring_session
+                .document()
+                .composer_background_fit_overrides
+                .is_empty()
+        {
+            if let Err(error) = self.apply_authoring_document_command(
+                visual_novel_engine::authoring::AuthoringDocumentCommand::ResetComposerOverrides,
+            ) {
+                self.toast = Some(ToastState::error(format!(
+                    "No se pudo restablecer el layout: {error}"
+                )));
+                return;
+            }
+        }
         self.show_graph = true;
         self.show_inspector = true;
         self.show_timeline = true;
@@ -463,9 +492,6 @@ impl EditorWorkbench {
         self.composer_stage_fit = crate::editor::StageFit::default();
         self.composer_preview_mode = crate::editor::ComposerPreviewMode::default();
         self.composer_default_background_fit = crate::editor::BackgroundFit::default();
-        self.composer_background_fit_overrides.clear();
-        self.composer_layer_overrides.clear();
-        self.rebuild_authoring_session_from_fields();
         self.selected_entity = None;
         self.sync_workspace_layout_from_flags();
         self.layout_generation = self.layout_generation.wrapping_add(1);

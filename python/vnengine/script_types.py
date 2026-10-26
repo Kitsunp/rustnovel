@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping as MappingABC
-from dataclasses import dataclass, field
 import json
 import warnings
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
+from collections.abc import Mapping as MappingABC
+from dataclasses import dataclass, field
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Tuple,
+    Union,
+    cast,
+)
 
 from .types import (
     SCRIPT_SCHEMA_VERSION,
@@ -31,6 +42,15 @@ from .types import (
     Transition,
     _require_int,
 )
+
+CharacterTuple = Union[
+    Tuple[str, Optional[str], Optional[str]],
+    Tuple[
+        str, Optional[str], Optional[str], Optional[int], Optional[int], Optional[float]
+    ],
+]
+CharacterInput = Union[CharacterPlacement, CharacterTuple]
+CharacterPatchInput = Union[CharacterPatch, CharacterTuple]
 
 SchemaPolicy = str
 STRICT_CURRENT: SchemaPolicy = "strict_current"
@@ -60,7 +80,7 @@ class Script:
     @classmethod
     def from_dict(
         cls, data: Mapping[str, Any], schema_policy: SchemaPolicy = STRICT_CURRENT
-    ) -> "Script":
+    ) -> Script:
         if not isinstance(data, MappingABC):
             raise ValueError(
                 f"Script payload must be object, got {type(data).__name__}"
@@ -97,15 +117,15 @@ class Script:
     @classmethod
     def from_json(
         cls, raw: str, schema_policy: SchemaPolicy = STRICT_CURRENT
-    ) -> "Script":
+    ) -> Script:
         return cls.from_dict(json.loads(raw), schema_policy=schema_policy)
 
     @classmethod
-    def from_legacy_dict(cls, data: Mapping[str, Any]) -> "Script":
+    def from_legacy_dict(cls, data: Mapping[str, Any]) -> Script:
         return cls.from_dict(data, schema_policy=LEGACY_READ_ONLY)
 
     @classmethod
-    def from_legacy_json(cls, raw: str) -> "Script":
+    def from_legacy_json(cls, raw: str) -> Script:
         return cls.from_json(raw, schema_policy=LEGACY_READ_ONLY)
 
 
@@ -150,36 +170,32 @@ def normalize_choice_options(
 
 
 def normalize_characters(
-    characters: Iterable[
-        Union[CharacterPlacement, Tuple[str, Optional[str], Optional[str]]]
-    ],
+    characters: Iterable[CharacterInput],
 ) -> List[CharacterPlacement]:
     normalized: List[CharacterPlacement] = []
     for character in characters:
         if isinstance(character, CharacterPlacement):
             normalized.append(character)
         else:
-            name, expression, position = character
-            normalized.append(
-                CharacterPlacement(name=name, expression=expression, position=position)
-            )
+            fields = cast(CharacterTuple, tuple(character))
+            if len(fields) not in (3, 6):
+                raise ValueError("character tuples must have 3 or 6 elements")
+            normalized.append(CharacterPlacement(*fields))
     return normalized
 
 
 def normalize_character_patches(
-    characters: Iterable[
-        Union[CharacterPatch, Tuple[str, Optional[str], Optional[str]]]
-    ],
+    characters: Iterable[CharacterPatchInput],
 ) -> List[CharacterPatch]:
     normalized: List[CharacterPatch] = []
     for character in characters:
         if isinstance(character, CharacterPatch):
             normalized.append(character)
         else:
-            name, expression, position = character
-            normalized.append(
-                CharacterPatch(name=name, expression=expression, position=position)
-            )
+            fields = cast(CharacterTuple, tuple(character))
+            if len(fields) not in (3, 6):
+                raise ValueError("character tuples must have 3 or 6 elements")
+            normalized.append(CharacterPatch(*fields))
     return normalized
 
 

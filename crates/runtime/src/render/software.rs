@@ -226,21 +226,24 @@ impl BuiltinSoftwareDrawer {
                 return None;
             }
         };
-        let rgba = match image::load_from_memory(&bytes) {
-            Ok(image) => image.to_rgba8(),
+        let image = match vnengine_assets::decode_image_bytes(
+            asset,
+            &bytes,
+            &vnengine_assets::AssetLimits::default(),
+        ) {
+            Ok(image) => image,
             Err(err) => {
                 eprintln!("software renderer could not decode image '{asset}': {err}");
                 self.failed_images.insert(asset.to_string());
                 return None;
             }
         };
-        let (width, height) = rgba.dimensions();
         self.images.insert(
             asset.to_string(),
             DecodedImage {
-                width,
-                height,
-                rgba: rgba.into_raw(),
+                width: image.size[0] as u32,
+                height: image.size[1] as u32,
+                rgba: image.pixels,
             },
         );
         self.images.get(asset)
@@ -259,6 +262,22 @@ impl Default for BuiltinSoftwareDrawer {
 
 impl SoftwareDrawStrategy for BuiltinSoftwareDrawer {
     fn draw(&mut self, frame: &mut [u8], size: (u32, u32), render_frame: RenderFrame<'_>) {
+        let active_images = render_frame
+            .scene_frame
+            .commands
+            .iter()
+            .filter_map(|command| {
+                if let RenderCommand::Image { asset, .. } = command {
+                    Some(asset.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<HashSet<_>>();
+        self.images
+            .retain(|asset, _| active_images.contains(asset.as_str()));
+        self.failed_images
+            .retain(|asset| active_images.contains(asset.as_str()));
         clear(frame, [22, 24, 34, 255]);
         for command in &render_frame.scene_frame.commands {
             self.draw_command(frame, size, command, render_frame);
@@ -286,9 +305,7 @@ impl SoftwareDrawStrategy for BuiltinSoftwareDrawer {
 }
 
 fn clear(frame: &mut [u8], color: [u8; 4]) {
-    for chunk in frame.chunks_exact_mut(4) {
-        chunk.copy_from_slice(&color);
-    }
+    frame.as_chunks_mut::<4>().0.fill(color);
 }
 
 #[derive(Clone, Copy)]
@@ -438,8 +455,14 @@ fn image_draw_plan(
 }
 
 fn blend_pixel(frame: &mut [u8], width: u32, x: u32, y: u32, color: [u8; 4]) {
-    let idx = ((y * width + x) * 4) as usize;
-    if idx + 4 > frame.len() {
+    let Some(idx) = (y as usize)
+        .checked_mul(width as usize)
+        .and_then(|row| row.checked_add(x as usize))
+        .and_then(|pixel| pixel.checked_mul(4))
+    else {
+        return;
+    };
+    if x >= width || idx > frame.len().saturating_sub(4) || frame.len() < 4 {
         return;
     }
     let alpha = color[3] as f32 / 255.0;
@@ -449,3 +472,7 @@ fn blend_pixel(frame: &mut [u8], width: u32, x: u32, y: u32, color: [u8; 4]) {
     frame[idx + 2] = (color[2] as f32 * alpha + frame[idx + 2] as f32 * inverse).round() as u8;
     frame[idx + 3] = 255;
 }
+
+#[cfg(test)]
+#[path = "software/tests.rs"]
+mod tests;

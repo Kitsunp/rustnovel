@@ -13,19 +13,10 @@ impl AuthoringCommandBus {
                 node,
                 position,
                 connections,
-            } => {
-                if !self
-                    .graph
-                    .add_node_with_id(*node_id, node.clone(), *position)
-                {
-                    return Err(format!("node {node_id} could not be restored"));
-                }
-                for connection in connections {
-                    self.graph
-                        .connect_port(connection.from, connection.from_port, connection.to);
-                }
-                Ok(())
-            }
+                context,
+            } => self
+                .graph
+                .restore_removed_node(*node_id, node, *position, connections, context),
             AuthoringDelta::Connected {
                 connection,
                 replaced,
@@ -73,17 +64,24 @@ impl AuthoringCommandBus {
                 }
                 Ok(())
             }
-            AuthoringDelta::BranchConnected { from, from_port, .. } => Err(format!(
-                "branch connection from node {from} port {from_port} cannot be reverted as a single graph delta"
-            )),
+            AuthoringDelta::BranchConnected { undo, .. }
+            | AuthoringDelta::QuickFixApplied { undo, .. } => {
+                self.graph.restore_node_edge_mutation(undo);
+                Ok(())
+            }
             AuthoringDelta::NodeEdited {
-                node_id, before, ..
+                node_id,
+                before,
+                removed_connections,
+                ..
             } => {
                 let node = self
                     .graph
                     .get_node_mut(*node_id)
                     .ok_or_else(|| format!("node {node_id} not found"))?;
                 *node = before.clone();
+                self.graph.restore_connections(removed_connections);
+                self.graph.mark_modified();
                 Ok(())
             }
             AuthoringDelta::FragmentCreated { fragment } => self
@@ -95,11 +93,11 @@ impl AuthoringCommandBus {
                 fragment,
                 before_stack,
             } => {
-                if !self
-                    .graph
-                    .insert_fragment_for_command_bus(fragment.clone())
-                {
-                    return Err(format!("fragment '{}' could not be restored", fragment.fragment_id));
+                if !self.graph.insert_fragment_for_command_bus(fragment.clone()) {
+                    return Err(format!(
+                        "fragment '{}' could not be restored",
+                        fragment.fragment_id
+                    ));
                 }
                 self.graph
                     .replace_graph_stack_for_command_bus(before_stack.clone());
@@ -120,9 +118,6 @@ impl AuthoringCommandBus {
                 .replace_fragment_for_command_bus(before.clone())
                 .then_some(())
                 .ok_or_else(|| format!("fragment '{fragment_id}' could not be restored")),
-            AuthoringDelta::QuickFixApplied { fix_id, .. } => Err(format!(
-                "quick-fix '{fix_id}' cannot be reverted as a single graph delta"
-            )),
             AuthoringDelta::ChoiceOptionReordered {
                 node_id,
                 before_node,

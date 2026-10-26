@@ -11,12 +11,12 @@ jobs:
   lint:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev xvfb
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Install Python lint tools
@@ -34,15 +34,14 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
-      # RUSTSEC-2024-0436 is a documented exception in docs/audits and should be
-      # revisited when the transitive dependency chain can be upgraded.
-      - run: cargo audit -D warnings --ignore RUSTSEC-2024-0436
+      # Share the strict local audit policy and documented maintenance exceptions.
+      - run: cargo audit
 
   test:
     runs-on: ubuntu-24.04
     needs: lint
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -60,7 +59,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-2022]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -76,7 +75,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: lint
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -240,7 +239,7 @@ jobs:
           assert total_size == report["total_size"]
           PY
       - name: Upload Linux package smoke artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: package-linux-smoke
@@ -255,7 +254,7 @@ jobs:
       VNENGINE_RENDER_BACKEND: software
       VNENGINE_FORCE_WGPU_FAILURE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -271,7 +270,7 @@ jobs:
       SOURCE_DATE_EPOCH: "1704067200"
       CARGO_PROFILE_RELEASE_DEBUG: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Build release artifact twice and compare hash
         shell: bash
@@ -294,7 +293,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: lint
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-cyclonedx
         run: cargo install cargo-cyclonedx --locked
@@ -329,7 +328,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: lint
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -341,13 +340,13 @@ jobs:
     runs-on: ubuntu-24.04
     needs: lint
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev xvfb
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Verify Python build artifacts

@@ -1,15 +1,16 @@
+import ast
+import gc
+import inspect
 import json
 import shutil
 import sys
 import types
 import unittest
-import ast
-import inspect
+import weakref
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-
 from vnengine.native import call_native_method, load_native_engine
 from vnengine.types import SCRIPT_SCHEMA_VERSION, SUPPORTED_EVENT_TYPES
 
@@ -137,14 +138,26 @@ class NativeBindingsTests(unittest.TestCase):
 
         def handler(command, args):
             calls.append((command, args))
+            self.assertEqual(engine.current_event()["type"], "ext_call")
+            self.assertEqual(engine.pending_external_call()["command"], command)
+            self.assertIsInstance(engine.visual_state(), dict)
+            for advance in (engine.step, engine.resume, engine.complete_external_call):
+                with self.assertRaisesRegex(RuntimeError, "callback is active"):
+                    advance()
+            engine.audio().play_sfx("callback-click")
 
         if hasattr(engine, "allow_ext_call_command"):
             engine.allow_ext_call_command("minigame_start")
         engine.register_handler(handler)
+        engine.audio().play_bgm("pre-dispatch")
         result = engine.step()
         event = result.event
         self.assertEqual(event["type"], "ext_call")
         self.assertEqual(calls, [("minigame_start", ["poker"])])
+        self.assertEqual(
+            [item["type"] for item in result.audio], ["play_bgm", "play_sfx"]
+        )
+        self.assertEqual(result.audio[1]["path"], "callback-click")
         if hasattr(engine, "last_ext_call_error"):
             self.assertIsNone(engine.last_ext_call_error())
 
@@ -153,6 +166,74 @@ class NativeBindingsTests(unittest.TestCase):
         self.assertEqual(next_event["type"], "dialogue")
         if hasattr(engine, "last_ext_call_error"):
             self.assertIsNone(engine.last_ext_call_error())
+
+    def test_compiled_events_preserve_conditions_and_patch_coordinates(self):
+        from vnengine.types import event_from_dict
+
+        cases = [
+            (
+                {"type": "set_var", "key": "counter", "value": 17},
+                {"type": "set_var", "key": "0", "value": 17},
+            ),
+            (
+                {
+                    "type": "jump_if",
+                    "cond": {"kind": "flag", "key": "ready", "is_set": True},
+                    "target": "end",
+                },
+                {
+                    "type": "jump_if",
+                    "cond": {"kind": "flag", "key": "0", "is_set": True},
+                    "target": "1",
+                },
+            ),
+            (
+                {
+                    "type": "jump_if",
+                    "cond": {
+                        "kind": "var_cmp",
+                        "key": "counter",
+                        "op": "ge",
+                        "value": 4,
+                    },
+                    "target": "end",
+                },
+                {
+                    "type": "jump_if",
+                    "cond": {"kind": "var_cmp", "key": "0", "op": "ge", "value": 4},
+                    "target": "1",
+                },
+            ),
+        ]
+        for event, expected in cases:
+            with self.subTest(event=event):
+                engine = self.native.Engine(
+                    self._script_json(
+                        [event, {"type": "dialogue", "speaker": "A", "text": "done"}],
+                        {"start": 0, "end": 1},
+                    )
+                )
+                current = engine.current_event()
+                self.assertEqual(event_from_dict(current).to_dict(), expected)
+                self.assertEqual(engine.step().event, current)
+
+        patch = {
+            "type": "patch",
+            "update": [{"name": "Ava", "x": 12, "y": 34, "scale": 1.25}],
+        }
+        engine = self.native.Engine(self._script_json([patch]))
+        current = engine.current_event()
+        self.assertEqual(
+            event_from_dict(current).update[0].to_dict(),
+            {
+                "name": "Ava",
+                "expression": None,
+                "position": None,
+                "x": 12,
+                "y": 34,
+                "scale": 1.25,
+            },
+        )
 
     def test_ext_call_handler_is_denied_without_explicit_capability(self):
         if not self._supports_ext_call():
@@ -171,6 +252,41 @@ class NativeBindingsTests(unittest.TestCase):
         if hasattr(engine, "last_ext_call_error"):
             self.assertIn("denied", engine.last_ext_call_error())
 
+        def failing_handler(command, args):
+            self.assertEqual(engine.current_event()["type"], "ext_call")
+            raise ValueError("callback failed")
+
+        engine.allow_ext_call_command("minigame_start")
+        engine.register_handler(failing_handler)
+        with self.assertRaisesRegex(RuntimeError, "callback failed"):
+            engine.step()
+        self.assertEqual(engine.pending_external_call()["event_ip"], 0)
+        engine.register_handler(handler)
+        self.assertEqual(engine.step().event["type"], "ext_call")
+        self.assertEqual(engine.current_event()["type"], "dialogue")
+        self.assertIsNone(engine.last_ext_call_error())
+
+    def test_handler_reference_cycles_are_collectable_with_engine_or_audio(self):
+        class Marker:
+            pass
+
+        def make_cycle(via_audio):
+            engine = self.native.Engine(self._ext_call_script_json())
+            marker = Marker()
+            owner = engine.audio() if via_audio else engine
+
+            def handler(command, args, owner=owner, marker=marker):
+                return owner, marker
+
+            engine.register_handler(handler)
+            return weakref.ref(marker)
+
+        for via_audio in (False, True):
+            with self.subTest(via_audio=via_audio):
+                references = [make_cycle(via_audio) for _ in range(16)]
+                gc.collect()
+                self.assertTrue(all(reference() is None for reference in references))
+
     def test_audio_controller_and_prefetch_api(self):
         engine = self.native.Engine(self._dialogue_script_json())
         if not hasattr(engine, "set_prefetch_depth"):
@@ -185,6 +301,17 @@ class NativeBindingsTests(unittest.TestCase):
 
         audio = engine.audio()
         audio.play_bgm("theme_song", loop=True, fade_in=0.5)
+        for invalid in (float("inf"), float("nan"), 1e300):
+            with self.subTest(fade_in=invalid), self.assertRaises(ValueError):
+                audio.play_bgm("invalid", fade_in=invalid)
+            with self.subTest(fade_out=invalid), self.assertRaises(ValueError):
+                audio.stop_all(fade_out=invalid)
+        for method in (audio.play_bgm, audio.play_sfx, audio.play_voice):
+            for invalid in (float("inf"), float("-inf"), float("nan")):
+                with self.subTest(
+                    method=method.__name__, volume=invalid
+                ), self.assertRaises(ValueError):
+                    method("invalid", volume=invalid)
 
         step_result = engine.step()
         commands = step_result.audio
@@ -270,6 +397,22 @@ class NativeBindingsTests(unittest.TestCase):
         self.assertLessEqual(stats["allocated_bytes"], 10)
         self.assertEqual(stats["total_cached_assets"], 1)
 
+    def test_asset_cache_normalizes_lookup_and_invalidation(self):
+        engine = self.native.Engine(self._dialogue_script_json())
+        engine.cache_asset("  asset/a.bin  ", b"payload")
+        self.assertEqual(engine.get_cached_asset(" asset/a.bin "), b"payload")
+        self.assertTrue(engine.invalidate_cached_asset(" asset/a.bin "))
+        self.assertEqual(engine.asset_cache_stats()["total_cached_assets"], 0)
+
+    def test_empty_assets_have_bounded_cache_metadata(self):
+        engine = self.native.Engine(self._dialogue_script_json())
+        for index in range(5000):
+            engine.cache_asset(f"asset/{index}.bin", b"")
+        stats = engine.asset_cache_stats()
+        self.assertLessEqual(stats["total_cached_assets"], 4096)
+        self.assertIsNone(engine.get_cached_asset("asset/0.bin"))
+        self.assertEqual(engine.get_cached_asset("asset/4999.bin"), b"")
+
     def test_native_event_contract_matches_python_contract(self):
         engine = self.native.Engine(self._dialogue_script_json())
         if not hasattr(engine, "supported_event_types"):
@@ -281,6 +424,192 @@ class NativeBindingsTests(unittest.TestCase):
             self.assertEqual(
                 tuple(builder.supported_event_types()), SUPPORTED_EVENT_TYPES
             )
+
+    def test_character_coordinates_match_builders_and_story_nodes(self):
+        from vnengine.builder import ScriptBuilder
+        from vnengine.types import Patch
+
+        characters = [("Ava", "happy", "left"), ("Mira", None, None, 12, 34, 1.25)]
+        native = self.native.ScriptBuilder()
+        python = ScriptBuilder()
+        for builder in (native, python):
+            builder.scene(characters=characters)
+            builder.patch(add=characters, update=characters)
+        native_events = json.loads(native.build_json())["events"]
+        python_events = json.loads(python.to_json())["events"]
+        for events in (native_events, python_events):
+            self.assertNotIn("background", events[1])
+            self.assertNotIn("music", events[1])
+            events[0]["background"] = "bg/room.png"
+            events[0]["music"] = "music/theme.ogg"
+            events.append(
+                Patch.from_dict(
+                    {
+                        "type": "patch",
+                        "background": None,
+                        "music": None,
+                    }
+                ).to_dict()
+            )
+            engine = self.native.Engine(
+                json.dumps(
+                    {
+                        "script_schema_version": SCRIPT_SCHEMA_VERSION,
+                        "events": events,
+                        "labels": {"start": 0},
+                    }
+                )
+            )
+            engine.step()
+            self.assertNotIn("background", engine.current_event())
+            self.assertIsNone(Patch.from_dict(engine.current_event()).background)
+            engine.step()
+            self.assertEqual(engine.visual_state()["background"], "bg/room.png")
+            self.assertEqual(engine.visual_state()["music"], "music/theme.ogg")
+            engine.step()
+            self.assertIsNone(engine.visual_state()["background"])
+            self.assertIsNone(engine.visual_state()["music"])
+            events.pop()
+            events[0]["background"] = None
+            events[0]["music"] = None
+        for constructor, kwargs, expected in [
+            (self.native.StoryNode.scene, {"characters": characters}, native_events[0]),
+            (
+                self.native.StoryNode.scene_full,
+                {"characters": characters},
+                native_events[0],
+            ),
+            (
+                self.native.StoryNode.scene_patch,
+                {"add": characters, "update": characters},
+                native_events[1],
+            ),
+            (
+                self.native.StoryNode.scene_patch_full,
+                {"add": characters, "update": characters},
+                native_events[1],
+            ),
+        ]:
+            with self.subTest(constructor=constructor.__name__):
+                graph = self.native.NodeGraph()
+                start = graph.add_node(self.native.StoryNode.start(), 0.0, 0.0)
+                node = graph.add_node(constructor(**kwargs), 0.0, 100.0)
+                end = graph.add_node(self.native.StoryNode.end(), 0.0, 200.0)
+                graph.connect(start, node)
+                graph.connect(node, end)
+                event = json.loads(graph.to_script_json())["events"][0]
+                self.assertEqual(event, expected)
+        for native_event, python_event in zip(native_events, python_events):
+            for field in ("characters", "add", "update"):
+                if field in native_event:
+                    pairs = zip(native_event[field], python_event[field])
+                    for native_character, python_character in pairs:
+                        for key in (
+                            "name",
+                            "expression",
+                            "position",
+                            "x",
+                            "y",
+                            "scale",
+                        ):
+                            self.assertEqual(
+                                native_character.get(key),
+                                python_character.get(key),
+                            )
+        for builder in (native, python):
+            with self.assertRaises((TypeError, ValueError)):
+                builder.patch(update=[("Ava", None, None, 12)])
+
+    def test_runtime_media_events_roundtrip_through_python_types(self):
+        from vnengine.types import Script, event_from_dict
+
+        cases = []
+        for channel_id, channel in enumerate(("bgm", "sfx", "voice")):
+            for action_id, action in enumerate(("play", "stop", "fade_out")):
+                cases.append(
+                    (
+                        {
+                            "type": "audio_action",
+                            "channel": f" {channel.upper()} ",
+                            "action": f" {action.upper()} ",
+                            "asset": "sound.ogg",
+                            "volume": 0.5,
+                            "fade_duration_ms": 125,
+                            "loop_playback": False,
+                        },
+                        {"channel": channel, "action": action},
+                        {"channel": channel_id, "action": action_id},
+                    )
+                )
+        for kind_id, kind in enumerate(("fade", "dissolve", "cut")):
+            cases.append(
+                (
+                    {
+                        "type": "transition",
+                        "kind": f" {kind.upper()} ",
+                        "duration_ms": 250,
+                        "color": "#000000",
+                    },
+                    {"kind": kind},
+                    {"kind": kind_id},
+                )
+            )
+        cases.append(
+            (
+                {
+                    "type": "transition",
+                    "kind": "fade_black",
+                    "duration_ms": 250,
+                },
+                {"kind": "fade"},
+                {"kind": 0},
+            )
+        )
+        for event, names, codes in cases:
+            with self.subTest(event=event):
+                engine = self.native.Engine(
+                    json.dumps(
+                        {
+                            "script_schema_version": SCRIPT_SCHEMA_VERSION,
+                            "events": [event],
+                            "labels": {"start": 0},
+                        }
+                    )
+                )
+                compiled = engine.current_event()
+                normalized = event_from_dict(compiled)
+                for field, expected in names.items():
+                    self.assertEqual(getattr(normalized, field), expected)
+                    self.assertEqual(compiled[field], codes[field])
+                    self.assertEqual(compiled[field + "_name"], expected)
+                rebuilt = self.native.Engine(
+                    Script(events=[normalized], labels={"start": 0}).to_json()
+                )
+                self.assertEqual(rebuilt.current_event(), compiled)
+                self.assertEqual(engine.step().event, compiled)
+                kwargs = {key: value for key, value in event.items() if key != "type"}
+                constructor = (
+                    self.native.StoryNode.audio_action
+                    if event["type"] == "audio_action"
+                    else self.native.StoryNode.transition
+                )
+                graph = self.native.NodeGraph()
+                start = graph.add_node(self.native.StoryNode.start(), 0.0, 0.0)
+                node = graph.add_node(constructor(**kwargs), 0.0, 100.0)
+                end = graph.add_node(self.native.StoryNode.end(), 0.0, 200.0)
+                graph.connect(start, node)
+                graph.connect(node, end)
+                codes = {issue.code for issue in graph.validate_no_io()}
+                self.assertTrue(
+                    codes.isdisjoint(
+                        {
+                            "VAL_AUDIO_CHANNEL_INVALID",
+                            "VAL_AUDIO_ACTION_INVALID",
+                            "VAL_TRANSITION_KIND_INVALID",
+                        }
+                    ),
+                    codes,
+                )
 
     def test_engine_choice_history_and_read_tracking(self):
         if not hasattr(self.native.Engine, "is_current_dialogue_read"):

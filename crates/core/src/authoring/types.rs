@@ -104,6 +104,19 @@ impl StoryNode {
         node_spec_for_authoring_node(self).ports.accepts_incoming
     }
 
+    pub(crate) fn has_output_port(&self, port: usize) -> bool {
+        match node_spec_for_authoring_node(self).ports.output {
+            PortOutput::None => false,
+            PortOutput::Linear | PortOutput::SingleTarget => port == 0,
+            PortOutput::ConditionalTrueFalse => port < 2,
+            PortOutput::ChoiceOptions => {
+                matches!(self, Self::Choice { options, .. } if port < options.len())
+            }
+            // Fragment exits are resolved during strict export.
+            PortOutput::SubgraphExit => true,
+        }
+    }
+
     pub fn export_supported(&self) -> bool {
         node_spec_for_authoring_node(self)
             .capabilities

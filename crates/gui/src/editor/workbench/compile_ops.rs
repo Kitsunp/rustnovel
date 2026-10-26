@@ -52,9 +52,7 @@ impl EditorWorkbench {
         self.last_dry_run_report = dry_run_report.clone();
         self.validation_issues = issues.to_vec();
         Self::append_phase_trace_issues(&mut self.validation_issues, phase_trace);
-        if let Some(script) = self.current_script.as_ref().cloned() {
-            self.append_localization_issues(&script);
-        }
+        self.append_localization_issues(script);
         if self
             .selected_issue
             .is_some_and(|idx| idx >= self.validation_issues.len())
@@ -96,25 +94,17 @@ impl EditorWorkbench {
             ValidationPanelMode::OpenIfIssues,
         );
         if has_errors {
+            self.clear_runtime_preview();
             self.toast = Some(ToastState::error("Validation found blocking errors"));
             return false;
         }
 
-        match result.engine_result {
-            Ok(engine) => {
-                self.engine = Some(engine);
-                self.refresh_scene_from_engine_preview();
+        match self.apply_compiled_engine(result.engine_result) {
+            Ok(()) => {
                 self.toast = Some(ToastState::success("Dry Run completed"));
                 true
             }
-            Err(e) => {
-                self.validation_issues.push(LintIssue::error(
-                    None,
-                    ValidationPhase::Runtime,
-                    LintCode::RuntimeInitError,
-                    format!("Runtime initialization failed: {}", e),
-                ));
-                self.show_validation = true;
+            Err(_) => {
                 self.toast = Some(ToastState::error("Validation failed at runtime init"));
                 false
             }
@@ -195,10 +185,7 @@ impl EditorWorkbench {
             return;
         };
 
-        let entry_script = self
-            .manifest
-            .as_ref()
-            .map(|manifest| std::path::PathBuf::from(&manifest.settings.entry_point));
+        let entry_script = self.default_export_entry();
 
         let target = if cfg!(target_os = "windows") {
             visual_novel_engine::ExportTargetPlatform::Windows
@@ -234,6 +221,10 @@ impl EditorWorkbench {
             hmac_key: None,
         };
 
+        if let Err(error) = self.prepare_export_document(&spec, true) {
+            self.toast = Some(ToastState::error(format!("Package failed: {error}")));
+            return;
+        }
         let package_result = visual_novel_engine::export_executable_bundle(spec);
 
         match package_result {
@@ -306,19 +297,18 @@ impl EditorWorkbench {
             ValidationPanelMode::PreserveManualCloseUnlessErrors,
         );
 
-        match result.engine_result {
+        self.apply_compiled_engine(result.engine_result)
+    }
+
+    fn apply_compiled_engine(&mut self, result: Result<Engine, String>) -> Result<(), String> {
+        match result {
             Ok(engine) => {
                 self.engine = Some(engine);
                 self.refresh_scene_from_engine_preview();
                 Ok(())
             }
             Err(e) => {
-                self.validation_issues.push(LintIssue::error(
-                    None,
-                    ValidationPhase::Runtime,
-                    LintCode::RuntimeInitError,
-                    format!("Engine Error: {}", e),
-                ));
+                self.clear_runtime_preview();
                 self.show_validation = true;
                 Err(e)
             }

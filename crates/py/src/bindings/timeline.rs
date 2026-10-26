@@ -48,7 +48,7 @@ fn parse_property(s: &str) -> Result<PropertyType, String> {
 }
 
 /// Python wrapper for a Keyframe.
-#[pyclass(name = "Keyframe")]
+#[pyclass(name = "Keyframe", from_py_object)]
 #[derive(Clone)]
 pub struct PyKeyframe {
     #[pyo3(get, set)]

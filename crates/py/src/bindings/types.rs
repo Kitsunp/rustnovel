@@ -1,7 +1,7 @@
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use visual_novel_engine::python::json_value_to_py;
 use visual_novel_engine::{
     ExportBundleReport, ExportPlan, LayoutResolution, ResourceLimiter, RouteTree, SceneFrame,
     UiThemeValidationReport, VnError as CoreVnError,
@@ -64,7 +64,7 @@ enum VnErrorKind {
     ExternalCall,
 }
 
-#[pyclass(name = "ResourceConfig")]
+#[pyclass(name = "ResourceConfig", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyResourceConfig {
     #[pyo3(get, set)]
@@ -86,7 +86,7 @@ impl PyResourceConfig {
     }
 }
 
-#[pyclass(name = "VnConfig")]
+#[pyclass(name = "VnConfig", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyVnConfig {
     #[pyo3(get, set)]
@@ -151,37 +151,37 @@ impl PyVnConfig {
     }
 }
 
-#[pyclass(name = "ExportPlan")]
+#[pyclass(name = "ExportPlan", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyExportPlan {
     pub inner: ExportPlan,
 }
 
-#[pyclass(name = "ExportReport")]
+#[pyclass(name = "ExportReport", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyExportReport {
     pub inner: ExportBundleReport,
 }
 
-#[pyclass(name = "RouteTree")]
+#[pyclass(name = "RouteTree", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyRouteTree {
     pub inner: RouteTree,
 }
 
-#[pyclass(name = "SceneFrame")]
+#[pyclass(name = "SceneFrame", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PySceneFrame {
     pub inner: SceneFrame,
 }
 
-#[pyclass(name = "UiThemeValidationReport")]
+#[pyclass(name = "UiThemeValidationReport", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyUiThemeValidationReport {
     pub inner: UiThemeValidationReport,
 }
 
-#[pyclass(name = "LayoutResolution")]
+#[pyclass(name = "LayoutResolution", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyLayoutResolution {
     pub inner: LayoutResolution,
@@ -196,7 +196,7 @@ macro_rules! json_backed_methods {
                     .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
             }
 
-            fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<PyObject> {
+            fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
                 let value = serde_json::to_value(&self.inner)
                     .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
                 json_value_to_py(py, &value)
@@ -250,40 +250,5 @@ impl From<UiThemeValidationReport> for PyUiThemeValidationReport {
 impl From<LayoutResolution> for PyLayoutResolution {
     fn from(inner: LayoutResolution) -> Self {
         Self { inner }
-    }
-}
-
-fn json_value_to_py<'py>(py: Python<'py>, value: &serde_json::Value) -> PyResult<PyObject> {
-    match value {
-        serde_json::Value::Null => Ok(py.None()),
-        serde_json::Value::Bool(value) => {
-            Ok((*value).into_pyobject(py)?.to_owned().into_any().unbind())
-        }
-        serde_json::Value::Number(value) => {
-            if let Some(value) = value.as_i64() {
-                Ok(value.into_pyobject(py)?.into_any().unbind())
-            } else if let Some(value) = value.as_u64() {
-                Ok(value.into_pyobject(py)?.into_any().unbind())
-            } else if let Some(value) = value.as_f64() {
-                Ok(value.into_pyobject(py)?.into_any().unbind())
-            } else {
-                Ok(py.None())
-            }
-        }
-        serde_json::Value::String(value) => Ok(value.into_pyobject(py)?.into_any().unbind()),
-        serde_json::Value::Array(values) => {
-            let list = PyList::empty(py);
-            for item in values {
-                list.append(json_value_to_py(py, item)?)?;
-            }
-            Ok(list.into())
-        }
-        serde_json::Value::Object(values) => {
-            let dict = PyDict::new(py);
-            for (key, value) in values {
-                dict.set_item(key, json_value_to_py(py, value)?)?;
-            }
-            Ok(dict.into())
-        }
     }
 }

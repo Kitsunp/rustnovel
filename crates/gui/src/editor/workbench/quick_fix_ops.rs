@@ -64,7 +64,8 @@ impl EditorWorkbench {
         }
 
         let before_script = self.node_graph.to_script();
-        let mut preview_graph = self.node_graph.clone();
+        let mut preview_graph =
+            NodeGraph::from_authoring_graph(self.node_graph.authoring_graph().clone());
         let mut operations = Vec::new();
 
         for op in plan {
@@ -149,27 +150,26 @@ impl EditorWorkbench {
         Ok(format!("Applied fix '{}'", candidate.fix_id))
     }
 
+    pub fn can_revert_last_fix(&self) -> bool {
+        self.last_fix_command_index.is_some()
+            && self.last_fix_command_index
+                == self.node_graph.authoring_session.last_undo_command_index()
+    }
+
     pub fn revert_last_fix(&mut self) -> bool {
-        let Some(previous_graph) = self.last_fix_snapshot.take() else {
+        if !self.can_revert_last_fix() {
+            if self.last_fix_command_index.is_some() {
+                self.toast = Some(ToastState::warning(
+                    "Undo later edits before reverting this quick-fix",
+                ));
+            }
             return false;
-        };
-        let before = self.current_authoring_fingerprint();
-        self.node_graph = previous_graph;
-        self.node_graph.mark_modified();
-        self.rebuild_authoring_session_from_fields();
-        if let Err(err) = self.sync_graph_to_script() {
-            self.toast = Some(ToastState::warning(format!(
-                "Quick-fix revert restored graph; runtime preview sync failed: {err}"
-            )));
         }
-        self.record_editor_operation_now(
-            "revert",
-            "Reverted last quick-fix snapshot",
-            Some("graph".to_string()),
-            None,
-            None,
-            before,
-        );
+        if !self.apply_document_history_command(
+            visual_novel_engine::authoring::AuthoringDocumentCommand::RevertLast,
+        ) {
+            return false;
+        }
         true
     }
 
@@ -209,8 +209,6 @@ impl EditorWorkbench {
     }
 
     fn apply_issue_fix_for_issue(&mut self, issue: &LintIssue, fix_id: &str) -> Result<(), String> {
-        let before_graph = self.node_graph.clone();
-
         let outcome = self.apply_authoring_document_command(
             visual_novel_engine::authoring::AuthoringDocumentCommand::Graph(
                 visual_novel_engine::authoring::AuthoringCommand::ApplyQuickFix {
@@ -235,7 +233,7 @@ impl EditorWorkbench {
         };
         let operation_id = outcome.operation.operation_id.clone();
         self.last_operation_fingerprint = self.current_authoring_fingerprint();
-        self.last_fix_snapshot = Some(before_graph);
+        self.last_fix_command_index = self.node_graph.authoring_session.last_undo_command_index();
         self.quick_fix_audit.push(QuickFixAuditEntry {
             operation_id: operation_id.clone(),
             diagnostic_id: issue.diagnostic_id(),
@@ -271,7 +269,8 @@ impl EditorWorkbench {
             .ok_or_else(|| format!("invalid issue index {issue_index}"))?;
         let before_script = self.node_graph.to_script();
 
-        let mut preview_graph = self.node_graph.clone();
+        let mut preview_graph =
+            NodeGraph::from_authoring_graph(self.node_graph.authoring_graph().clone());
         let changed = apply_fix(&mut preview_graph, issue, fix_id)?;
         if !changed {
             return Err(format!("fix '{fix_id}' made no preview changes"));

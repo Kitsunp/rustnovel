@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+pub use visual_novel_engine::runtime::audio_channel_name as audio_channel_label;
 
 use visual_novel_engine::{runtime::Engine, SceneState};
 
@@ -24,15 +25,6 @@ pub fn short_event_label(event: &visual_novel_engine::runtime::EventCompiled) ->
             format!("Event: Audio {}", audio_channel_label(action.channel))
         }
         _ => format!("Event: {:?}", event),
-    }
-}
-
-pub fn audio_channel_label(channel: u8) -> &'static str {
-    match channel {
-        0 => "bgm",
-        1 => "sfx",
-        2 => "voice",
-        _ => "unknown",
     }
 }
 

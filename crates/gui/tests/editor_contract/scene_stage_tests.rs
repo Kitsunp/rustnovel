@@ -1,9 +1,117 @@
+use std::collections::HashMap;
 use super::*;
 use crate::editor::StageFit;
 use visual_novel_engine::{
     runtime::{EventCompiled, SharedStr, VisualState},
     Transform,
 };
+
+#[test]
+fn background_and_locked_character_can_be_inspected_without_moving() {
+    use crate::editor::{
+        resource_service::EditorResourceService,
+        visual_composer::{scene_entity_object_id, LayerOverride},
+        PreviewQuality,
+    };
+    let stage = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 360.0));
+    let geometry = stage_geometry(stage, (640.0, 360.0), StageFit::Fill);
+    for background in [true, false] {
+        let ctx = egui::Context::default();
+        let mut scene = visual_novel_engine::SceneState::new();
+        let mut transform = Transform::at(320, 180);
+        let kind = if background {
+            transform.z_order = -100;
+            EntityKind::Image(visual_novel_engine::ImageData {
+                path: "missing-background.png".into(),
+                tint: None,
+            })
+        } else {
+            EntityKind::Character(visual_novel_engine::CharacterData {
+                name: "Ava".into(),
+                expression: None,
+            })
+        };
+        let id = scene.spawn_with_transform(transform, kind).unwrap();
+        let original = scene.get(id).unwrap().transform;
+        let overrides = std::collections::BTreeMap::from([(
+            scene_entity_object_id(scene.get(id).unwrap(), Some(7), 0),
+            LayerOverride {
+                visible: true,
+                locked: true,
+            },
+        )]);
+        let owners = HashMap::from([(id.raw(), 7)]);
+        let mut selected = None;
+        let mut cache = HashMap::new();
+        let mut failures = HashMap::new();
+        let mut resources = EditorResourceService::new();
+        let pos = stage.center();
+        for pressed in [None, Some(true), Some(false)] {
+            let events = pressed
+                .map(|pressed| {
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ]
+                })
+                .unwrap_or_default();
+            let mut interaction = None;
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(stage),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::none())
+                        .show(ctx, |ui| {
+                            interaction = Some(
+                                SceneStagePainter::new(
+                                    None,
+                                    PreviewQuality::High,
+                                    &mut cache,
+                                    &mut failures,
+                                    &mut resources,
+                                )
+                                .with_layer_overrides(&overrides)
+                                .paint_interactive(
+                                    ui,
+                                    &mut scene,
+                                    geometry,
+                                    &mut selected,
+                                    &owners,
+                                    None,
+                                ),
+                            );
+                        });
+                },
+            );
+            let interaction = interaction.unwrap();
+            assert!(interaction.moved_character.is_none());
+            if pressed == Some(false) {
+                assert_eq!(interaction.selected_node, Some(7));
+                assert_eq!(selected, Some(id.raw()));
+                if background {
+                    assert!(
+                        output.shapes.iter().any(|shape| {
+                            matches!(&shape.shape, egui::epaint::Shape::Rect(rect)
+                            if rect.stroke.color == egui::Color32::YELLOW
+                                && stage.contains_rect(rect.rect.expand(rect.stroke.width / 2.0)))
+                        }),
+                        "the background selection border must be visible inside the stage clip"
+                    );
+                }
+            }
+        }
+        assert_eq!(scene.get(id).unwrap().transform, original);
+    }
+}
 
 #[test]
 fn display_visual_applies_scene_before_player_steps() {
@@ -234,6 +342,7 @@ fn stage_image_cache_aliases_extensionless_requests_to_resolved_texture() {
     let first = painter
         .resolve_image_texture(&ctx, "backgrounds/room")
         .expect("extensionless image should resolve");
+    let _ = ctx.run(Default::default(), |_| {});
     let second = painter
         .resolve_image_texture(&ctx, "backgrounds/room")
         .expect("alias should hit cache");
@@ -252,4 +361,26 @@ fn stage_image_cache_aliases_extensionless_requests_to_resolved_texture() {
         crate::editor::PreviewQuality::Draft,
         "assets/backgrounds/room.png"
     )));
+
+    let inactive = ctx.load_texture(
+        "inactive",
+        egui::ColorImage::new([1, 1], egui::Color32::BLACK),
+        egui::TextureOptions::LINEAR,
+    );
+    let inactive_id = inactive.id();
+    for alias in 0..513 {
+        image_cache.insert(format!("inactive-{alias}"), inactive.clone());
+    }
+    drop(inactive);
+    let output = ctx.run(Default::default(), |ctx| {
+        resource_service.trim_texture_cache(&mut image_cache, ctx.frame_nr());
+    });
+    assert_eq!(
+        image_cache.len(),
+        2,
+        "the stage cache hit protects both active aliases"
+    );
+    assert!(image_cache.values().all(|texture| texture.id() == first));
+    assert!(output.textures_delta.free.contains(&inactive_id));
+    assert!(!output.textures_delta.free.contains(&first));
 }

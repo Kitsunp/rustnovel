@@ -1,9 +1,34 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use sha2::{Digest, Sha256};
+pub(super) use crate::hashing::{hex_digest as to_hex, sha256_hex};
 
 use crate::error::{VnError, VnResult};
+
+/// Standalone entries need no source manifest. A present manifest must still be
+/// a regular, valid file; unreadable or malformed projects never use defaults.
+pub(super) fn load_export_manifest(
+    root: &Path,
+    entry: Option<&Path>,
+) -> VnResult<crate::ProjectManifest> {
+    let path = root.join("project.vnm");
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && entry.is_some() => {
+            let mut manifest = crate::ProjectManifest::new("Visual Novel Game", "Author");
+            manifest.settings.entry_point = normalize_path_display(&sanitize_relative_path(
+                entry.expect("explicit entry checked"),
+                "entry_script",
+            )?);
+            Ok(manifest)
+        }
+        _ => {
+            ensure_regular_file(&path, "manifest")?;
+            crate::ProjectManifest::load(&path).map_err(|error| {
+                invalid_bundle(format!("load manifest '{}': {error}", path.display()))
+            })
+        }
+    }
+}
 
 pub(super) fn sanitize_relative_path(path: &Path, field_name: &str) -> VnResult<PathBuf> {
     let mut out = PathBuf::new();
@@ -113,21 +138,6 @@ pub(super) fn normalize_path_display(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-pub(super) fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    to_hex(digest.as_slice())
-}
-
 pub(super) fn invalid_bundle(message: impl Into<String>) -> VnError {
     VnError::InvalidScript(format!("bundle export: {}", message.into()))
-}
-
-pub(super) fn to_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
 }

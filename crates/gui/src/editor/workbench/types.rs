@@ -63,6 +63,7 @@ pub struct PendingAutoFixBatch {
 
 #[derive(Clone, Debug)]
 pub struct PendingEditorOperation {
+    pub operation_id: Option<String>,
     pub kind: String,
     pub details: String,
     pub field_path: Option<String>,

@@ -29,7 +29,7 @@ impl PyNodeGraph {
     }
 
     pub(super) fn py_list_fragments(&self) -> Vec<PyGraphFragment> {
-        self.inner
+        self.inner()
             .list_fragments()
             .into_iter()
             .map(Into::into)
@@ -37,7 +37,7 @@ impl PyNodeGraph {
     }
 
     pub(super) fn py_get_fragment(&self, fragment_id: &str) -> Option<PyGraphFragment> {
-        self.inner
+        self.inner()
             .get_fragment(fragment_id)
             .cloned()
             .map(Into::into)
@@ -58,14 +58,14 @@ impl PyNodeGraph {
     }
 
     pub(super) fn py_active_fragment(&self) -> Option<String> {
-        self.inner.active_fragment().map(str::to_string)
+        self.inner().active_fragment().map(str::to_string)
     }
 
     pub(super) fn py_fragment_ports(
         &self,
         fragment_id: &str,
     ) -> Option<(Vec<PyFragmentPort>, Vec<PyFragmentPort>)> {
-        self.inner
+        self.inner()
             .fragment_ports(fragment_id)
             .map(|(inputs, outputs)| {
                 (
@@ -84,7 +84,7 @@ impl PyNodeGraph {
     }
 
     pub(super) fn py_validate_fragments(&self) -> Vec<PyLintIssue> {
-        self.inner
+        self.inner()
             .validate_fragments()
             .into_iter()
             .map(PyLintIssue::from)

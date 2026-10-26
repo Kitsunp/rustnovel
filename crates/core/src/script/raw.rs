@@ -11,11 +11,12 @@ use crate::version::SCRIPT_SCHEMA_VERSION;
 
 use super::compiled::ScriptCompiled;
 
+// Serialization borrows the payload; deserialization uses the owned defaults.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
-struct ScriptEnvelope {
+struct ScriptEnvelope<Events = Vec<EventRaw>, Labels = BTreeMap<String, usize>> {
     script_schema_version: String,
-    events: Vec<EventRaw>,
-    labels: BTreeMap<String, usize>,
+    events: Events,
+    labels: Labels,
 }
 
 /// JSON-facing script format with label names and raw string data.
@@ -46,8 +47,8 @@ impl ScriptRaw {
     pub fn to_json(&self) -> VnResult<String> {
         let envelope = ScriptEnvelope {
             script_schema_version: SCRIPT_SCHEMA_VERSION.to_string(),
-            events: self.events.clone(),
-            labels: self.labels.clone(),
+            events: &self.events,
+            labels: &self.labels,
         };
         serde_json::to_string_pretty(&envelope).map_err(|e| VnError::Serialization {
             message: e.to_string(),
@@ -85,14 +86,8 @@ impl ScriptRaw {
                 serde_json::Value::String(schema_report.normalized_version),
             );
         }
-        let migrated_input =
-            serde_json::to_string_pretty(&payload).map_err(|err| VnError::Serialization {
-                message: err.to_string(),
-                src: input.to_string(),
-                span: (0, 0).into(),
-            })?;
-        let envelope: ScriptEnvelope = serde_json::from_value(payload)
-            .map_err(|err| json_deserialize_error(&migrated_input, &err))?;
+        let envelope: ScriptEnvelope =
+            serde_json::from_value(payload).map_err(|err| json_deserialize_error(input, &err))?;
         let script = Self {
             events: envelope.events,
             labels: envelope.labels,

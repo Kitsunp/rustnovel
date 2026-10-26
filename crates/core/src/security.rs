@@ -1,7 +1,7 @@
 //! Security policy validation for scripts.
 
 use crate::error::{VnError, VnResult};
-use crate::event::{AudioActionCompiled, EventCompiled, EventRaw};
+use crate::event::{AudioActionCompiled, CondCompiled, EventCompiled, EventRaw};
 use crate::resource::ResourceLimiter;
 use crate::script::{ScriptCompiled, ScriptRaw};
 
@@ -235,8 +235,19 @@ impl SecurityPolicy {
     pub fn validate_compiled(
         &self,
         script: &ScriptCompiled,
-        _limits: ResourceLimiter,
+        limits: ResourceLimiter,
     ) -> VnResult<()> {
+        if script.events.len() > limits.max_events {
+            return Err(VnError::ResourceLimit("compiled event count".to_string()));
+        }
+        for (label, &index) in &script.labels {
+            if index as usize > script.events.len() {
+                return Err(VnError::InvalidScript(format!(
+                    "compiled label '{label}' outside events"
+                )));
+            }
+        }
+        let var_limit = script.events.len();
         if script.start_ip as usize >= script.events.len() {
             return Err(VnError::InvalidScript(
                 "compiled start_ip outside events".to_string(),
@@ -261,12 +272,30 @@ impl SecurityPolicy {
                         target_ip
                     )));
                 }
-                EventCompiled::JumpIf { target_ip, .. }
-                    if *target_ip as usize > script.events.len() =>
-                {
+                EventCompiled::JumpIf { target_ip, cond } => {
+                    if *target_ip as usize > script.events.len() {
+                        return Err(VnError::InvalidScript(format!(
+                            "jump_if target_ip {} outside events",
+                            target_ip
+                        )));
+                    }
+                    match cond {
+                        CondCompiled::VarCmp { var_id, .. } if *var_id as usize >= var_limit => {
+                            return Err(VnError::InvalidScript(format!(
+                                "condition variable id {var_id} outside compiled range"
+                            )));
+                        }
+                        CondCompiled::Flag { flag_id, .. } if *flag_id >= script.flag_count => {
+                            return Err(VnError::InvalidScript(format!(
+                                "condition flag id {flag_id} outside compiled range"
+                            )));
+                        }
+                        _ => {}
+                    }
+                }
+                EventCompiled::SetVar { var_id, .. } if *var_id as usize >= var_limit => {
                     return Err(VnError::InvalidScript(format!(
-                        "jump_if target_ip {} outside events",
-                        target_ip
+                        "variable id {var_id} outside compiled range"
                     )));
                 }
                 EventCompiled::SetFlag { flag_id, .. } if *flag_id >= script.flag_count => {
