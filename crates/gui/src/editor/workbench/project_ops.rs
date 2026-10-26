@@ -142,6 +142,9 @@ impl EditorWorkbench {
         self.loaded_repro_case = None;
         self.last_repro_report = None;
         self.last_dry_run_report = None;
+        self.export_wizard = ExportWizardState::default();
+        self.last_export_report = None;
+        self.show_export_report_panel = false;
         self.imported_report_stale = false;
         self.imported_report_untrusted = false;
         self.selected_node = None;

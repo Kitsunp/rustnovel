@@ -287,15 +287,15 @@ pub(super) fn parse_show_decl(
                 background: None,
                 music: None,
                 add: vec![CharacterPlacementRaw {
-                    name: path.clone(),
-                    expression: None,
+                    name: tokens.first()?.to_string(),
+                    expression: Some(path.clone()),
                     position,
                     x: None,
                     y: None,
                     scale: None,
                 }],
                 update: Vec::new(),
-                remove: Vec::new(),
+                remove: vec![tokens.first()?.to_string()],
             },
             transition: with_clause.and_then(parse_with_kind),
         });

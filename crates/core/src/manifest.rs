@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use crate::PlayerMenuConfig;
 mod import;
+pub(crate) use import::register_asset_path;
 pub use import::{
     import_project_asset, AssetImportError, AssetImportKind, AssetImportResult,
     DEFAULT_ASSET_IMPORT_LIMIT,

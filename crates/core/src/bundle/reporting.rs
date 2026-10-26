@@ -212,15 +212,8 @@ fn classify_bundle_file_role(path: &str) -> &'static str {
 pub fn export_executable_bundle(spec: super::ExportBundleSpec) -> VnResult<ExportBundleReport> {
     let target = spec.target_platform;
     let plan = build_export_plan(&spec)?;
-    ExportService::new().validate_export_plan(&plan)?;
+    ExportService::new().validate_executable_export_plan(&plan, target)?;
     let expected = target.expected_executable_name();
-    if plan.executable.as_deref() != Some(expected) {
-        return Err(invalid_bundle(executable_requirement_message(
-            target,
-            expected,
-            Some(&plan),
-        )));
-    }
     let report = export_bundle(spec)?;
     if report.executable.as_deref() != Some(expected) {
         return Err(invalid_bundle(executable_requirement_message(
@@ -230,7 +223,7 @@ pub fn export_executable_bundle(spec: super::ExportBundleSpec) -> VnResult<Expor
     Ok(report)
 }
 
-fn executable_requirement_message(
+pub(super) fn executable_requirement_message(
     target: ExportTargetPlatform,
     expected: &str,
     plan: Option<&ExportPlan>,

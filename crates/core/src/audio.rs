@@ -33,6 +33,24 @@ pub enum AudioCommand {
 
 pub(crate) const DEFAULT_AUDIO_FADE_MS: u64 = 500;
 
+/// Keeps runtime snapshots and raw authoring simulation on the same BGM rules.
+pub(crate) fn apply_bgm_action<T: Clone>(
+    music: &mut Option<T>,
+    channel: u8,
+    action: u8,
+    asset: Option<&T>,
+) {
+    match (channel, action) {
+        (0, 0) => {
+            if let Some(asset) = asset {
+                *music = Some(asset.clone());
+            }
+        }
+        (0, 1 | 2) => *music = None,
+        _ => {}
+    }
+}
+
 /// Builds the canonical command for music represented by a scene snapshot.
 pub(crate) fn scene_music_command(music: Option<&SharedStr>) -> AudioCommand {
     let fade = Duration::from_millis(DEFAULT_AUDIO_FADE_MS);

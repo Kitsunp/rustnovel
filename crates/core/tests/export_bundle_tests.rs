@@ -17,6 +17,71 @@ use visual_novel_engine::{
 
 type HmacSha256 = Hmac<Sha256>;
 
+#[test]
+fn export_standalone_entry_plans_and_publishes_without_source_manifest() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("source");
+    fs::create_dir_all(root.join("chapter")).unwrap();
+    let entry = PathBuf::from("chapter/story.json");
+    let script = ScriptRaw::new(
+        vec![EventRaw::Dialogue(DialogueRaw {
+            speaker: "Ava".into(),
+            text: "Standalone".into(),
+        })],
+        BTreeMap::from([("start".into(), 0)]),
+    );
+    fs::write(root.join(&entry), script.to_json().unwrap()).unwrap();
+    let spec = ExportBundleSpec {
+        project_root: root.clone(),
+        output_root: tmp.path().join("bundle"),
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: Some(entry.clone()),
+        runtime_artifact: None,
+        integrity: BundleIntegrity::None,
+        output_layout_version: 1,
+        hmac_key: None,
+    };
+    let plan = build_export_plan(&spec).unwrap();
+    assert_eq!(plan.entry_script, "chapter/story.json");
+    assert!(!spec.output_root.exists());
+    assert!(!root.join("project.vnm").exists());
+    let report = export_bundle(spec.clone()).unwrap();
+    assert!(report.executable.is_none());
+    assert!(spec.output_root.join("scripts/compiled.vnc").is_file());
+    assert!(!root.join("project.vnm").exists());
+    let manifest = ProjectManifest::load(&spec.output_root.join("meta/project.vnm")).unwrap();
+    assert!(!manifest.settings.entry_point.is_empty());
+    fs::write(root.join("project.vnm"), "broken = [").unwrap();
+    assert!(
+        build_export_plan(&spec).is_err(),
+        "existing corrupt manifest must never use standalone defaults"
+    );
+}
+
+#[test]
+fn export_rejects_destinations_containing_its_sources_without_modifying_them() {
+    let (tmp, root) = build_project_fixture();
+    let manifest_before = fs::read(root.join("project.vnm")).unwrap();
+    let script_before = fs::read(root.join("main.json")).unwrap();
+    for output in [root.clone(), tmp.path().to_path_buf(), root.join("assets")] {
+        let spec = ExportBundleSpec {
+            project_root: root.clone(),
+            output_root: output,
+            target_platform: ExportTargetPlatform::Windows,
+            entry_script: None,
+            runtime_artifact: None,
+            integrity: BundleIntegrity::None,
+            output_layout_version: 1,
+            hmac_key: None,
+        };
+        let error = export_bundle(spec).unwrap_err().to_string();
+        assert!(error.contains("source"), "{error}");
+        assert_eq!(fs::read(root.join("project.vnm")).unwrap(), manifest_before);
+        assert_eq!(fs::read(root.join("main.json")).unwrap(), script_before);
+        assert!(root.join("assets/bgm/theme.ogg").is_file());
+    }
+}
+
 fn create_escape_symlink(link: &Path, target: &Path) -> bool {
     #[cfg(unix)]
     {

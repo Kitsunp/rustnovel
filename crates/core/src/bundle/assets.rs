@@ -9,7 +9,6 @@ use crate::script::ScriptRaw;
 
 use super::helpers::{
     canonicalize_within_root, invalid_bundle, normalize_path_display, sanitize_relative_path,
-    sha256_hex,
 };
 use super::BundleAssetEntry;
 
@@ -18,7 +17,7 @@ pub(super) fn copy_referenced_assets(
     assets_output_root: &Path,
     script: &ScriptRaw,
 ) -> VnResult<BTreeMap<String, BundleAssetEntry>> {
-    if let Some(collision) = detect_asset_path_collisions(project_root, script)?.pop() {
+    if let Some(collision) = detect_asset_path_collisions(project_root, script, None)?.pop() {
         return Err(invalid_bundle(collision.message()));
     }
 
@@ -43,16 +42,13 @@ pub(super) fn copy_referenced_assets(
                 destination.display()
             ))
         })?;
-        let bytes = fs::read(&source).map_err(|e| {
-            invalid_bundle(format!("read copied asset '{}': {e}", source.display()))
+        let (sha256, size) = crate::atomic_io::sha256_file(&destination).map_err(|error| {
+            invalid_bundle(format!(
+                "hash copied asset '{}': {error}",
+                destination.display()
+            ))
         })?;
-        manifest.insert(
-            manifest_path,
-            BundleAssetEntry {
-                sha256: sha256_hex(&bytes),
-                size: bytes.len() as u64,
-            },
-        );
+        manifest.insert(manifest_path, BundleAssetEntry { sha256, size });
     }
 
     Ok(manifest)
@@ -93,11 +89,17 @@ impl AssetPathCollision {
 pub(super) fn detect_asset_path_collisions(
     project_root: &Path,
     script: &ScriptRaw,
+    output_root: Option<&Path>,
 ) -> VnResult<Vec<AssetPathCollision>> {
     let mut seen_destinations: BTreeMap<String, (String, String)> = BTreeMap::new();
     let mut collisions = Vec::new();
     for asset_ref in collect_script_asset_refs(script) {
         let (source, destination_rel) = resolve_asset_reference(project_root, &asset_ref)?;
+        if output_root.is_some_and(|output| source.starts_with(output)) {
+            return Err(invalid_bundle(format!(
+                "output_root contains source asset '{asset_ref}'; choose a separate export folder"
+            )));
+        }
         let manifest_path = normalize_path_display(&destination_rel);
         let source_path = normalize_path_display(&source);
         let case_folded = manifest_path.to_lowercase();

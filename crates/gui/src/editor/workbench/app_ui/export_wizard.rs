@@ -108,10 +108,15 @@ impl EditorWorkbench {
                     }
                 });
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button("Plan").clicked() {
+                    if ui.button("Check export").clicked() {
                         plan = true;
                     }
-                    if ui.button("Execute").clicked() {
+                    let label = if self.export_wizard.dry_run {
+                        "Test export"
+                    } else {
+                        "Save and export"
+                    };
+                    if ui.button(label).clicked() {
                         execute = true;
                     }
                 });
@@ -289,40 +294,6 @@ impl EditorWorkbench {
         });
     }
 
-    fn export_blocking_diagnostics_summary(
-        diagnostics: &[visual_novel_engine::ExportDiagnostic],
-    ) -> String {
-        diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.blocking_release)
-            .map(|diagnostic| {
-                let mut scope = Vec::new();
-                if let Some(file) = &diagnostic.file {
-                    scope.push(format!("file={file}"));
-                }
-                if let Some(asset) = &diagnostic.asset {
-                    scope.push(format!("asset={asset}"));
-                }
-                if let Some(node) = &diagnostic.node {
-                    scope.push(format!("node={node}"));
-                }
-                if let Some(field) = &diagnostic.field {
-                    scope.push(format!("field={field}"));
-                }
-                let scope = if scope.is_empty() {
-                    "scope=project".to_string()
-                } else {
-                    scope.join(" ")
-                };
-                format!(
-                    "{} trace_id={} {} action={}",
-                    diagnostic.code, diagnostic.trace_id, scope, diagnostic.suggested_action
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("; ")
-    }
-
     pub fn export_report_summary_lines(
         report: &visual_novel_engine::ExportBundleReport,
     ) -> Vec<String> {
@@ -380,223 +351,10 @@ impl EditorWorkbench {
             ),
         ]
     }
-
-    fn export_wizard_spec(&self) -> Result<visual_novel_engine::ExportBundleSpec, String> {
-        let project_root = self
-            .project_root
-            .clone()
-            .or_else(|| {
-                self.pending_save_path
-                    .as_ref()
-                    .and_then(|path| path.parent().map(std::path::Path::to_path_buf))
-            })
-            .ok_or_else(|| "load/save a project first so project_root is known".to_string())?;
-        let manifest_path = project_root.join("project.vnm");
-        if !manifest_path.is_file() {
-            let mut manifest =
-                visual_novel_engine::ProjectManifest::new("Visual Novel Game", "Author");
-            if let Some(entry) = &self.pending_save_path {
-                if let Some(name) = entry.file_name() {
-                    manifest.settings.entry_point = name.to_string_lossy().to_string();
-                }
-            } else if let Some(entry) = self
-                .export_wizard
-                .entry_script
-                .trim()
-                .split(['/', '\\'])
-                .next_back()
-            {
-                if !entry.is_empty() {
-                    manifest.settings.entry_point = entry.to_string();
-                }
-            }
-            manifest.save(&manifest_path).map_err(|err| {
-                format!(
-                    "could not save export manifest '{}': {err}",
-                    manifest_path.display()
-                )
-            })?;
-        }
-        let output_root = self.export_wizard.output_root.trim();
-        if output_root.is_empty() {
-            return Err("choose an output folder".to_string());
-        }
-        let entry_script = if self.export_wizard.entry_script.trim().is_empty() {
-            None
-        } else {
-            Some(std::path::PathBuf::from(
-                self.export_wizard.entry_script.trim(),
-            ))
-        };
-        let runtime_artifact = if self.export_wizard.runtime_artifact.trim().is_empty() {
-            None
-        } else {
-            Some(std::path::PathBuf::from(
-                self.export_wizard.runtime_artifact.trim(),
-            ))
-        };
-        let hmac_key = if self.export_wizard.hmac_key.trim().is_empty() {
-            None
-        } else {
-            Some(self.export_wizard.hmac_key.clone())
-        };
-        Ok(visual_novel_engine::ExportBundleSpec {
-            project_root,
-            output_root: std::path::PathBuf::from(output_root),
-            target_platform: self.export_wizard.target,
-            entry_script,
-            runtime_artifact,
-            integrity: self.export_wizard.integrity,
-            output_layout_version: 1,
-            hmac_key,
-        })
-    }
-
-    fn plan_export_wizard(&mut self) {
-        self.export_wizard.last_error = None;
-        self.export_wizard.last_report = None;
-        self.export_wizard.logs.clear();
-        self.export_wizard.logs.push(format!(
-            "plan: target={} mode={:?} integrity={}",
-            self.export_wizard.target.as_str(),
-            self.export_wizard.export_kind,
-            self.export_wizard.integrity.as_str()
-        ));
-        let spec = match self.export_wizard_spec() {
-            Ok(spec) => spec,
-            Err(err) => {
-                self.export_wizard.last_error = Some(err.clone());
-                self.toast = Some(ToastState::error(format!("Export plan failed: {err}")));
-                return;
-            }
-        };
-        match visual_novel_engine::ExportService::new().plan_export(&spec) {
-            Ok(plan) => {
-                let blocking = plan
-                    .diagnostics
-                    .iter()
-                    .filter(|diagnostic| diagnostic.blocking_release)
-                    .count();
-                let has_errors = plan
-                    .diagnostics
-                    .iter()
-                    .any(|diagnostic| diagnostic.severity == "error");
-                self.export_wizard.logs.push(format!(
-                    "plan complete: diagnostics={} blocking={}",
-                    plan.diagnostics.len(),
-                    blocking
-                ));
-                self.export_wizard.last_plan = Some(plan);
-                self.toast = Some(if blocking > 0 {
-                    ToastState::warning("Export plan has release-blocking diagnostics")
-                } else if has_errors {
-                    ToastState::warning("Export plan has error diagnostics")
-                } else {
-                    ToastState::success("Export plan ready")
-                });
-            }
-            Err(err) => {
-                self.export_wizard.last_plan = None;
-                self.export_wizard.last_error = Some(err.to_string());
-                self.toast = Some(ToastState::error(format!("Export plan failed: {err}")));
-            }
-        }
-    }
-
-    fn execute_export_wizard(&mut self) {
-        self.export_wizard.last_error = None;
-        self.export_wizard
-            .logs
-            .push("execute: validating plan".to_string());
-        let spec = match self.export_wizard_spec() {
-            Ok(spec) => spec,
-            Err(err) => {
-                self.export_wizard.last_error = Some(err.clone());
-                self.toast = Some(ToastState::error(format!("Export failed: {err}")));
-                return;
-            }
-        };
-        match visual_novel_engine::ExportService::new().plan_export(&spec) {
-            Ok(plan) => {
-                let has_error_diagnostics = plan
-                    .diagnostics
-                    .iter()
-                    .any(|diagnostic| diagnostic.severity == "error");
-                let has_blocking_diagnostics = plan
-                    .diagnostics
-                    .iter()
-                    .any(|diagnostic| diagnostic.blocking_release);
-                if has_error_diagnostics {
-                    self.export_wizard.last_plan = Some(plan);
-                    self.toast = Some(ToastState::error("Export blocked by plan diagnostics"));
-                    return;
-                }
-                if self.export_wizard.require_executable && has_blocking_diagnostics {
-                    let diagnostics = Self::export_blocking_diagnostics_summary(&plan.diagnostics);
-                    self.export_wizard.last_plan = Some(plan);
-                    self.export_wizard.last_error = Some(format!(
-                        "Executable export blocked by diagnostics: {diagnostics}"
-                    ));
-                    self.toast = Some(ToastState::error("Export blocked by release diagnostics"));
-                    return;
-                }
-                if self.export_wizard.require_executable {
-                    let expected = spec.target_platform.expected_executable_name();
-                    if plan.executable.as_deref() != Some(expected) {
-                        self.export_wizard.last_plan = Some(plan);
-                        self.export_wizard.last_error = Some(format!(
-                        "{} export cannot produce {}; missing expected executable after planning",
-                        spec.target_platform.as_str(),
-                        expected
-                    ));
-                        self.toast = Some(ToastState::error(
-                            "Export blocked by executable diagnostics",
-                        ));
-                        return;
-                    }
-                }
-                self.export_wizard.last_plan = Some(plan);
-            }
-            Err(err) => {
-                self.export_wizard.last_error = Some(err.to_string());
-                self.toast = Some(ToastState::error(format!("Export plan failed: {err}")));
-                return;
-            }
-        }
-        if self.export_wizard.dry_run {
-            self.export_wizard
-                .logs
-                .push("execute: dry-run stopped before writing bundle".to_string());
-            self.toast = Some(ToastState::success(
-                "Export dry-run completed without writing",
-            ));
-            return;
-        }
-        let result = if self.export_wizard.require_executable {
-            visual_novel_engine::export_executable_bundle(spec)
-        } else {
-            visual_novel_engine::ExportService::new().execute_export(spec)
-        };
-        match result {
-            Ok(report) => {
-                self.export_wizard.logs.push(format!(
-                    "execute complete: launcher={} executable={} compat={}",
-                    report.launcher,
-                    report.executable.as_deref().unwrap_or("none"),
-                    report.compat_report.as_deref().unwrap_or("none")
-                ));
-                self.export_wizard.last_report = Some(report.clone());
-                self.last_export_report = Some(report);
-                self.show_export_report_panel = true;
-                self.toast = Some(ToastState::success("Game bundle exported"));
-            }
-            Err(err) => {
-                self.export_wizard.last_error = Some(err.to_string());
-                self.toast = Some(ToastState::error(format!("Export failed: {err}")));
-            }
-        }
-    }
 }
+
+#[path = "export_workflow.rs"]
+mod workflow;
 
 #[cfg(test)]
 #[path = "export_wizard_tests.rs"]
