@@ -4,12 +4,9 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 use visual_novel_engine::manifest::ProjectManifest;
 
-use crate::editor::image_asset_cache::{
-    image_failure_message, normalize_asset_path, should_retry_missing_image_failure,
-    thumbnail_cache_key,
-};
+use crate::editor::image_asset_cache::{normalize_asset_path, ImageTextureCache, ImageView};
 use crate::editor::resource_service::EditorResourceService;
-use crate::editor::{AssetImportKind, PreviewQuality};
+use crate::editor::AssetImportKind;
 
 #[cfg(test)]
 #[path = "asset_browser/tests.rs"]
@@ -40,7 +37,6 @@ pub struct AssetBrowserPanel<'a> {
     image_cache: &'a mut HashMap<String, egui::TextureHandle>,
     image_failures: &'a mut HashMap<String, String>,
     resource_service: &'a mut EditorResourceService,
-    asset_store: Option<vnengine_assets::AssetStore>,
     audio_playback: Option<visual_novel_runtime::MusicPlayback<'a>>,
 }
 
@@ -58,7 +54,6 @@ impl<'a> AssetBrowserPanel<'a> {
             image_cache,
             image_failures,
             resource_service,
-            asset_store: None,
             audio_playback: None,
         }
     }
@@ -314,115 +309,8 @@ impl<'a> AssetBrowserPanel<'a> {
         ctx: &egui::Context,
         asset_path: &str,
     ) -> Option<egui::TextureId> {
-        let project_root = self.project_root?;
-        let request_cache_key = thumbnail_cache_key(project_root, asset_path);
-        crate::editor::image_asset_cache::prune_image_cache_versions(
-            self.image_cache,
-            &request_cache_key,
-        );
-        crate::editor::image_asset_cache::prune_image_cache_versions(
-            self.image_failures,
-            &request_cache_key,
-        );
-        if let Some(texture) = self.image_cache.get(&request_cache_key) {
-            self.resource_service
-                .record_texture_use(texture.id(), ctx.frame_nr());
-            return Some(texture.id());
-        }
-        if let Some(should_retry) = self
-            .image_failures
-            .get(&request_cache_key)
-            .map(|failure| should_retry_missing_image_failure(failure, project_root, asset_path))
-        {
-            if should_retry {
-                self.image_failures.remove(&request_cache_key);
-            } else {
-                return None;
-            }
-        }
-        self.asset_store(project_root, &request_cache_key, asset_path)?;
-        let resolved_asset_path = match self.asset_store.as_ref()?.resolve_image_path(asset_path) {
-            Ok(path) => normalize_asset_path(&path),
-            Err(err) => {
-                self.image_failures
-                    .insert(request_cache_key, image_failure_message(asset_path, &err));
-                return None;
-            }
-        };
-        let cache_key = thumbnail_cache_key(project_root, &resolved_asset_path);
-        crate::editor::image_asset_cache::prune_image_cache_versions(self.image_cache, &cache_key);
-        crate::editor::image_asset_cache::prune_image_cache_versions(
-            self.image_failures,
-            &cache_key,
-        );
-        if let Some(texture) = self.image_cache.get(&cache_key) {
-            let texture = texture.clone();
-            self.resource_service
-                .record_texture_use(texture.id(), ctx.frame_nr());
-            if request_cache_key != cache_key {
-                self.image_cache.insert(request_cache_key, texture.clone());
-            }
-            return Some(texture.id());
-        }
-        if self.image_failures.contains_key(&cache_key) {
-            return None;
-        }
-
-        let image = match self.resource_service.image_for_view(
-            project_root,
-            &resolved_asset_path,
-            "asset_browser",
-        ) {
-            Ok(image) => image,
-            Err(err) => {
-                self.image_failures.insert(
-                    cache_key,
-                    format!("image '{resolved_asset_path}' load failed: {err}"),
-                );
-                return None;
-            }
-        };
-        let (size, pixels) = PreviewQuality::Draft.scaled_image(image.size, &image.pixels);
-        let texture = ctx.load_texture(
-            format!("asset_browser::{cache_key}"),
-            egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_ref()),
-            egui::TextureOptions::LINEAR,
-        );
-        let id = texture.id();
-        self.resource_service.record_texture_use(id, ctx.frame_nr());
-        if request_cache_key != cache_key {
-            self.image_cache.insert(request_cache_key, texture.clone());
-        }
-        self.image_cache.insert(cache_key, texture);
-        Some(id)
-    }
-
-    fn asset_store(
-        &mut self,
-        project_root: &Path,
-        failure_key: &str,
-        asset_path: &str,
-    ) -> Option<&vnengine_assets::AssetStore> {
-        if self.asset_store.is_none() {
-            self.asset_store = match vnengine_assets::AssetStore::new(
-                project_root.to_path_buf(),
-                vnengine_assets::SecurityMode::Trusted,
-                None,
-                false,
-            ) {
-                Ok(store) => Some(store),
-                Err(err) => {
-                    self.image_failures.insert(
-                        failure_key.to_string(),
-                        format!(
-                            "asset browser image '{asset_path}' asset store initialization failed: {err}"
-                        ),
-                    );
-                    None
-                }
-            };
-        }
-        self.asset_store.as_ref()
+        ImageTextureCache::new(self.image_cache, self.image_failures, self.resource_service)
+            .texture(ctx, self.project_root?, asset_path, ImageView::Thumbnail)
     }
 
     fn render_audio_position(&mut self, ui: &mut egui::Ui, asset_path: &str) -> (u64, bool) {

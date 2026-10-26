@@ -6,6 +6,10 @@ use crate::editor::PreviewQuality;
 use eframe::egui;
 
 const MISSING_IMAGE_PREFIX: &str = "missing image:";
+pub(super) const MAX_IMAGE_CACHE_ENTRIES: usize = 512;
+
+mod texture_loader;
+pub(super) use texture_loader::{ImageTextureCache, ImageView};
 
 /// Shared retention policy for thumbnails, the composer and player preview.
 /// A frame's working set stays alive until painting has finished, even when
@@ -47,7 +51,7 @@ impl EditorTextureRetention {
             .map(|entry| entry.0)
             .fold(0usize, usize::saturating_add);
         let mut entries = cache.len();
-        if bytes <= self.budget_bytes && entries <= 512 {
+        if bytes <= self.budget_bytes && entries <= MAX_IMAGE_CACHE_ENTRIES {
             return;
         }
         let mut candidates: Vec<_> = textures
@@ -60,7 +64,7 @@ impl EditorTextureRetention {
         candidates.sort_by_key(|(_, used)| *used);
         let mut evicted = HashSet::new();
         for (id, _) in candidates {
-            if bytes <= self.budget_bytes && entries <= 512 {
+            if bytes <= self.budget_bytes && entries <= MAX_IMAGE_CACHE_ENTRIES {
                 break;
             }
             let (texture_bytes, aliases) = textures[&id];

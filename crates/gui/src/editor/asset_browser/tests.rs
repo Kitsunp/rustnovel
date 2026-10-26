@@ -157,4 +157,18 @@ fn clipped_cards_skip_uploads_and_visible_cache_hits_protect_the_texture() {
     assert!(output.textures_delta.free.contains(&inactive_id));
     assert!(!output.textures_delta.free.contains(&active_id));
     assert!(failures.is_empty());
+
+    let mut panel = AssetBrowserPanel::new(
+        &manifest,
+        Some(dir.path()),
+        &mut cache,
+        &mut failures,
+        &mut resources,
+    );
+    for missing in 0..600 {
+        assert!(panel
+            .thumbnail_texture(&ctx, &format!("missing-{missing}.png"))
+            .is_none());
+    }
+    assert!(failures.len() <= crate::editor::image_asset_cache::MAX_IMAGE_CACHE_ENTRIES);
 }

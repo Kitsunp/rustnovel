@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sha2::{Digest, Sha256};
-use visual_novel_runtime::{audio_duration, MemoryAssetStore};
+use visual_novel_runtime::audio_duration_from_bytes;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResourceMetrics {
@@ -36,7 +36,7 @@ struct CachedBytes {
 #[derive(Clone, Debug)]
 struct CachedImage {
     fingerprint: String,
-    image: vnengine_assets::LoadedImage,
+    image: Arc<vnengine_assets::LoadedImage>,
 }
 
 pub struct EditorResourceService {
@@ -117,36 +117,37 @@ impl EditorResourceService {
         rel_path: &str,
     ) -> Result<Arc<[u8]>, String> {
         let path = resolve_project_file(project_root, rel_path)?;
+        self.load_bytes_at(&path).map(|resource| resource.bytes)
+    }
+
+    fn load_bytes_at(&mut self, path: &Path) -> Result<CachedBytes, String> {
         let limit = vnengine_assets::AssetLimits::default().max_bytes;
-        let bytes = vnengine_assets::read_asset_bytes(&path, limit)
+        let bytes = vnengine_assets::read_asset_bytes(path, limit)
             .map_err(|err| format!("read {}: {err}", path.display()))?;
         let fingerprint = fingerprint_bytes(&bytes);
 
-        if let Some(cached) = self.byte_cache.get(&path) {
+        if let Some(cached) = self.byte_cache.get(path) {
             if cached.fingerprint == fingerprint {
-                let bytes = Arc::clone(&cached.bytes);
+                let resource = cached.clone();
                 self.metrics.hits = self.metrics.hits.saturating_add(1);
-                self.touch(&path);
+                self.touch(path);
                 self.refresh_entry_counts();
-                return Ok(bytes);
+                return Ok(resource);
             }
             self.metrics.evictions = self.metrics.evictions.saturating_add(1);
-            self.image_cache.remove(&path);
-            self.audio_metadata_cache.remove(&path);
+            self.image_cache.remove(path);
+            self.audio_metadata_cache.remove(path);
         }
 
         self.metrics.misses = self.metrics.misses.saturating_add(1);
-        let bytes: Arc<[u8]> = Arc::from(bytes);
-        self.touch(&path);
-        self.byte_cache.insert(
-            path,
-            CachedBytes {
-                fingerprint,
-                bytes: Arc::clone(&bytes),
-            },
-        );
+        let resource = CachedBytes {
+            fingerprint,
+            bytes: Arc::from(bytes),
+        };
+        self.touch(path);
+        self.byte_cache.insert(path.to_path_buf(), resource.clone());
         self.trim_cache();
-        Ok(bytes)
+        Ok(resource)
     }
 
     pub fn image_bytes_for_view(
@@ -167,15 +168,26 @@ impl EditorResourceService {
         &mut self,
         project_root: &Path,
         rel_path: &str,
-        _view_id: &str,
+        view_id: &str,
     ) -> Result<vnengine_assets::LoadedImage, String> {
+        self.image_for_view_shared(project_root, rel_path, view_id)
+            .map(|image| image.as_ref().clone())
+    }
+
+    /// Shares decoded pixels across views; callers needing ownership retain the
+    /// compatible `image_for_view` API above.
+    pub fn image_for_view_shared(
+        &mut self,
+        project_root: &Path,
+        rel_path: &str,
+        _view_id: &str,
+    ) -> Result<Arc<vnengine_assets::LoadedImage>, String> {
         let path = resolve_project_file(project_root, rel_path)?;
-        let bytes = self.load_bytes_shared(project_root, rel_path)?;
-        let fingerprint = fingerprint_bytes(&bytes);
+        let CachedBytes { bytes, fingerprint } = self.load_bytes_at(&path)?;
 
         if let Some(cached) = self.image_cache.get(&path) {
             if cached.fingerprint == fingerprint {
-                return Ok(cached.image.clone());
+                return Ok(Arc::clone(&cached.image));
             }
             self.metrics.evictions = self.metrics.evictions.saturating_add(1);
         }
@@ -187,6 +199,7 @@ impl EditorResourceService {
             &vnengine_assets::AssetLimits::default(),
         )
         .map_err(|err| format!("decode image '{rel_path}': {err}"))?;
+        let image = Arc::new(image);
         self.metrics.decode_ms = self
             .metrics
             .decode_ms
@@ -196,7 +209,7 @@ impl EditorResourceService {
             path,
             CachedImage {
                 fingerprint,
-                image: image.clone(),
+                image: Arc::clone(&image),
             },
         );
         self.trim_cache();
@@ -209,8 +222,7 @@ impl EditorResourceService {
         rel_path: &str,
     ) -> Result<AudioMetadata, String> {
         let path = resolve_project_file(project_root, rel_path)?;
-        let bytes = self.load_bytes_shared(project_root, rel_path)?;
-        let fingerprint = fingerprint_bytes(&bytes);
+        let CachedBytes { bytes, fingerprint } = self.load_bytes_at(&path)?;
 
         if let Some(cached) = self.audio_metadata_cache.get(&path) {
             if cached.fingerprint == fingerprint {
@@ -220,10 +232,8 @@ impl EditorResourceService {
             self.metrics.evictions = self.metrics.evictions.saturating_add(1);
         }
 
-        let mut store = MemoryAssetStore::default();
-        store.insert(rel_path.to_string(), bytes.as_ref().to_vec());
         let metadata = AudioMetadata {
-            duration: audio_duration(&store, rel_path)?,
+            duration: audio_duration_from_bytes(Arc::clone(&bytes), rel_path)?,
             fingerprint,
             bytes: bytes.len(),
         };
