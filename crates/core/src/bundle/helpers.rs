@@ -5,6 +5,31 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{VnError, VnResult};
 
+/// Standalone entries need no source manifest. A present manifest must still be
+/// a regular, valid file; unreadable or malformed projects never use defaults.
+pub(super) fn load_export_manifest(
+    root: &Path,
+    entry: Option<&Path>,
+) -> VnResult<crate::ProjectManifest> {
+    let path = root.join("project.vnm");
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && entry.is_some() => {
+            let mut manifest = crate::ProjectManifest::new("Visual Novel Game", "Author");
+            manifest.settings.entry_point = normalize_path_display(&sanitize_relative_path(
+                entry.expect("explicit entry checked"),
+                "entry_script",
+            )?);
+            Ok(manifest)
+        }
+        _ => {
+            ensure_regular_file(&path, "manifest")?;
+            crate::ProjectManifest::load(&path).map_err(|error| {
+                invalid_bundle(format!("load manifest '{}': {error}", path.display()))
+            })
+        }
+    }
+}
+
 pub(super) fn sanitize_relative_path(path: &Path, field_name: &str) -> VnResult<PathBuf> {
     let mut out = PathBuf::new();
     for component in path.components() {

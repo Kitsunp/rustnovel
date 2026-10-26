@@ -380,3 +380,53 @@ fn is_symbolic_asset_token(value: &str) -> bool {
         "black" | "white" | "gray" | "grey" | "red" | "green" | "blue"
     )
 }
+
+/// Make copied resources available to the editor's asset browser immediately.
+pub(super) fn register_imported_assets(
+    root: &Path,
+    events: &[EventRaw],
+    manifest: &mut crate::manifest::ProjectManifest,
+) {
+    use crate::manifest::{register_asset_path, AssetImportKind};
+    let canonical_root = match root.canonicalize() {
+        Ok(root) => root,
+        Err(_) => return,
+    };
+    let mut register = |path: &str, kind| {
+        // Failed copies and symbolic aliases must not become broken browser cards.
+        if let Ok(source) = root.join(path).canonicalize() {
+            if source.is_file() && source.starts_with(&canonical_root) {
+                if let Ok(relative) = source.strip_prefix(&canonical_root) {
+                    register_asset_path(manifest, relative.to_path_buf(), kind, relative);
+                }
+            }
+        }
+    };
+    for event in events {
+        let (background, music, characters) = match event {
+            EventRaw::Scene(scene) => {
+                (&scene.background, &scene.music, scene.characters.as_slice())
+            }
+            EventRaw::Patch(patch) => (&patch.background, &patch.music, patch.add.as_slice()),
+            EventRaw::AudioAction(action) => {
+                if let Some(path) = &action.asset {
+                    register(path, AssetImportKind::Audio);
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        if let Some(path) = background {
+            register(path, AssetImportKind::Background);
+        }
+        if let Some(path) = music {
+            register(path, AssetImportKind::Audio);
+        }
+        for character in characters {
+            register(&character.name, AssetImportKind::Character);
+            if let Some(path) = &character.expression {
+                register(path, AssetImportKind::Character);
+            }
+        }
+    }
+}

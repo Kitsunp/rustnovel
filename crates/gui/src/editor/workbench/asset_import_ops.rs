@@ -149,27 +149,30 @@ impl EditorWorkbench {
             .manifest_path
             .clone()
             .ok_or_else(|| "load a project manifest before removing assets".to_string())?;
-        let manifest = self
+        let mut candidate = self
             .manifest
-            .as_mut()
-            .ok_or_else(|| "load a project manifest before removing assets".to_string())?;
+            .as_ref()
+            .ok_or_else(|| "load a project manifest before removing assets".to_string())?
+            .clone();
         let manifest_field_path = kind.field_path(name);
 
         let removed = match kind {
-            AssetImportKind::Background => manifest.assets.backgrounds.remove(name),
-            AssetImportKind::Character => manifest
+            AssetImportKind::Background => candidate.assets.backgrounds.remove(name),
+            AssetImportKind::Character => candidate
                 .assets
                 .characters
                 .remove(name)
                 .map(|asset| asset.path),
-            AssetImportKind::Audio => manifest.assets.audio.remove(name),
+            AssetImportKind::Audio => candidate.assets.audio.remove(name),
         }
         .ok_or_else(|| format!("{} asset '{name}' is not in the manifest", kind.label()))?;
         let removed_path = removed.to_string_lossy().replace('\\', "/");
 
-        manifest
+        candidate
             .save(&manifest_path)
             .map_err(|err| format!("manifest save failed: {err}"))?;
+
+        self.manifest = Some(candidate);
 
         self.composer_image_cache.clear();
         self.composer_image_failures.clear();

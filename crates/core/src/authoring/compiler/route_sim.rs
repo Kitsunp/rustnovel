@@ -482,6 +482,19 @@ fn apply_state_mutations(event: &EventRaw, state: &mut RawSimulationState) {
                 state.visual.characters.insert(updated.name.clone());
             }
         }
+        EventRaw::AudioAction(action) => {
+            if let (Some(channel), Some(kind)) = (
+                crate::event::audio_channel_code(&action.channel),
+                crate::event::audio_action_code(&action.action),
+            ) {
+                crate::audio::apply_bgm_action(
+                    &mut state.visual.music,
+                    channel,
+                    kind,
+                    action.asset.as_ref(),
+                );
+            }
+        }
         EventRaw::SetCharacterPosition(pos) => {
             state.visual.characters.insert(pos.name.clone());
         }

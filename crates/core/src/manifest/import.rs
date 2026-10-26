@@ -183,12 +183,6 @@ pub fn import_project_asset(
         }
     }
     let base = sanitized_stem(&source);
-    let mut name = base.clone();
-    let mut suffix = 1usize;
-    while entries.iter().any(|(existing, _)| *existing == name) {
-        name = format!("{base}_{suffix}");
-        suffix += 1;
-    }
     drop(entries);
     let mut pending = PendingAsset(None);
     let relative = if source.starts_with(&root) {
@@ -241,23 +235,7 @@ pub fn import_project_asset(
     };
     let path = relative.to_string_lossy().replace('\\', "/");
     let mut updated = manifest.clone();
-    match kind {
-        AssetImportKind::Background => {
-            updated.assets.backgrounds.insert(name.clone(), relative);
-        }
-        AssetImportKind::Character => {
-            updated.assets.characters.insert(
-                name.clone(),
-                CharacterAsset {
-                    path: relative,
-                    scale: None,
-                },
-            );
-        }
-        AssetImportKind::Audio => {
-            updated.assets.audio.insert(name.clone(), relative);
-        }
-    }
+    let name = register_asset_path(&mut updated, relative, kind, &source);
     updated.save(manifest_path)?;
     *manifest = updated;
     let copied = pending.0.take().is_some();
@@ -269,6 +247,46 @@ pub fn import_project_asset(
         copied,
         bytes: metadata.len(),
     })
+}
+
+/// Registers an already validated project-relative resource without copying it.
+/// Both external resource imports and project importers share collision handling.
+pub(crate) fn register_asset_path(
+    manifest: &mut ProjectManifest,
+    relative: PathBuf,
+    kind: AssetImportKind,
+    source_name: &Path,
+) -> String {
+    let entries = kind.entries(manifest);
+    if let Some((name, _)) = entries.iter().find(|(_, path)| *path == relative) {
+        return (*name).to_owned();
+    }
+    let base = sanitized_stem(source_name);
+    let mut name = base.clone();
+    let mut suffix = 1usize;
+    while entries.iter().any(|(existing, _)| *existing == name) {
+        name = format!("{base}_{suffix}");
+        suffix += 1;
+    }
+    drop(entries);
+    match kind {
+        AssetImportKind::Background => {
+            manifest.assets.backgrounds.insert(name.clone(), relative);
+        }
+        AssetImportKind::Character => {
+            manifest.assets.characters.insert(
+                name.clone(),
+                CharacterAsset {
+                    path: relative,
+                    scale: None,
+                },
+            );
+        }
+        AssetImportKind::Audio => {
+            manifest.assets.audio.insert(name.clone(), relative);
+        }
+    }
+    name
 }
 
 fn safe_relative(path: &Path) -> Result<PathBuf, AssetImportError> {

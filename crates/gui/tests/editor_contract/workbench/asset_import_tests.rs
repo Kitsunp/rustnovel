@@ -19,6 +19,30 @@ fn workbench_with_project(root: &std::path::Path) -> EditorWorkbench {
     workbench
 }
 
+#[test]
+fn removing_asset_preserves_manifest_and_audit_when_publication_fails() {
+    for kind in [AssetImportKind::Background, AssetImportKind::Character, AssetImportKind::Audio] {
+        let temp = tempdir().unwrap();
+        let mut workbench = workbench_with_project(temp.path());
+        let source = temp.path().join(if matches!(kind, AssetImportKind::Audio) { "source.ogg" } else { "source.png" });
+        std::fs::write(&source, b"fixture").unwrap();
+        workbench.import_asset_file(&source, kind).unwrap();
+        let manifest = workbench.manifest.as_ref().unwrap();
+        let name = match kind {
+            AssetImportKind::Background => manifest.assets.backgrounds.keys().next(),
+            AssetImportKind::Character => manifest.assets.characters.keys().next(),
+            AssetImportKind::Audio => manifest.assets.audio.keys().next(),
+        }.unwrap().clone();
+        let before = serde_json::to_value(manifest).unwrap();
+        let operations = workbench.document().operation_log.len();
+        workbench.manifest_path = Some(temp.path().to_path_buf()); // Publishing a file over a directory fails.
+        assert!(workbench.remove_asset_from_manifest(kind, &name).is_err());
+        assert_eq!(serde_json::to_value(workbench.manifest.as_ref().unwrap()).unwrap(), before);
+        assert_eq!(workbench.document().operation_log.len(), operations);
+        assert!(source.exists());
+    }
+}
+
 #[cfg(unix)]
 fn create_dir_symlink(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(target, link)

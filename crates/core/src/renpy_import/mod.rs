@@ -55,15 +55,6 @@ pub fn import_renpy_project(options: ImportRenpyOptions) -> VnResult<ImportRepor
     postprocess::patch_missing_targets(&mut state);
     postprocess::enforce_start_label(&mut state, &options.entry_label);
 
-    let asset_issues = assets::rewrite_and_copy_assets(
-        &project_root,
-        &scan_root,
-        &output_root,
-        &mut state.events,
-        &mut state.trace_seq,
-    )?;
-    state.issues.extend(asset_issues);
-
     if (options.strict_mode || matches!(options.fallback_policy, ImportFallbackPolicy::Strict))
         && state.degraded_events > 0
     {
@@ -73,6 +64,15 @@ pub fn import_renpy_project(options: ImportRenpyOptions) -> VnResult<ImportRepor
             state.degraded_events, top_codes
         )));
     }
+
+    let asset_issues = assets::rewrite_and_copy_assets(
+        &project_root,
+        &scan_root,
+        &output_root,
+        &mut state.events,
+        &mut state.trace_seq,
+    )?;
+    state.issues.extend(asset_issues);
 
     let script = ScriptRaw::new(state.events.clone(), state.labels.clone());
     let json = script
@@ -87,14 +87,15 @@ pub fn import_renpy_project(options: ImportRenpyOptions) -> VnResult<ImportRepor
     })?;
 
     let script_path = output_root.join("main.json");
-    fs::write(&script_path, json)
+    crate::atomic_io::atomic_replace(&script_path, json.as_bytes())
         .map_err(|e| invalid_import(format!("write '{}': {e}", script_path.display())))?;
 
     let project_name = project_root
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "renpy_import".to_string());
-    let manifest = ProjectManifest::new(&project_name, "renpy_import");
+    let mut manifest = ProjectManifest::new(&project_name, "renpy_import");
+    assets::register_imported_assets(&output_root, &script.events, &mut manifest);
     let manifest_path = output_root.join("project.vnm");
     manifest
         .save(&manifest_path)
@@ -125,7 +126,7 @@ pub fn import_renpy_project(options: ImportRenpyOptions) -> VnResult<ImportRepor
         .unwrap_or_else(|| output_root.join("import_report.json"));
     let report_json = serde_json::to_string_pretty(&report)
         .map_err(|e| invalid_import(format!("serialize import report: {e}")))?;
-    fs::write(&report_path, report_json)
+    crate::atomic_io::atomic_replace(&report_path, report_json.as_bytes())
         .map_err(|e| invalid_import(format!("write '{}': {e}", report_path.display())))?;
 
     Ok(report)
