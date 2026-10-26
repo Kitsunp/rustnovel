@@ -468,6 +468,7 @@ fn asset_cache_fingerprint_and_audio_metadata_invalidation() {
     let bg = tmp.path().join("assets/bg.bin");
     fs::create_dir_all(tmp.path().join("assets")).expect("asset dir");
     fs::write(&bg, b"old").expect("old asset");
+    let modified = fs::metadata(&bg).unwrap().modified().unwrap();
     let mut service = EditorResourceService::new();
 
     assert_eq!(
@@ -477,6 +478,13 @@ fn asset_cache_fingerprint_and_audio_metadata_invalidation() {
         b"old"
     );
     fs::write(&bg, b"new").expect("new asset");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&bg)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    assert_eq!(fs::metadata(&bg).unwrap().modified().unwrap(), modified);
     assert_eq!(
         service
             .load_bytes(tmp.path(), "assets/bg.bin")
@@ -497,6 +505,17 @@ fn asset_cache_fingerprint_and_audio_metadata_invalidation() {
     assert_ne!(first.fingerprint, second.fingerprint);
     assert!(second.duration > first.duration);
     assert!(service.metrics().evictions >= 2);
+    let limit = vnengine_assets::AssetLimits::default().max_bytes;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&bg)
+        .unwrap()
+        .set_len(limit + 1)
+        .unwrap();
+    assert!(service
+        .load_bytes_shared(tmp.path(), "assets/bg.bin")
+        .unwrap_err()
+        .contains("too large"));
 }
 
 fn tiny_wav(duration: Duration, sample_rate: u32) -> Vec<u8> {

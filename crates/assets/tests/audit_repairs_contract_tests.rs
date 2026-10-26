@@ -1,7 +1,9 @@
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
 use vnengine_assets::{
-    read_asset_bytes, sanitize_rel_path, AssetError, AssetLimits, AssetStore, SecurityMode,
+    hash_asset_file, read_asset_bytes, sanitize_rel_path, AssetError, AssetLimits, AssetStore,
+    SecurityMode,
 };
 
 #[test]
@@ -57,6 +59,22 @@ fn rep_oversized_file_rejected_before_reading_entire_payload() {
     assert_eq!(
         read_asset_bytes(&path, 4096).expect("exact limit").len(),
         4096
+    );
+    let (hash, size) = hash_asset_file(&path, 4096).expect("hash at exact limit");
+    assert_eq!(size, 4096);
+    assert_eq!(hash, format!("{:x}", Sha256::digest(vec![42u8; 4096])));
+    assert!(matches!(
+        hash_asset_file(&path, 32),
+        Err(AssetError::TooLarge {
+            size: 4096,
+            max: 32
+        })
+    ));
+    let empty = directory.path().join("empty.bin");
+    std::fs::write(&empty, []).unwrap();
+    assert_eq!(
+        hash_asset_file(&empty, 0).unwrap(),
+        (format!("{:x}", Sha256::digest([])), 0)
     );
     assert!(matches!(
         read_asset_bytes(&path, 32),

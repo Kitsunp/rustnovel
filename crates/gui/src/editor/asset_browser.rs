@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 use visual_novel_engine::manifest::ProjectManifest;
 
-use crate::editor::image_asset_cache::{normalize_asset_path, ImageTextureCache, ImageView};
+use crate::editor::image_asset_cache::{
+    normalize_asset_path, record_asset_failure, ImageTextureCache, ImageView,
+};
 use crate::editor::resource_service::EditorResourceService;
 use crate::editor::AssetImportKind;
 
@@ -314,57 +316,71 @@ impl<'a> AssetBrowserPanel<'a> {
     }
 
     fn render_audio_position(&mut self, ui: &mut egui::Ui, asset_path: &str) -> (u64, bool) {
-        let duration = self.audio_duration_secs(asset_path);
-        let slider_id = egui::Id::new(("asset_audio_offset", asset_path.to_string()));
-        let mut offset_secs = ui
-            .data_mut(|data| data.get_persisted::<f32>(slider_id))
-            .unwrap_or(0.0);
-        let playback = self.audio_playback.filter(|playback| {
-            let path = Path::new(playback.path);
-            let relative = self
-                .project_root
-                .and_then(|root| path.strip_prefix(root).ok())
-                .unwrap_or(path);
-            normalize_asset_path(&relative.to_string_lossy()) == asset_path
-        });
-
-        if let Some(duration_secs) = duration.filter(|value| *value > 0.0) {
-            let seeking_id = slider_id.with("seeking");
-            let was_seeking = ui
-                .data_mut(|data| data.get_temp::<bool>(seeking_id))
-                .unwrap_or(false);
-            if let Some(playback) = playback {
-                if !was_seeking && !ui.input(|input| input.pointer.primary_down()) {
-                    offset_secs = if playback.looping {
-                        playback.position.as_secs_f32() % duration_secs
-                    } else {
-                        playback.position.as_secs_f32().min(duration_secs)
-                    };
-                }
-                ui.ctx()
-                    .request_repaint_after(std::time::Duration::from_millis(50));
+        let size = egui::vec2(
+            ui.available_width().max(1.0),
+            ui.spacing().interact_size.y
+                + ui.text_style_height(&egui::TextStyle::Body)
+                + ui.spacing().item_spacing.y,
+        );
+        ui.allocate_ui_with_layout(size, egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_min_size(size);
+            let slider_id = egui::Id::new(("asset_audio_offset", asset_path.to_string()));
+            let mut offset_secs = ui
+                .data_mut(|data| data.get_persisted::<f32>(slider_id))
+                .unwrap_or(0.0);
+            if !ui.is_rect_visible(ui.min_rect()) {
+                return (secs_to_ms(offset_secs), false);
             }
-            offset_secs = offset_secs.clamp(0.0, duration_secs);
-            let response = ui
-                .scope(|ui| {
-                    ui.spacing_mut().slider_width = ui.available_width().max(1.0);
-                    ui.add(
-                        egui::Slider::new(&mut offset_secs, 0.0..=duration_secs).show_value(false),
-                    )
-                })
-                .inner;
-            ui.label(format_audio_position(offset_secs, duration_secs));
-            ui.data_mut(|data| data.insert_temp(seeking_id, response.dragged()));
-            ui.data_mut(|data| data.insert_persisted(slider_id, offset_secs));
-            (
-                secs_to_ms(offset_secs),
-                playback.is_some()
-                    && (response.drag_stopped() || (response.changed() && !response.dragged())),
-            )
-        } else {
-            ui.label("Duration --:--");
-            (0, false)
-        }
+            let duration = self.audio_duration_secs(asset_path);
+            let playback = self.audio_playback.filter(|playback| {
+                let path = Path::new(playback.path);
+                let relative = self
+                    .project_root
+                    .and_then(|root| path.strip_prefix(root).ok())
+                    .unwrap_or(path);
+                normalize_asset_path(&relative.to_string_lossy()) == asset_path
+            });
+
+            if let Some(duration_secs) = duration.filter(|value| *value > 0.0) {
+                let seeking_id = slider_id.with("seeking");
+                let was_seeking = ui
+                    .data_mut(|data| data.get_temp::<bool>(seeking_id))
+                    .unwrap_or(false);
+                if let Some(playback) = playback {
+                    if !was_seeking && !ui.input(|input| input.pointer.primary_down()) {
+                        offset_secs = if playback.looping {
+                            playback.position.as_secs_f32() % duration_secs
+                        } else {
+                            playback.position.as_secs_f32().min(duration_secs)
+                        };
+                    }
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(50));
+                }
+                offset_secs = offset_secs.clamp(0.0, duration_secs);
+                let response = ui
+                    .scope(|ui| {
+                        ui.spacing_mut().slider_width = ui.available_width().max(1.0);
+                        ui.add(
+                            egui::Slider::new(&mut offset_secs, 0.0..=duration_secs)
+                                .show_value(false),
+                        )
+                    })
+                    .inner;
+                ui.label(format_audio_position(offset_secs, duration_secs));
+                ui.data_mut(|data| data.insert_temp(seeking_id, response.dragged()));
+                ui.data_mut(|data| data.insert_persisted(slider_id, offset_secs));
+                (
+                    secs_to_ms(offset_secs),
+                    playback.is_some()
+                        && (response.drag_stopped() || (response.changed() && !response.dragged())),
+                )
+            } else {
+                ui.label("Duration --:--");
+                (0, false)
+            }
+        })
+        .inner
     }
 
     pub fn audio_duration_secs(&mut self, asset_path: &str) -> Option<f32> {
@@ -376,7 +392,8 @@ impl<'a> AssetBrowserPanel<'a> {
                 metadata.duration.map(|duration| duration.as_secs_f32())
             }
             Err(err) => {
-                self.image_failures.insert(
+                record_asset_failure(
+                    self.image_failures,
                     failure_key,
                     format!("audio '{asset_path}' metadata unavailable: {err}"),
                 );

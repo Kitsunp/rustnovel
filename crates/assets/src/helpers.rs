@@ -1,6 +1,4 @@
 use std::collections::HashSet;
-use std::fs;
-use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -71,31 +69,11 @@ pub(crate) fn canonicalize_within_root(root: &Path, rel: &Path) -> Result<PathBu
 }
 
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    let digest = hasher.finalize();
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 pub(crate) fn sha256_file_and_size(path: &Path) -> Result<(String, u64), AssetError> {
-    let file = fs::File::open(path)?;
-    let mut reader = BufReader::new(file);
-    let mut hasher = Sha256::new();
-    let mut total = 0u64;
-    let mut chunk = [0u8; 16 * 1024];
-
-    loop {
-        let read = reader.read(&mut chunk)?;
-        if read == 0 {
-            break;
-        }
-        total = total.saturating_add(read as u64);
-        hasher.update(&chunk[..read]);
-    }
-
-    let digest = hasher.finalize();
-    let hex = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-    Ok((hex, total))
+    crate::hash_asset_file(path, u64::MAX)
 }
 
 pub(crate) fn is_allowed_by_extension(path: &Path, allowed: &HashSet<String>) -> bool {
