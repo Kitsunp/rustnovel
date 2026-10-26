@@ -210,14 +210,32 @@ fn engine_records_choice_history() {
 #[test]
 fn json_round_trip() {
     let script = sample_script();
-    let serialized = serde_json::json!({
+    let expected = serde_json::json!({
         "script_schema_version": visual_novel_engine::SCRIPT_SCHEMA_VERSION,
         "events": script.events,
         "labels": script.labels,
-    })
-    .to_string();
+    });
+    let serialized = script.to_json().unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&serialized).unwrap(),
+        expected
+    );
     let parsed = ScriptRaw::from_json(&serialized).unwrap();
-    assert_eq!(parsed.events.len(), 4);
+    assert_eq!(
+        serde_json::to_value(parsed).unwrap(),
+        serde_json::to_value(script).unwrap()
+    );
+
+    let invalid = format!(
+        r#"  {{"script_schema_version":"{}","events":[],"labels":42}}"#,
+        visual_novel_engine::SCRIPT_SCHEMA_VERSION
+    );
+    let visual_novel_engine::VnError::Serialization { src, .. } =
+        ScriptRaw::from_json(&invalid).unwrap_err()
+    else {
+        panic!("invalid payload must report a serialization error");
+    };
+    assert_eq!(src, invalid, "diagnostics must use the supplied source");
 }
 
 #[test]
