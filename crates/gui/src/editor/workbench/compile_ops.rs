@@ -185,10 +185,7 @@ impl EditorWorkbench {
             return;
         };
 
-        let entry_script = self
-            .manifest
-            .as_ref()
-            .map(|manifest| std::path::PathBuf::from(&manifest.settings.entry_point));
+        let entry_script = self.default_export_entry();
 
         let target = if cfg!(target_os = "windows") {
             visual_novel_engine::ExportTargetPlatform::Windows
@@ -224,6 +221,10 @@ impl EditorWorkbench {
             hmac_key: None,
         };
 
+        if let Err(error) = self.prepare_export_document(&spec, true) {
+            self.toast = Some(ToastState::error(format!("Package failed: {error}")));
+            return;
+        }
         let package_result = visual_novel_engine::export_executable_bundle(spec);
 
         match package_result {

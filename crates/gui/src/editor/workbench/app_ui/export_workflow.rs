@@ -1,6 +1,18 @@
 use super::*;
 
 impl EditorWorkbench {
+    pub(in crate::editor::workbench) fn default_export_entry(&self) -> Option<std::path::PathBuf> {
+        if let Some(manifest) = &self.manifest {
+            return Some(manifest.settings.entry_point.clone().into());
+        }
+        let current = self.pending_save_path.as_deref()?;
+        let root = self.project_root.as_deref().or_else(|| current.parent())?;
+        current
+            .strip_prefix(root)
+            .ok()
+            .map(std::path::Path::to_path_buf)
+    }
+
     fn export_wizard_spec(&self) -> Result<visual_novel_engine::ExportBundleSpec, String> {
         let project_root = self
             .project_root
@@ -16,7 +28,7 @@ impl EditorWorkbench {
             return Err("choose an output folder".to_string());
         }
         let entry_script = if self.export_wizard.entry_script.trim().is_empty() {
-            None
+            self.default_export_entry()
         } else {
             Some(std::path::PathBuf::from(
                 self.export_wizard.entry_script.trim(),
@@ -189,7 +201,7 @@ impl EditorWorkbench {
 
     /// Export the currently edited entry only after accounting for its pending
     /// changes. Other explicitly selected entries remain independent documents.
-    fn prepare_export_document(
+    pub(in crate::editor::workbench) fn prepare_export_document(
         &mut self,
         spec: &visual_novel_engine::ExportBundleSpec,
         save: bool,
@@ -197,11 +209,10 @@ impl EditorWorkbench {
         let Some(current) = self.pending_save_path.clone() else {
             return Ok(());
         };
-        let entry = spec.entry_script.clone().or_else(|| {
-            self.manifest
-                .as_ref()
-                .map(|manifest| manifest.settings.entry_point.clone().into())
-        });
+        let entry = spec
+            .entry_script
+            .clone()
+            .or_else(|| self.default_export_entry());
         let Some(entry) = entry else {
             return Ok(());
         };
