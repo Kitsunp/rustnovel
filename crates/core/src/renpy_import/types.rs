@@ -190,6 +190,7 @@ pub struct ImportState {
     pub synthetic_id: usize,
     pub trace_seq: usize,
     pub degraded_events: usize,
+    pub duplicate_labels: Vec<String>,
 }
 
 impl ImportState {
@@ -307,6 +308,17 @@ impl ImportState {
     }
 
     pub fn add_label(&mut self, name: &str) {
+        if self.labels.contains_key(name) {
+            self.duplicate_labels.push(name.to_string());
+            self.push_issue(
+                "error",
+                "duplicate_label",
+                format!("Ren'Py label '{name}' is declared more than once"),
+                None,
+                None,
+            );
+            return;
+        }
         self.labels.insert(name.to_string(), self.events.len());
     }
 

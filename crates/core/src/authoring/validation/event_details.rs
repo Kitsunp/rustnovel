@@ -1,9 +1,10 @@
-use super::assets::validate_asset;
+use super::assets::{validate_asset, AssetProbeError};
 use super::scene::validate_character_scale;
 use crate::authoring::{
     DiagnosticTarget, FieldPath, LintCode, LintIssue, SemanticValue, SemanticValueKind,
     ValidationPhase,
 };
+use crate::event::{audio_action_code, audio_channel_code, transition_kind_code};
 
 pub(crate) struct AudioValidation<'a> {
     pub id: u32,
@@ -19,9 +20,10 @@ pub(crate) fn validate_audio<F>(
     asset_exists: &F,
     issues: &mut Vec<LintIssue>,
 ) where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> Result<(), AssetProbeError>,
 {
-    if !matches!(audio.channel, "bgm" | "sfx" | "voice") {
+    let action = audio_action_code(audio.action);
+    if audio_channel_code(audio.channel).is_none() {
         issues.push(
             LintIssue::error(
                 Some(audio.id),
@@ -42,7 +44,7 @@ pub(crate) fn validate_audio<F>(
             .with_evidence_trace(),
         );
     }
-    if !matches!(audio.action, "play" | "stop" | "fade_out") {
+    if action.is_none() {
         issues.push(
             LintIssue::error(
                 Some(audio.id),
@@ -69,7 +71,7 @@ pub(crate) fn validate_audio<F>(
             .with_evidence_trace(),
         );
     }
-    if matches!(audio.action, "stop" | "fade_out") && audio.fade_duration_ms.unwrap_or(0) == 0 {
+    if matches!(action, Some(1 | 2)) && audio.fade_duration_ms.unwrap_or(0) == 0 {
         issues.push(
             LintIssue::warning(
                 Some(audio.id),
@@ -81,7 +83,7 @@ pub(crate) fn validate_audio<F>(
             .with_evidence_trace(),
         );
     }
-    if audio.action == "play" && audio.asset.is_none() {
+    if action == Some(0) && audio.asset.is_none() {
         issues.push(
             LintIssue::warning(
                 Some(audio.id),
@@ -118,7 +120,7 @@ pub(crate) fn validate_transition(
             .with_evidence_trace(),
         );
     }
-    if !matches!(kind, "fade" | "fade_black" | "dissolve" | "cut") {
+    if transition_kind_code(kind).is_none() {
         issues.push(
             LintIssue::warning(
                 Some(id),

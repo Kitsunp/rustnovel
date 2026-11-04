@@ -52,9 +52,7 @@ fn composer_node_selection_schedules_graph_focus() {
     );
 
     workbench.handle_composer_actions(
-        vec![crate::editor::visual_composer::VisualComposerAction::SelectNode(
-            scene,
-        )],
+        vec![crate::editor::visual_composer::VisualComposerAction::SelectNode(scene)],
         None,
     );
 
@@ -80,10 +78,136 @@ fn workbench_update_uses_supplied_delta_ticks_and_seconds() {
     workbench.timeline.add_track(track).unwrap();
     workbench.is_playing = true;
 
+    workbench.update(0);
+    assert_eq!(
+        workbench.timeline.current_time(),
+        0,
+        "zero elapsed time must not advance animation"
+    );
     workbench.update(30);
     assert_eq!(workbench.timeline.current_time(), 30);
     workbench.update_seconds(0.5);
     assert_eq!(workbench.timeline.current_time(), 60);
+    for _ in 0..60 {
+        workbench.update_seconds(1.0 / 120.0);
+    }
+    assert_eq!(
+        workbench.timeline.current_time(),
+        90,
+        "high refresh rates must not speed up playback"
+    );
+    workbench.update(100);
+    assert_eq!(
+        workbench.timeline.current_time(),
+        120,
+        "keep the last animation frame at the end"
+    );
+    assert!(!workbench.is_playing);
+}
+
+#[test]
+fn timeline_survives_preview_failure_and_does_not_follow_reused_entity_id() {
+    use visual_novel_engine::{Easing, EntityKind, Keyframe, PropertyType, Track};
+
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    let start = workbench.node_graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+    let scene = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: None,
+            music: None,
+            characters: vec![visual_novel_engine::runtime::CharacterPlacementRaw {
+                name: "Ava".into(),
+                x: Some(20),
+                y: Some(40),
+                ..Default::default()
+            }],
+        },
+        egui::pos2(0.0, 120.0),
+    );
+    let end = workbench.node_graph.add_node(StoryNode::End, egui::pos2(0.0, 240.0));
+    workbench.node_graph.connect(start, scene);
+    workbench.node_graph.connect(scene, end);
+    workbench.node_graph.set_single_selection(Some(scene));
+    workbench.selected_node = Some(scene);
+    workbench.composer_preview_mode = crate::editor::ComposerPreviewMode::SelectedRoute;
+    workbench.sync_graph_to_script().unwrap();
+    let id = workbench.scene.iter().find(|entity| matches!(entity.kind, EntityKind::Character(_))).unwrap().id;
+    let mut track = Track::new(id, PropertyType::PositionX);
+    track.add_keyframe(Keyframe::new(0, 300, Easing::Linear)).unwrap();
+    workbench.timeline.add_track(track).unwrap();
+    assert_eq!(workbench.composer_animated_scene().get(id).unwrap().transform.x, 300);
+
+    workbench.node_graph.remove_node(start);
+    assert!(workbench.sync_graph_to_script().is_err());
+    assert_eq!(workbench.timeline.track_count(), 1);
+    assert!(workbench.scene.is_empty());
+    assert!(workbench.apply_graph_undo());
+    assert!(workbench.engine.is_some());
+    assert_eq!(workbench.timeline.track_count(), 1);
+    assert_eq!(workbench.composer_animated_scene().get(id).unwrap().transform.x, 300);
+
+    workbench.node_graph.edit_node(scene, |node| {
+        if let StoryNode::Scene { background, .. } = node {
+            *background = Some("room.png".into());
+        }
+    });
+    workbench.sync_graph_to_script().unwrap();
+    let original = workbench.scene.get(id).unwrap_or_else(|| panic!("expected reused {id:?}, scene: {:?}", workbench.scene));
+    assert!(matches!(original.kind, EntityKind::Image(_)));
+    let original_x = original.transform.x;
+    let preview = workbench.composer_animated_scene();
+    assert_eq!(preview.get(id).unwrap().transform.x, original_x);
+    assert_eq!(workbench.timeline.track_count(), 1);
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("other.json");
+    std::fs::write(&path, workbench.node_graph.to_script().to_json().unwrap()).unwrap();
+    workbench.load_script(path);
+    assert_eq!(workbench.timeline.track_count(), 0);
+}
+
+#[test]
+fn timeline_rejects_ambiguous_and_missing_targets() {
+    use visual_novel_engine::{Easing, EntityId, EntityKind, Keyframe, PropertyType, Track};
+
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    let character = EntityKind::Character(visual_novel_engine::CharacterData {
+        name: "Duplicate".into(),
+        expression: None,
+    });
+    let first = workbench.scene.spawn(character.clone()).unwrap();
+    workbench.scene.spawn(character).unwrap();
+    for id in [first, EntityId::new(99)] {
+        let mut track = Track::new(id, PropertyType::PositionX);
+        track.add_keyframe(Keyframe::new(0, 300, Easing::Linear)).unwrap();
+        workbench.timeline.add_track(track).unwrap();
+    }
+    let preview = workbench.composer_animated_scene();
+    assert_eq!(preview.get(first).unwrap().transform.x, 0);
+    assert_eq!(workbench.timeline.track_count(), 2);
+    workbench.show_timeline = true;
+    let ctx = egui::Context::default();
+    let output = ctx.run(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 960.0))), ..Default::default() }, |ctx| workbench.render_editor_mode(ctx));
+    let labels = output.shapes.iter().filter_map(|shape| match &shape.shape {
+        egui::epaint::Shape::Text(text) => Some(text.galley.text()),
+        _ => None,
+    }).collect::<Vec<_>>();
+    assert!(labels.iter().any(|label| label.contains("2 timeline track(s) suspended")), "{labels:?}");
+
+    workbench.timeline.clear();
+    let _ = ctx.run(egui::RawInput::default(), |ctx| workbench.render_editor_mode(ctx));
+    workbench.scene = visual_novel_engine::SceneState::new();
+    let replacement = workbench.scene.spawn(EntityKind::Character(visual_novel_engine::CharacterData {
+        name: "Replacement".into(),
+        expression: None,
+    })).unwrap();
+    assert_eq!(replacement, first);
+    let mut track = Track::new(replacement, PropertyType::PositionX);
+    track.add_keyframe(Keyframe::new(0, 450, Easing::Linear)).unwrap();
+    workbench.timeline.add_track(track).unwrap();
+    let _ = ctx.run(egui::RawInput::default(), |ctx| workbench.render_editor_mode(ctx));
+    assert_eq!(workbench.composer_animated_scene().get(replacement).unwrap().transform.x, 450);
 }
 
 #[test]
@@ -102,6 +226,56 @@ fn export_wizard_initializes_project_defaults_without_executing() {
         .output_root
         .contains(workbench.export_wizard.target.as_str()));
     assert_eq!(workbench.export_wizard.entry_script, "main.json");
+}
+
+#[test]
+fn export_runtime_discovery_is_independent_of_working_directory_and_skips_debug() {
+    let tmp = tempfile::tempdir().unwrap();
+    let installed = tmp.path().join("installed");
+    let unrelated = tmp.path().join("another-project");
+    let debug = tmp.path().join("target/debug");
+    let desktop = tmp.path().join("target/desktop");
+    let release = tmp.path().join("target/release");
+    for path in [&installed, &unrelated, &debug, &desktop, &release] {
+        fs::create_dir_all(path).unwrap();
+    }
+    for dir in [&installed, &debug, &desktop, &release] {
+        fs::write(dir.join("vn_player.exe"), b"runtime").unwrap();
+    }
+    let discover = |dir: &Path| {
+        EditorWorkbench::discover_export_runtime(
+            Some(dir),
+            &unrelated,
+            visual_novel_engine::ExportTargetPlatform::Windows,
+        )
+    };
+    assert_eq!(
+        discover(&installed),
+        Some(installed.join("vn_player.exe").canonicalize().unwrap())
+    );
+    assert_eq!(
+        discover(&debug),
+        Some(desktop.join("vn_player.exe").canonicalize().unwrap())
+    );
+    fs::remove_file(desktop.join("vn_player.exe")).unwrap();
+    assert_eq!(
+        discover(&debug),
+        Some(release.join("vn_player.exe").canonicalize().unwrap())
+    );
+    fs::remove_file(release.join("vn_player.exe")).unwrap();
+    assert_eq!(
+        discover(&debug),
+        None,
+        "debug binaries must be explicitly chosen, never shipped automatically"
+    );
+    assert_eq!(
+        EditorWorkbench::discover_export_runtime(
+            Some(&installed),
+            &unrelated,
+            visual_novel_engine::ExportTargetPlatform::Linux
+        ),
+        None
+    );
 }
 
 fn minimal_pe_exe() -> Vec<u8> {
@@ -181,18 +355,21 @@ fn export_wizard_report_summary_matches_real_export_flow_outputs() {
     let compat_report = read_json(&output_root.join("meta/compat_report.json"));
     let bundle_manifest = read_json(&output_root.join("meta/bundle_file_manifest.json"));
     let runtime_hash = sha256_hex(&runtime_bytes);
-    let signature = fs::read_to_string(output_root.join("meta/bundle.hmac_sha256"))
-        .expect("bundle signature");
+    let signature =
+        fs::read_to_string(output_root.join("meta/bundle.hmac_sha256")).expect("bundle signature");
 
     assert_eq!(
         package_report,
         serde_json::to_value(&report).expect("report json"),
         "wizard summary should be driven by the same report written to disk"
     );
-    assert_eq!(package_report["runtime_artifact"], "runtime/vn_player.exe");
+    assert_eq!(package_report["runtime_artifact"], "game.exe");
     assert_eq!(package_report["runtime_artifact_sha256"], runtime_hash);
     assert_eq!(compat_report["runtime_artifact_sha256"], runtime_hash);
-    assert_eq!(package_report["generator_os"], compat_report["generator_os"]);
+    assert_eq!(
+        package_report["generator_os"],
+        compat_report["generator_os"]
+    );
     assert_eq!(
         package_report["expected_executable"],
         compat_report["expected_executable"]
@@ -201,7 +378,10 @@ fn export_wizard_report_summary_matches_real_export_flow_outputs() {
         package_report["graphics_backend"],
         compat_report["graphics_backend"]
     );
-    assert_eq!(package_report["wgpu_fallback"], compat_report["wgpu_fallback"]);
+    assert_eq!(
+        package_report["wgpu_fallback"],
+        compat_report["wgpu_fallback"]
+    );
     assert_eq!(package_report["total_size"], compat_report["total_size"]);
     assert_eq!(package_report["hashes"], bundle_manifest["files"]);
     assert_eq!(compat_report["hashes"], bundle_manifest["files"]);
@@ -212,21 +392,19 @@ fn export_wizard_report_summary_matches_real_export_flow_outputs() {
     assert_eq!(package_report["bundle_hmac_sha256"], signature);
     assert_eq!(compat_report["bundle_hmac_sha256"], signature);
     assert_eq!(
-        package_report["smoke_result"],
-        compat_report["smoke_result"],
+        package_report["smoke_result"], compat_report["smoke_result"],
         "package and compat reports must expose the same smoke state"
     );
     assert!(bundle_manifest["files"]
         .as_array()
         .expect("manifest files")
         .iter()
-        .any(|entry| entry["path"] == "runtime/vn_player.exe"
-            && entry["sha256"] == runtime_hash));
+        .any(|entry| entry["path"] == "game.exe" && entry["sha256"] == runtime_hash));
 
     let lines = EditorWorkbench::export_report_summary_lines(&report);
     assert!(lines
         .iter()
-        .any(|line| line == &format!("Runtime: runtime/vn_player.exe sha256={runtime_hash}")));
+        .any(|line| line == &format!("Runtime: game.exe sha256={runtime_hash}")));
     assert!(lines
         .iter()
         .any(|line| line == "Expected executable: game.exe"));
@@ -236,7 +414,10 @@ fn export_wizard_report_summary_matches_real_export_flow_outputs() {
     assert!(lines.iter().any(|line| {
         line == &format!(
             "Payload: files={} total_size={}",
-            bundle_manifest["files"].as_array().expect("manifest files").len(),
+            bundle_manifest["files"]
+                .as_array()
+                .expect("manifest files")
+                .len(),
             package_report["total_size"].as_u64().expect("total size")
         )
     }));
@@ -255,7 +436,79 @@ fn export_wizard_report_summary_matches_real_export_flow_outputs() {
         .any(|line| line == &format!("Integrity: hmac_sha256 scope=bundle_file_manifest_v2_signed_manifest_covers_payload_files hmac={signature}")));
     assert!(lines
         .iter()
-        .any(|line| line.starts_with("Smoke: status=not_run backend=software trace_id=export-smoke-")));
+        .any(|line| line
+            .starts_with("Smoke: status=not_run backend=software trace_id=export-smoke-")));
+}
+
+#[test]
+fn failed_compilation_discards_previous_runtime_and_recovers() {
+    for action in ["sync", "validate", "play"] {
+        let mut workbench = EditorWorkbench::new(VnConfig::default());
+        workbench.composer_preview_mode = crate::editor::ComposerPreviewMode::SelectedRoute;
+        let start = workbench
+            .node_graph
+            .add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+        let scene = workbench.node_graph.add_node(
+            StoryNode::Scene {
+                profile: None,
+                background: Some("bg/old.png".to_string()),
+                music: None,
+                characters: vec![],
+            },
+            egui::pos2(0.0, 100.0),
+        );
+        let end = workbench
+            .node_graph
+            .add_node(StoryNode::End, egui::pos2(0.0, 200.0));
+        workbench.node_graph.connect(start, scene);
+        workbench.node_graph.connect(scene, end);
+        workbench.sync_graph_to_script().unwrap();
+        assert!(workbench.engine.is_some());
+        assert!(!workbench.scene.is_empty());
+        workbench.is_playing = true;
+        workbench.current_time = 42.0;
+        workbench.node_graph.disconnect(scene, end);
+        workbench.node_graph.edit_node(scene, |node| *node = StoryNode::Jump {
+            target: "missing_label".to_string(),
+        });
+        let failed = match action {
+            "sync" => workbench.sync_graph_to_script().is_err(),
+            "validate" => !workbench.run_dry_validation(),
+            "play" => !workbench.prepare_player_mode(),
+            _ => unreachable!(),
+        };
+        assert!(failed, "{action} should reject the changed graph");
+        assert!(
+            workbench.engine.is_none(),
+            "{action} retained the old engine"
+        );
+        assert!(workbench.scene.is_empty());
+        assert!(workbench.composer_entity_owners.is_empty());
+        assert!(!workbench.is_playing);
+        assert_eq!(workbench.current_time, 0.0);
+        assert!(workbench
+            .validation_issues
+            .iter()
+            .any(|issue| issue.code == LintCode::CompileError));
+        assert!(
+            !workbench
+                .validation_issues
+                .iter()
+                .any(|issue| issue.code == LintCode::RuntimeInitError),
+            "compile failure is not a runtime init error"
+        );
+        workbench.node_graph.edit_node(scene, |node| *node = StoryNode::Dialogue {
+            speaker: "Ava".to_string(),
+            text: "Recovered".to_string(),
+        });
+        workbench.node_graph.connect(scene, end);
+        assert!(workbench.run_dry_validation());
+        assert!(workbench.engine.is_some());
+        assert!(!workbench
+            .validation_issues
+            .iter()
+            .any(|issue| issue.severity == LintSeverity::Error));
+    }
 }
 
 #[test]
@@ -373,13 +626,25 @@ fn workbench_reuses_compilation_cache_until_graph_changes() {
     let _ = workbench.build_repro_case_from_current_graph();
     assert_eq!(workbench.compilation_cache_stats(), (1, 1));
 
-    if let Some(StoryNode::Dialogue { text, .. }) = workbench.node_graph.get_node_mut(dialogue) {
-        text.push('!');
-    }
+    workbench.node_graph.edit_node(dialogue, |node| {
+        if let StoryNode::Dialogue { text, .. } = node { text.push('!'); }
+    });
     workbench.node_graph.mark_modified();
 
     let _ = workbench.run_dry_validation();
     assert_eq!(workbench.compilation_cache_stats(), (1, 2));
+    let extra_start = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::pos2(200.0, 0.0));
+    assert!(workbench.compile_current_graph().engine_result.is_ok());
+    assert!(!workbench.run_dry_validation());
+    assert!(
+        workbench.engine.is_none(),
+        "blocking diagnostics must discard the old engine even when the script compiles"
+    );
+    workbench.node_graph.remove_node(extra_start);
+    assert!(workbench.run_dry_validation());
+    assert!(workbench.engine.is_some());
 }
 
 #[test]
@@ -721,7 +986,10 @@ fn report_import_rejects_malformed_issue_location_numbers() {
         .apply_diagnostic_report_json(&payload)
         .expect_err("string node_id should not import as missing location");
 
-    assert!(err.contains("issue 0 node_id must be an unsigned integer"), "{err}");
+    assert!(
+        err.contains("issue 0 node_id must be an unsigned integer"),
+        "{err}"
+    );
     assert!(workbench.validation_issues.is_empty());
 }
 
@@ -740,7 +1008,10 @@ fn report_import_rejects_malformed_selection_fields() {
         .apply_diagnostic_report_json(&payload)
         .expect_err("string selected_issue should not be silently ignored");
 
-    assert!(err.contains("selected_issue must be an unsigned integer"), "{err}");
+    assert!(
+        err.contains("selected_issue must be an unsigned integer"),
+        "{err}"
+    );
     assert!(workbench.validation_issues.is_empty());
     assert_eq!(workbench.selected_issue, None);
 }
@@ -767,7 +1038,10 @@ fn report_import_rejects_malformed_semantic_values() {
         .apply_diagnostic_report_json(&payload)
         .expect_err("malformed semantic values should not import silently");
 
-    assert!(err.contains("issue 0 semantic_values must be an array"), "{err}");
+    assert!(
+        err.contains("issue 0 semantic_values must be an array"),
+        "{err}"
+    );
     assert!(workbench.validation_issues.is_empty());
 }
 

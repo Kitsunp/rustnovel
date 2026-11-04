@@ -4,8 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::state::EngineState;
@@ -15,6 +15,11 @@ use crate::version::{SAVE_BINARY_MAGIC, SAVE_FORMAT_VERSION};
 pub type ScriptId = [u8; 32];
 pub const AUTH_SAVE_MAGIC: [u8; 4] = *b"VNSA";
 pub const AUTH_SAVE_KEY: &[u8] = b"vnengine.save.v1";
+
+/// Default encoded-save budget. Hosts may supply a different explicit limit.
+pub const DEFAULT_MAX_SAVE_BYTES: usize = 16 * 1024 * 1024;
+/// Maximum size of an individual slot metadata JSON file.
+pub const MAX_SAVE_METADATA_BYTES: usize = 64 * 1024;
 
 #[path = "storage/helpers.rs"]
 mod helpers;
@@ -89,10 +94,26 @@ impl SaveData {
     ///
     /// This wraps the regular save payload with a MAC to detect tampering.
     pub fn to_authenticated_binary(&self, key: &[u8]) -> Result<Vec<u8>, SaveError> {
+        self.to_authenticated_binary_with_limit(key, usize::MAX)
+    }
+
+    /// Encodes a save only if its authenticated representation fits the limit.
+    pub fn to_authenticated_binary_with_limit(
+        &self,
+        key: &[u8],
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, SaveError> {
         if key.is_empty() {
             return Err(SaveError::AuthKeyInvalid);
         }
         let payload = self.to_binary()?;
+        if payload
+            .len()
+            .checked_add(42)
+            .is_none_or(|size| size > max_bytes)
+        {
+            return Err(SaveError::TooLarge);
+        }
         let tag = compute_hmac_sha256(key, &payload)?;
         let payload_len = u32::try_from(payload.len()).map_err(|_| SaveError::TooLarge)?;
 
@@ -139,6 +160,19 @@ impl SaveData {
 
     pub fn from_any_binary(input: &[u8], key: &[u8]) -> Result<Self, SaveError> {
         Self::from_authenticated_binary(input, key)
+    }
+
+    /// Reads at most `max_bytes + 1` bytes before authenticating the payload.
+    pub fn read_authenticated(
+        reader: impl Read,
+        key: &[u8],
+        max_bytes: usize,
+    ) -> Result<Self, SaveStoreError> {
+        if key.is_empty() {
+            return Err(SaveStoreError::Save(SaveError::AuthKeyInvalid));
+        }
+        let bytes = read_bounded_save_bytes(reader, max_bytes)?;
+        Self::from_authenticated_binary(&bytes, key).map_err(SaveStoreError::Save)
     }
 
     /// Validates that this save matches the given script_id.
@@ -212,9 +246,35 @@ pub struct SaveSlotEntry {
     pub path: PathBuf,
 }
 
+/// Successful slot load, including whether the backup was needed.
+#[derive(Debug)]
+pub struct SaveSlotLoad {
+    pub data: SaveData,
+    pub recovery: Option<SaveRecovery>,
+}
+
+/// The primary failure that led to backup recovery, or `None` if it was absent.
+#[derive(Debug)]
+pub struct SaveRecovery {
+    pub primary_error: Option<SaveError>,
+}
+
+#[derive(Debug)]
+pub struct SaveSlotListIssue {
+    pub path: PathBuf,
+    pub error: SaveStoreError,
+}
+
+#[derive(Debug, Default)]
+pub struct SaveSlotListing {
+    pub entries: Vec<SaveSlotEntry>,
+    pub issues: Vec<SaveSlotListIssue>,
+}
+
 #[derive(Debug)]
 pub struct SaveSlotStore {
     root: PathBuf,
+    max_save_bytes: usize,
 }
 
 #[derive(Debug)]
@@ -246,7 +306,15 @@ impl std::fmt::Display for SaveStoreError {
     }
 }
 
-impl std::error::Error for SaveStoreError {}
+impl std::error::Error for SaveStoreError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            Self::Save(error) => Some(error),
+            Self::RecoveryFailed { primary, .. } => Some(primary),
+        }
+    }
+}
 
 impl From<std::io::Error> for SaveStoreError {
     fn from(value: std::io::Error) -> Self {
@@ -262,7 +330,15 @@ impl From<SaveError> for SaveStoreError {
 
 impl SaveSlotStore {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self::with_max_save_bytes(root, DEFAULT_MAX_SAVE_BYTES)
+    }
+
+    /// Creates a store with a host-defined limit for each encoded save.
+    pub fn with_max_save_bytes(root: PathBuf, max_save_bytes: usize) -> Self {
+        Self {
+            root,
+            max_save_bytes,
+        }
     }
 
     pub fn root(&self) -> &Path {
@@ -280,17 +356,29 @@ impl SaveSlotStore {
         slot_id: u16,
         save: &SaveData,
     ) -> Result<SaveSlotEntry, SaveStoreError> {
+        self.write_slot(slot_id, false, save)
+    }
+
+    fn write_slot(
+        &self,
+        slot_id: u16,
+        quick: bool,
+        save: &SaveData,
+    ) -> Result<SaveSlotEntry, SaveStoreError> {
         self.ensure_layout()?;
-        let slot_path = self.slot_path(slot_id, false);
-        let metadata_path = self.metadata_path(slot_id, false);
-        self.atomic_write_binary(&slot_path, &save.to_authenticated_binary(AUTH_SAVE_KEY)?)?;
-        let metadata = self.build_metadata(slot_id, false, save);
-        self.atomic_write_binary(
-            &metadata_path,
-            serde_json::to_vec_pretty(&metadata)
-                .map_err(|err| SaveError::Serialization(err.to_string()))?
-                .as_slice(),
-        )?;
+        let slot_path = self.slot_path(slot_id, quick);
+        let metadata_path = self.metadata_path(slot_id, quick);
+        let metadata = self.build_metadata(slot_id, quick, save);
+        let metadata_bytes = serde_json::to_vec_pretty(&metadata)
+            .map_err(|err| SaveError::Serialization(err.to_string()))?;
+        if metadata_bytes.len() > MAX_SAVE_METADATA_BYTES {
+            return Err(oversized_metadata(&metadata_path));
+        }
+        store_path_exists(&metadata_path, "slot metadata target")?;
+        store_path_exists(&backup_path(&metadata_path), "slot metadata backup")?;
+        let bytes = save.to_authenticated_binary_with_limit(AUTH_SAVE_KEY, self.max_save_bytes)?;
+        self.atomic_write_save(&slot_path, &bytes, &save.script_id)?;
+        self.atomic_write_metadata(&metadata_path, &metadata_bytes)?;
         Ok(SaveSlotEntry {
             metadata,
             path: slot_path,
@@ -298,55 +386,76 @@ impl SaveSlotStore {
     }
 
     pub fn load_slot(&self, slot_id: u16) -> Result<SaveData, SaveStoreError> {
-        let slot_path = self.slot_path(slot_id, false);
+        self.load_slot_with_recovery(slot_id)
+            .map(|loaded| loaded.data)
+    }
+
+    pub fn load_slot_with_recovery(&self, slot_id: u16) -> Result<SaveSlotLoad, SaveStoreError> {
+        self.read_slot(slot_id, false)
+    }
+
+    fn read_slot(&self, slot_id: u16, quick: bool) -> Result<SaveSlotLoad, SaveStoreError> {
+        let slot_path = self.slot_path(slot_id, quick);
         let backup_path = backup_path(&slot_path);
         self.load_binary_with_recovery(&slot_path, &backup_path)
     }
 
+    /// Removes a numbered slot, its metadata and their recovery backups.
+    /// Missing files are accepted; filesystem failures can leave a partial removal.
     pub fn remove_slot(&self, slot_id: u16) -> Result<(), SaveStoreError> {
         let slot_path = self.slot_path(slot_id, false);
         let metadata_path = self.metadata_path(slot_id, false);
-        if store_path_exists(&slot_path, "slot file")? {
-            fs::remove_file(slot_path)?;
+        let paths = [
+            (backup_path(&slot_path), "slot backup"),
+            (backup_path(&metadata_path), "slot metadata backup"),
+            (slot_path, "slot file"),
+            (metadata_path, "slot metadata"),
+        ];
+        // Reject unexpected directories or symlinks before deleting any slot data.
+        for (path, role) in &paths {
+            store_path_exists(path, role)?;
         }
-        if store_path_exists(&metadata_path, "slot metadata")? {
-            fs::remove_file(metadata_path)?;
+        for (path, _) in paths {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(SaveStoreError::Io(err)),
+            }
         }
         Ok(())
     }
 
     pub fn quicksave(&self, save: &SaveData) -> Result<SaveSlotEntry, SaveStoreError> {
-        self.ensure_layout()?;
-        let slot_path = self.slot_path(0, true);
-        let metadata_path = self.metadata_path(0, true);
-        self.atomic_write_binary(&slot_path, &save.to_authenticated_binary(AUTH_SAVE_KEY)?)?;
-        let metadata = self.build_metadata(0, true, save);
-        self.atomic_write_binary(
-            &metadata_path,
-            serde_json::to_vec_pretty(&metadata)
-                .map_err(|err| SaveError::Serialization(err.to_string()))?
-                .as_slice(),
-        )?;
-        Ok(SaveSlotEntry {
-            metadata,
-            path: slot_path,
-        })
+        self.write_slot(0, true, save)
     }
 
     pub fn quickload(&self) -> Result<SaveData, SaveStoreError> {
-        let slot_path = self.slot_path(0, true);
-        let backup_path = backup_path(&slot_path);
-        self.load_binary_with_recovery(&slot_path, &backup_path)
+        self.quickload_with_recovery().map(|loaded| loaded.data)
+    }
+
+    pub fn quickload_with_recovery(&self) -> Result<SaveSlotLoad, SaveStoreError> {
+        self.read_slot(0, true)
     }
 
     pub fn has_quicksave(&self) -> Result<bool, SaveStoreError> {
         self.ensure_layout()?;
-        store_path_exists(&self.slot_path(0, true), "quicksave")
+        save_file_available(&self.slot_path(0, true))
     }
 
+    /// Lists slots strictly, returning an error if any metadata entry cannot be read.
     pub fn list_slots(&self) -> Result<Vec<SaveSlotEntry>, SaveStoreError> {
+        let listing = self.list_slots_with_issues()?;
+        if let Some(issue) = listing.issues.into_iter().next() {
+            return Err(issue.error);
+        }
+        Ok(listing.entries)
+    }
+
+    /// Lists readable entries and their individual failures without hiding healthy saves.
+    /// Failure to open or enumerate the metadata directory still returns an error.
+    pub fn list_slots_with_issues(&self) -> Result<SaveSlotListing, SaveStoreError> {
         self.ensure_layout()?;
-        let mut entries = Vec::new();
+        let mut listing = SaveSlotListing::default();
 
         let meta_dir = self.root.join("meta");
         for entry in fs::read_dir(meta_dir)? {
@@ -356,20 +465,51 @@ impl SaveSlotStore {
                 continue;
             }
 
-            let bytes = read_existing_regular_file(&path, "slot metadata")?;
-            let metadata: SaveSlotMetadata = serde_json::from_slice(&bytes)
-                .map_err(|err| SaveError::Serialization(err.to_string()))?;
-            let slot_path = self.slot_path(metadata.slot_id, metadata.quick);
-            if store_path_exists(&slot_path, "slot file")? {
-                entries.push(SaveSlotEntry {
-                    metadata,
-                    path: slot_path,
-                });
+            match self.read_slot_entry(&path) {
+                Ok(entry) => listing.entries.push(entry),
+                Err(error) => listing.issues.push(SaveSlotListIssue { path, error }),
             }
         }
 
-        entries.sort_by_key(|entry| std::cmp::Reverse(entry.metadata.updated_unix_ms));
-        Ok(entries)
+        listing.entries.sort_by_key(|entry| {
+            (
+                std::cmp::Reverse(entry.metadata.updated_unix_ms),
+                !entry.metadata.quick,
+                entry.metadata.slot_id,
+            )
+        });
+        listing
+            .issues
+            .sort_by(|left, right| left.path.cmp(&right.path));
+        Ok(listing)
+    }
+
+    fn read_slot_entry(&self, path: &Path) -> Result<SaveSlotEntry, SaveStoreError> {
+        let bytes = read_slot_metadata_bytes(path)?;
+        let metadata: SaveSlotMetadata = serde_json::from_slice(&bytes)
+            .map_err(|err| SaveError::Serialization(err.to_string()))?;
+        if (metadata.quick && metadata.slot_id != 0)
+            || self.metadata_path(metadata.slot_id, metadata.quick) != path
+        {
+            return Err(SaveStoreError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "slot metadata filename does not match its slot identity: {}",
+                    path.display()
+                ),
+            )));
+        }
+        let slot_path = self.slot_path(metadata.slot_id, metadata.quick);
+        if !save_file_available(&slot_path)? {
+            return Err(missing_store_file(
+                &slot_path,
+                "slot referenced by metadata",
+            ));
+        }
+        Ok(SaveSlotEntry {
+            metadata,
+            path: slot_path,
+        })
     }
 
     fn build_metadata(&self, slot_id: u16, quick: bool, save: &SaveData) -> SaveSlotMetadata {
@@ -390,62 +530,121 @@ impl SaveSlotStore {
         &self,
         primary_path: &Path,
         backup_path: &Path,
-    ) -> Result<SaveData, SaveStoreError> {
-        let primary_bytes = read_existing_regular_file(primary_path, "save slot")?;
-        match SaveData::from_any_binary(&primary_bytes, AUTH_SAVE_KEY) {
-            Ok(save) => Ok(save),
-            Err(primary_err) => {
-                let Some(backup_bytes) =
-                    read_optional_regular_file(backup_path, "save slot backup")?
-                else {
-                    return Err(SaveStoreError::RecoveryFailed {
-                        primary: primary_err,
-                        backup: None,
-                    });
-                };
-                match SaveData::from_any_binary(&backup_bytes, AUTH_SAVE_KEY) {
-                    Ok(save) => Ok(save),
-                    Err(backup_err) => Err(SaveStoreError::RecoveryFailed {
-                        primary: primary_err,
-                        backup: Some(backup_err),
-                    }),
+    ) -> Result<SaveSlotLoad, SaveStoreError> {
+        let primary_error = match self.read_optional_save(primary_path, "save slot") {
+            Ok(Some((save, _))) => {
+                return Ok(SaveSlotLoad {
+                    data: save,
+                    recovery: None,
+                })
+            }
+            Ok(None) => None,
+            Err(SaveStoreError::Save(err)) => Some(err),
+            Err(err) => return Err(err),
+        };
+        match self.read_optional_save(backup_path, "save slot backup") {
+            Ok(Some((save, _))) => {
+                return Ok(SaveSlotLoad {
+                    data: save,
+                    recovery: Some(SaveRecovery { primary_error }),
+                })
+            }
+            Ok(None) => {}
+            Err(SaveStoreError::Save(backup)) => {
+                return Err(match primary_error {
+                    Some(primary) => SaveStoreError::RecoveryFailed {
+                        primary,
+                        backup: Some(backup),
+                    },
+                    None => SaveStoreError::Save(backup),
+                })
+            }
+            Err(err) => return Err(err),
+        }
+        Err(match primary_error {
+            Some(primary) => SaveStoreError::RecoveryFailed {
+                primary,
+                backup: None,
+            },
+            None => missing_store_file(primary_path, "save slot"),
+        })
+    }
+
+    fn read_optional_save(
+        &self,
+        path: &Path,
+        role: &str,
+    ) -> Result<Option<(SaveData, Vec<u8>)>, SaveStoreError> {
+        if !store_path_exists(path, role)? {
+            return Ok(None);
+        }
+        let file = fs::File::open(path)?;
+        let bytes = read_bounded_save_bytes(file, self.max_save_bytes)?;
+        let data = SaveData::from_authenticated_binary(&bytes, AUTH_SAVE_KEY)?;
+        Ok(Some((data, bytes)))
+    }
+
+    fn atomic_write_save(
+        &self,
+        path: &Path,
+        bytes: &[u8],
+        script_id: &ScriptId,
+    ) -> Result<(), SaveStoreError> {
+        match self.read_optional_save(path, "save slot target") {
+            Ok(Some((save, primary_bytes))) if &save.script_id == script_id => {
+                crate::atomic_io::atomic_replace(&backup_path(path), &primary_bytes)?;
+            }
+            Ok(Some((_, primary_bytes))) => {
+                let backup_matches =
+                    match self.read_optional_save(&backup_path(path), "save slot backup") {
+                        Ok(Some((backup, _))) => &backup.script_id == script_id,
+                        Ok(None) | Err(SaveStoreError::Save(_)) => false,
+                        Err(error) => return Err(error),
+                    };
+                if !backup_matches {
+                    crate::atomic_io::atomic_replace(&backup_path(path), &primary_bytes)?;
                 }
             }
+            Ok(None) => {}
+            Err(SaveStoreError::Save(primary)) => {
+                self.require_compatible_backup(path, primary, script_id)?
+            }
+            Err(error) => return Err(error),
+        }
+        crate::atomic_io::atomic_replace(path, bytes)?;
+        Ok(())
+    }
+
+    fn require_compatible_backup(
+        &self,
+        path: &Path,
+        primary: SaveError,
+        script_id: &ScriptId,
+    ) -> Result<(), SaveStoreError> {
+        match self.read_optional_save(&backup_path(path), "save slot backup") {
+            Ok(Some((backup, _))) if &backup.script_id == script_id => Ok(()),
+            Ok(Some(_)) => Err(SaveStoreError::RecoveryFailed {
+                primary,
+                backup: Some(SaveError::ScriptMismatch),
+            }),
+            Ok(None) => Err(SaveStoreError::RecoveryFailed {
+                primary,
+                backup: None,
+            }),
+            Err(SaveStoreError::Save(backup)) => Err(SaveStoreError::RecoveryFailed {
+                primary,
+                backup: Some(backup),
+            }),
+            Err(error) => Err(error),
         }
     }
 
-    fn atomic_write_binary(&self, path: &Path, bytes: &[u8]) -> Result<(), SaveStoreError> {
-        let parent = path.parent().ok_or_else(|| {
-            SaveStoreError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "target path has no parent",
-            ))
-        })?;
-        fs::create_dir_all(parent)?;
-        let had_existing = store_path_exists(path, "save slot target")?;
-        if had_existing {
-            let backup = backup_path(path);
-            ensure_replaceable_regular_path(&backup, "save slot backup")?;
-            fs::copy(path, backup)?;
+    fn atomic_write_metadata(&self, path: &Path, bytes: &[u8]) -> Result<(), SaveStoreError> {
+        if store_path_exists(path, "slot metadata target")? {
+            crate::atomic_io::atomic_copy(path, &backup_path(path))?;
         }
-        let (tmp_path, mut tmp_file) = create_unique_temp_file(path)?;
-        tmp_file.write_all(bytes)?;
-        tmp_file.sync_all()?;
-        drop(tmp_file);
-        if had_existing {
-            fs::remove_file(path)?;
-        }
-        match fs::rename(&tmp_path, path) {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                let _ = fs::remove_file(&tmp_path);
-                if had_existing {
-                    let backup = backup_path(path);
-                    let _ = fs::copy(&backup, path);
-                }
-                Err(SaveStoreError::Io(err))
-            }
-        }
+        crate::atomic_io::atomic_replace(path, bytes)?;
+        Ok(())
     }
 
     fn slot_path(&self, slot_id: u16, quick: bool) -> PathBuf {
@@ -478,28 +677,57 @@ fn store_path_exists(path: &Path, role: &str) -> Result<bool, SaveStoreError> {
     }
 }
 
-fn read_existing_regular_file(path: &Path, role: &str) -> Result<Vec<u8>, SaveStoreError> {
-    if store_path_exists(path, role)? {
-        fs::read(path).map_err(SaveStoreError::Io)
+fn read_slot_metadata_bytes(path: &Path) -> Result<Vec<u8>, SaveStoreError> {
+    if !store_path_exists(path, "slot metadata")? {
+        return Err(missing_store_file(path, "slot metadata"));
+    }
+    read_bounded_save_bytes(fs::File::open(path)?, MAX_SAVE_METADATA_BYTES).map_err(|error| {
+        if matches!(error, SaveStoreError::Save(SaveError::TooLarge)) {
+            oversized_metadata(path)
+        } else {
+            error
+        }
+    })
+}
+
+fn oversized_metadata(path: &Path) -> SaveStoreError {
+    SaveStoreError::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!(
+            "slot metadata exceeds {MAX_SAVE_METADATA_BYTES} bytes: {}",
+            path.display()
+        ),
+    ))
+}
+
+fn missing_store_file(path: &Path, role: &str) -> SaveStoreError {
+    SaveStoreError::Io(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("missing {role}: {}", path.display()),
+    ))
+}
+
+fn save_file_available(path: &Path) -> Result<bool, SaveStoreError> {
+    if store_path_exists(path, "save slot")? {
+        Ok(true)
     } else {
-        Err(SaveStoreError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("missing {role}: {}", path.display()),
-        )))
+        store_path_exists(&backup_path(path), "save slot backup")
     }
 }
 
-fn read_optional_regular_file(path: &Path, role: &str) -> Result<Option<Vec<u8>>, SaveStoreError> {
-    if store_path_exists(path, role)? {
-        fs::read(path).map(Some).map_err(SaveStoreError::Io)
-    } else {
-        Ok(None)
+fn read_bounded_save_bytes(reader: impl Read, max_bytes: usize) -> Result<Vec<u8>, SaveStoreError> {
+    let mut bytes = Vec::new();
+    let mut bounded = reader.take(max_bytes as u64);
+    bounded.read_to_end(&mut bytes)?;
+    if bounded.limit() == 0 {
+        // Probe past the limit without growing the buffer for a rejected input.
+        match bounded.into_inner().read_exact(&mut [0]) {
+            Ok(()) => return Err(SaveError::TooLarge.into()),
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {}
+            Err(error) => return Err(error.into()),
+        }
     }
-}
-
-fn ensure_replaceable_regular_path(path: &Path, role: &str) -> Result<(), SaveStoreError> {
-    let _ = store_path_exists(path, role)?;
-    Ok(())
+    Ok(bytes)
 }
 
 fn non_regular_store_path(path: &Path, role: &str) -> SaveStoreError {
@@ -507,31 +735,4 @@ fn non_regular_store_path(path: &Path, role: &str) -> SaveStoreError {
         std::io::ErrorKind::InvalidInput,
         format!("{role} is not a regular file: {}", path.display()),
     ))
-}
-
-fn create_unique_temp_file(path: &Path) -> Result<(PathBuf, fs::File), SaveStoreError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("save");
-    for _ in 0..16 {
-        let tmp_path = parent.join(format!(".{file_name}.tmp-{}", uuid::Uuid::new_v4()));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)
-        {
-            Ok(file) => return Ok((tmp_path, file)),
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(err) => return Err(SaveStoreError::Io(err)),
-        }
-    }
-    Err(SaveStoreError::Io(std::io::Error::new(
-        std::io::ErrorKind::AlreadyExists,
-        format!(
-            "could not allocate unique save temp file for {}",
-            path.display()
-        ),
-    )))
 }

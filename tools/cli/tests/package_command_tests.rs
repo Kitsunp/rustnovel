@@ -225,7 +225,7 @@ fn package_command_json_execute_matches_written_report_manifest_and_compat_flow(
         "CLI JSON payload must be the same report written to disk"
     );
     assert_eq!(package_report["target_platform"], "windows");
-    assert_eq!(package_report["runtime_artifact"], "runtime/vn-runtime.exe");
+    assert_eq!(package_report["runtime_artifact"], "game.exe");
     assert_eq!(
         package_report["runtime_artifact_sha256"],
         sha256_hex(&runtime_bytes)
@@ -280,7 +280,7 @@ fn package_command_json_execute_matches_written_report_manifest_and_compat_flow(
     assert!(manifest_files
         .iter()
         .any(|entry| entry["path"] == "game.exe"));
-    assert!(manifest_files
+    assert!(!manifest_files
         .iter()
         .any(|entry| entry["path"] == "runtime/vn-runtime.exe"));
     assert!(manifest_files.iter().any(|entry| {
@@ -356,6 +356,89 @@ fn package_command_plan_dry_run_does_not_write_bundle() {
         !output_root.exists(),
         "dry-run package must not materialize bundle"
     );
+    for flag in ["--dry-run", "--plan"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+            .arg("--json")
+            .arg("package")
+            .arg(&project_root)
+            .arg("--output")
+            .arg(&output_root)
+            .arg(flag)
+            .arg("--require-executable")
+            .output()
+            .expect("plan requiring an executable");
+        assert!(!output.status.success());
+        assert!(output.stderr.is_empty());
+        let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(envelope["ok"], false);
+        assert_eq!(envelope["code"], "engine_error");
+        let error = envelope["error"].as_str().unwrap();
+        assert!(error.contains("export.runtime_artifact.missing"), "{error}");
+        assert!(error.contains("trace_id=export-"), "{error}");
+        assert!(!output_root.exists());
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .args(["--json", "export", "plan"])
+        .arg(&project_root)
+        .arg("--output")
+        .arg(&output_root)
+        .arg("--require-executable")
+        .output()
+        .expect("export plan requiring an executable");
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["ok"], false);
+    assert!(envelope["error"]
+        .as_str()
+        .unwrap()
+        .contains("export.runtime_artifact.missing"));
+    assert!(!output_root.exists());
+    let runtime = project_root.join("runtime.exe");
+    fs::write(&runtime, minimal_pe_exe()).unwrap();
+    for flag in ["--dry-run", "--plan"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+            .arg("--json")
+            .arg("package")
+            .arg(&project_root)
+            .arg("--output")
+            .arg(&output_root)
+            .arg(flag)
+            .arg("--require-executable")
+            .arg("--runtime-artifact")
+            .arg(&runtime)
+            .output()
+            .expect("valid executable plan");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(output.stderr.is_empty());
+        let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(envelope["ok"], true);
+        assert_eq!(envelope["data"]["executable"], "game.exe");
+        assert!(!output_root.exists());
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+        .args(["--json", "export", "plan"])
+        .arg(&project_root)
+        .arg("--output")
+        .arg(&output_root)
+        .arg("--require-executable")
+        .arg("--runtime-artifact")
+        .arg(&runtime)
+        .output()
+        .expect("valid export plan requiring an executable");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(output.stderr.is_empty());
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(envelope["data"]["executable"], "game.exe");
+    assert!(!output_root.exists());
 }
 
 #[test]

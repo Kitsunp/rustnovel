@@ -1,6 +1,114 @@
 use super::*;
 
 #[test]
+fn failed_import_preserves_existing_project_assets_and_unrelated_files() {
+    for failure in ["report_directory", "report_alias", "locked_manifest"] {
+        if failure == "locked_manifest" && !cfg!(windows) {
+            continue;
+        }
+        let (dir, project_root, game_dir, output_root) = temp_renpy_fixture();
+        fs::create_dir_all(game_dir.join("bg")).unwrap();
+        fs::write(game_dir.join("bg/room.png"), b"new image").unwrap();
+        write_renpy_file(
+            &game_dir.join("script.rpy"),
+            "label start:\n    scene \"bg/room.png\"\n    \"Imported\"\n",
+        );
+        fs::create_dir_all(output_root.join("assets/bg")).unwrap();
+        for (name, bytes) in [
+            ("main.json", "old script"),
+            ("project.vnm", "old manifest"),
+            ("assets/bg/room.png", "old image"),
+            ("keep.txt", "unrelated"),
+        ] {
+            fs::write(output_root.join(name), bytes).unwrap();
+        }
+        let report_path = match failure {
+            "report_directory" => {
+                let path = output_root.join("report_is_directory");
+                fs::create_dir(&path).unwrap();
+                Some(path)
+            }
+            "report_alias" => {
+                fs::create_dir(output_root.join("reports")).unwrap();
+                Some(output_root.join("reports/../main.json"))
+            }
+            _ => None,
+        };
+        #[cfg(windows)]
+        let locked = if failure == "locked_manifest" {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_SHARE_READ: u32 = 1;
+            Some(
+                fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(FILE_SHARE_READ)
+                    .open(output_root.join("project.vnm"))
+                    .unwrap(),
+            )
+        } else {
+            None
+        };
+        let options = ImportRenpyOptions {
+            project_root,
+            output_root: output_root.clone(),
+            entry_label: "start".into(),
+            report_path,
+            profile: ImportProfile::StoryFirst,
+            include_tl: None,
+            include_ui: None,
+            include_patterns: vec![],
+            exclude_patterns: vec![],
+            strict_mode: false,
+            fallback_policy: ImportFallbackPolicy::DegradeWithTrace,
+        };
+        let error = import_renpy_project(options.clone()).expect_err(failure);
+        if failure == "locked_manifest" {
+            assert!(
+                error.to_string().contains("publish"),
+                "must exercise rollback after publication starts: {error}"
+            );
+        }
+        #[cfg(windows)]
+        drop(locked);
+        for (name, bytes) in [
+            ("main.json", "old script"),
+            ("project.vnm", "old manifest"),
+            ("assets/bg/room.png", "old image"),
+            ("keep.txt", "unrelated"),
+        ] {
+            assert_eq!(
+                fs::read_to_string(output_root.join(name)).unwrap(),
+                bytes,
+                "{failure}: {name}: {error}"
+            );
+        }
+        let mut retry = options;
+        let external_report = dir.path().join("reports/import.json");
+        retry.report_path = Some(external_report.clone());
+        import_renpy_project(retry).expect("retry after the failure is resolved");
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(external_report).unwrap()).unwrap();
+        assert!(!report["output_root"]
+            .as_str()
+            .unwrap()
+            .contains(".renpy-import-"));
+        assert_eq!(
+            fs::read(output_root.join("assets/bg/room.png")).unwrap(),
+            b"new image"
+        );
+        assert_eq!(
+            fs::read_to_string(output_root.join("keep.txt")).unwrap(),
+            "unrelated"
+        );
+        assert!(!fs::read_dir(dir.path()).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".renpy-import-")));
+    }
+}
+
+#[test]
 fn import_writes_project_files_and_valid_script() {
     let dir = tempdir().expect("tempdir");
     let project_root = dir.path().join("renpy_project");

@@ -258,7 +258,7 @@ label start:
     let output_root = dir.path().join("out_project");
     let result = import_renpy_project(ImportRenpyOptions {
         project_root,
-        output_root,
+        output_root: output_root.clone(),
         entry_label: "start".to_string(),
         report_path: None,
         profile: ImportProfile::StoryFirst,
@@ -274,6 +274,10 @@ label start:
     let msg = err.to_string();
     assert!(msg.contains("strict policy rejected degraded import"));
     assert!(msg.contains("unsupported_call"));
+    assert!(
+        !output_root.exists(),
+        "rejected import must not leave output or copied assets"
+    );
 }
 
 #[test]

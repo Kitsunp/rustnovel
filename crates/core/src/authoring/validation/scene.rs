@@ -1,6 +1,6 @@
 use crate::event::{CharacterPlacementRaw, ScenePatchRaw};
 
-use super::assets::validate_asset_at;
+use super::assets::{validate_asset_at, AssetProbeError};
 use super::{LintCode, LintIssue, NodeGraph, ValidationPhase};
 
 pub(crate) fn validate_scene_profiles<F>(
@@ -8,7 +8,7 @@ pub(crate) fn validate_scene_profiles<F>(
     asset_exists: &F,
     issues: &mut Vec<LintIssue>,
 ) where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> Result<(), AssetProbeError>,
 {
     for (profile_id, profile) in graph.scene_profiles() {
         validate_asset_at(
@@ -85,7 +85,7 @@ fn validate_scene_profile_characters<F>(
     asset_exists: &F,
     issues: &mut Vec<LintIssue>,
 ) where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> Result<(), AssetProbeError>,
 {
     for (character_idx, character) in characters.iter().enumerate() {
         if character.name.trim().is_empty() {
@@ -121,7 +121,7 @@ pub(crate) fn validate_scene<F>(
     asset_exists: &F,
     issues: &mut Vec<LintIssue>,
 ) where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> Result<(), AssetProbeError>,
 {
     validate_asset_at(
         Some(id),
@@ -169,7 +169,7 @@ pub(crate) fn validate_scene_patch<F>(
     asset_exists: &F,
     issues: &mut Vec<LintIssue>,
 ) where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> Result<(), AssetProbeError>,
 {
     validate_asset_at(
         Some(id),

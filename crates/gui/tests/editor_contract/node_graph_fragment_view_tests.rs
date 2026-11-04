@@ -43,4 +43,30 @@ fn active_fragment_hides_external_nodes_from_gui_view() {
     assert_eq!(fragment_edges.len(), 1);
     assert_eq!(fragment_edges[0].from, inner_a);
     assert_eq!(fragment_edges[0].to, inner_b);
+
+    let fragments = serde_json::to_value(graph.authoring_graph().list_fragments()).unwrap();
+    let before = graph.authoring_graph().clone();
+    let history = graph.authoring_session.undo_delta_count();
+    assert!(graph.auto_layout_hierarchical());
+    assert_eq!(graph.authoring_session.undo_delta_count(), history + 1);
+    assert!(matches!(
+        graph.authoring_session.recorded_commands().last(),
+        Some(visual_novel_engine::authoring::AuthoringDocumentCommand::MoveNodes { .. })
+    ));
+    assert_eq!(
+        serde_json::to_value(graph.authoring_graph().list_fragments()).unwrap(),
+        fragments
+    );
+    graph
+        .authoring_session
+        .apply(visual_novel_engine::authoring::AuthoringDocumentCommand::UndoLast)
+        .unwrap();
+    assert!(graph.authoring_graph().has_same_content(&before));
+    assert_eq!(
+        graph
+            .visible_nodes()
+            .map(|(id, _, _)| id)
+            .collect::<Vec<_>>(),
+        vec![inner_a, inner_b]
+    );
 }

@@ -4,7 +4,7 @@ use visual_novel_engine::authoring::{
 };
 
 /// Quick-fix candidate metadata exposed to Python.
-#[pyclass(name = "QuickFixCandidate")]
+#[pyclass(name = "QuickFixCandidate", from_py_object)]
 #[derive(Clone)]
 pub struct PyQuickFixCandidate {
     #[pyo3(get)]
@@ -54,7 +54,7 @@ impl From<QuickFixCandidate> for PyQuickFixCandidate {
 }
 
 /// Severity level for lint issues.
-#[pyclass(name = "LintSeverity")]
+#[pyclass(name = "LintSeverity", from_py_object)]
 #[derive(Clone)]
 pub struct PyLintSeverity {
     inner: LintSeverity,
@@ -100,7 +100,7 @@ impl PyLintSeverity {
 }
 
 /// A validation issue found in the graph.
-#[pyclass(name = "LintIssue")]
+#[pyclass(name = "LintIssue", from_py_object)]
 #[derive(Clone)]
 pub struct PyLintIssue {
     #[pyo3(get)]
@@ -186,8 +186,8 @@ impl PyLintIssue {
         )
     }
 
-    fn localized(&self, locale: Option<&str>) -> PyResult<PyObject> {
-        Python::with_gil(|py| {
+    fn localized(&self, locale: Option<&str>) -> PyResult<Py<PyAny>> {
+        Python::attach(|py| {
             let use_es = locale.unwrap_or("en").trim().eq_ignore_ascii_case("es");
             let dict = pyo3::types::PyDict::new(py);
             dict.set_item("schema", "vnengine.diagnostic_envelope.v2")?;

@@ -1,11 +1,16 @@
 use super::*;
 
 pub(super) fn run_smoke(
-    script_json: &str,
+    script: Result<RuntimeScriptInput, visual_novel_engine::VnError>,
     launch_paths: &LaunchPaths,
     security_mode: SecurityMode,
     smoke_report_path: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let smoke_report_path = smoke_report_path
+        .as_deref()
+        .map(|path| validate_smoke_report_path(path, launch_paths))
+        .transpose()?;
+    let had_previous_smoke_report = smoke_report_path.as_deref().is_some_and(Path::is_file);
     let bundle_root = launch_paths.bundle_root.as_deref();
     let fallback_target = std::env::consts::OS.to_string();
     let failure_artifacts = |target_platform: String,
@@ -106,7 +111,7 @@ pub(super) fn run_smoke(
         ));
 
         let script_file = normalize_path_display(&launch_paths.script_path);
-        let script = ScriptRaw::from_json(script_json).map_err(|err| {
+        let script = script.map_err(|err| {
             smoke_error_with_scope(
                 "export.runtime_smoke.script_parse",
                 &target_platform,
@@ -124,18 +129,15 @@ pub(super) fn run_smoke(
             "runtime script parsed with the core schema policy",
         ));
 
-        let engine = Engine::new(
-            script,
-            SecurityPolicy::default(),
-            ResourceLimiter::default(),
-        )
-        .map_err(|err| {
-            smoke_error(
-                "export.runtime_smoke.engine_init",
-                &target_platform,
-                format!("engine init failed: {err}"),
-            )
-        })?;
+        let engine = script
+            .into_engine(SecurityPolicy::default(), ResourceLimiter::default())
+            .map_err(|err| {
+                smoke_error(
+                    "export.runtime_smoke.engine_init",
+                    &target_platform,
+                    format!("engine init failed: {err}"),
+                )
+            })?;
         checks.push(smoke_check(
             "export.runtime_smoke.engine_init",
             "passed",
@@ -199,8 +201,16 @@ pub(super) fn run_smoke(
             "runtime app loaded packaged scene state",
         ));
 
+        let mut drawer = BuiltinSoftwareDrawer::new();
+        let mut pixels = vec![0; 960 * 540 * 4];
         verify_frame_assets(&app, &target_platform, &mut checks)?;
-        present_runtime_frame(&app, &target_platform, &mut checks)?;
+        present_runtime_frame(
+            &app,
+            &mut drawer,
+            &mut pixels,
+            &target_platform,
+            &mut checks,
+        )?;
 
         app.handle_action(InputAction::Advance).map_err(|err| {
             smoke_error(
@@ -217,7 +227,13 @@ pub(super) fn run_smoke(
         ));
 
         verify_frame_assets(&app, &target_platform, &mut checks)?;
-        present_runtime_frame(&app, &target_platform, &mut checks)?;
+        present_runtime_frame(
+            &app,
+            &mut drawer,
+            &mut pixels,
+            &target_platform,
+            &mut checks,
+        )?;
 
         if app.handle_action(InputAction::Quit).map_err(|err| {
             smoke_error(
@@ -269,6 +285,14 @@ pub(super) fn run_smoke(
         trace_id: trace_id.clone(),
         checks: checks.clone(),
     };
-    write_smoke_artifacts(&artifacts, &smoke_result, true)?;
+    if let Err(error) = write_smoke_artifacts(&artifacts, &smoke_result, true) {
+        if had_previous_smoke_report {
+            return Err(format!(
+                "{error}; the previous smoke report was preserved and may describe an earlier run"
+            )
+            .into());
+        }
+        return Err(error);
+    }
     Ok(())
 }

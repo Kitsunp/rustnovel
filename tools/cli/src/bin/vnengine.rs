@@ -1,23 +1,24 @@
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{self, ExitCode};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use visual_novel_engine::{
-    compute_script_id, load_runtime_script_from_entry, resolve_layout, run_repro_case,
+    authoring::{load_prepared_runtime_entry, read_prepared_runtime_entry},
+    resolve_layout, run_repro_case,
     runtime::{Engine, ScriptCompiled, UiTrace},
     validate_ui_theme, BundleIntegrity, ExportBundleSpec, ExportService, ExportTargetPlatform,
     ImportFallbackPolicy, ImportProfile, LayoutPolicy, ReproCase, ResourceLimiter, SaveData,
-    SecurityPolicy, StageProfile, UiTheme, AUTH_SAVE_KEY, SCRIPT_SCHEMA_VERSION,
+    SecurityPolicy, StageProfile, UiTheme, AUTH_SAVE_KEY, DEFAULT_MAX_SAVE_BYTES,
+    SCRIPT_SCHEMA_VERSION,
 };
 use vnengine_assets::{AssetEntry, AssetManifest};
 use walkdir::WalkDir;
 
+#[path = "vnengine/asset_import.rs"]
+mod asset_import;
 #[path = "vnengine/atomic_io.rs"]
 mod atomic_io;
 #[path = "vnengine/authoring.rs"]
@@ -48,7 +49,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Validate a script JSON file.
+    /// Import a resource through the shared project service.
+    Asset {
+        #[command(subcommand)]
+        command: asset_import::AssetCommand,
+    },
+    /// Validate runtime JSON, a compiled script, or an authoring document.
     Validate { script: PathBuf },
     /// Validate editor/authoring graph semantics from a script JSON file.
     AuthoringValidate {
@@ -63,7 +69,7 @@ enum Command {
         #[command(subcommand)]
         command: authoring::AuthoringCommand,
     },
-    /// Compile a script JSON file into binary form.
+    /// Validate and compile runtime JSON or an authoring document into binary form.
     Compile {
         script: PathBuf,
         #[arg(short, long)]
@@ -77,7 +83,7 @@ enum Command {
         #[arg(long)]
         in_place: bool,
     },
-    /// Produce an execution trace for a script JSON file.
+    /// Produce an execution trace for runtime JSON, a compiled script, or an authoring document.
     Trace {
         script: PathBuf,
         #[arg(long, default_value_t = 100)]
@@ -96,6 +102,9 @@ enum Command {
     /// Print the native route tree for a script.
     RouteTree { script: PathBuf },
     /// Print read/progress snapshots from a script or save.
+    ///
+    /// For a script, simulate the first option at each choice and report whether
+    /// the simulation finished or stopped early.
     ReadModel { input: PathBuf },
     /// Theme tooling.
     Theme {
@@ -381,7 +390,11 @@ impl From<PackageIntegrityArg> for BundleIntegrity {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let json = cli.json;
-    let suppress_envelope = matches!(&cli.command, Command::Authoring { .. });
+    let suppress_envelope = matches!(
+        &cli.command,
+        Command::Authoring { command }
+            if !matches!(command, authoring::AuthoringCommand::Validate(_))
+    );
     match run_command(cli, json) {
         Ok(data) => {
             if json && !suppress_envelope {
@@ -391,17 +404,37 @@ fn main() -> ExitCode {
                     data,
                     error: None,
                 });
+            } else if !json {
+                if let Some(data) = data {
+                    match serde_json::to_string_pretty(&data) {
+                        Ok(text) => println!("{text}"),
+                        Err(err) => {
+                            eprintln!("failed to serialize command output: {err}");
+                            return ExitCode::from(2);
+                        }
+                    }
+                }
             }
             ExitCode::SUCCESS
         }
         Err(err) => {
             let (code, exit_code) = classify_error(&err);
             if json && !suppress_envelope {
+                let data = match err.downcast_ref::<authoring::ValidationFailure>() {
+                    Some(failure) => match serde_json::to_value(&failure.report) {
+                        Ok(report) => Some(report),
+                        Err(error) => {
+                            eprintln!("failed to serialize validation report: {error}");
+                            return ExitCode::from(2);
+                        }
+                    },
+                    None => None,
+                };
                 print_json_envelope(CliEnvelope {
                     ok: false,
                     code: code.to_string(),
-                    data: None,
-                    error: Some(err.to_string()),
+                    data,
+                    error: Some(format!("{err:#}")),
                 });
             } else {
                 eprintln!("{err:#}");
@@ -416,6 +449,9 @@ fn classify_error(err: &anyhow::Error) -> (&'static str, u8) {
         cause
             .downcast_ref::<visual_novel_engine::VnError>()
             .is_some()
+            || cause
+                .downcast_ref::<visual_novel_engine::SaveError>()
+                .is_some()
     }) {
         ("engine_error", 2)
     } else if err

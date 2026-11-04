@@ -5,8 +5,9 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use visual_novel_engine::{
-    compute_script_id,
-    runtime::{ChoiceHistoryEntry, Engine, EventCompiled, ScriptRaw, UiState, UiView, VisualState},
+    runtime::{
+        ChoiceHistoryEntry, Engine, EventCompiled, RuntimeScriptInput, UiState, UiView, VisualState,
+    },
     PlayerMenuAction, PlayerMenuConfig, PlayerMenuPanelAnchor, PlayerMenuQuickActionPlacement,
     PlayerMenuStyleConfig, PlayerMenuTabKind, PlayerMenuTabsPosition, ResourceLimiter,
     SaveSlotEntry, SaveSlotStore, ScriptId, SecurityPolicy, VnError,
@@ -100,7 +101,9 @@ impl VnConfig {
         }
 
         let asset_cache_budget_mb = self.asset_cache_budget_mb.unwrap_or(128);
-        let asset_cache_budget_bytes = (asset_cache_budget_mb * 1024 * 1024) as usize;
+        let asset_cache_budget_bytes =
+            usize::try_from(asset_cache_budget_mb.saturating_mul(1024 * 1024))
+                .unwrap_or(usize::MAX);
         let assets_root = self
             .assets_root
             .clone()
@@ -167,14 +170,13 @@ pub enum GuiError {
 }
 
 pub fn run_app(script_json: String, config: Option<VnConfig>) -> Result<(), GuiError> {
-    let script = ScriptRaw::from_json(&script_json)?;
-    let engine = Engine::new(
-        script,
-        SecurityPolicy::default(),
-        ResourceLimiter::default(),
-    )?;
-    let compiled_bytes = engine.script().to_binary()?;
-    let script_id = compute_script_id(&compiled_bytes);
+    let script = RuntimeScriptInput::parse(script_json.as_bytes(), ResourceLimiter::default())?;
+    run_app_input(script, config)
+}
+
+pub fn run_app_input(script: RuntimeScriptInput, config: Option<VnConfig>) -> Result<(), GuiError> {
+    let engine = script.into_engine(SecurityPolicy::default(), ResourceLimiter::default())?;
+    let script_id = engine.script_id()?;
     let config = config.unwrap_or_default();
     let preferences_path = config.preferences_path();
     let preferences = load_user_preferences_for_run(&preferences_path)?;
@@ -193,7 +195,7 @@ pub fn run_app(script_json: String, config: Option<VnConfig>) -> Result<(), GuiE
         &title,
         options,
         Box::new(move |cc| {
-            Box::new(VnApp::new(
+            Ok(Box::new(VnApp::new(
                 engine,
                 resolved,
                 preferences,
@@ -201,7 +203,7 @@ pub fn run_app(script_json: String, config: Option<VnConfig>) -> Result<(), GuiE
                 script_id,
                 assets,
                 cc,
-            ))
+            )))
         }),
     )?;
     Ok(())

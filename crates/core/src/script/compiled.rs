@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::error::{VnError, VnResult};
 use crate::event::EventCompiled;
+use crate::storage::{compute_script_id, ScriptId};
 use crate::version::{COMPILED_FORMAT_VERSION, SCRIPT_BINARY_MAGIC};
 
 /// Runtime-ready script that resolves labels and interns strings.
@@ -22,6 +23,11 @@ pub struct ScriptCompiled {
 }
 
 impl ScriptCompiled {
+    /// Identifies the canonical binary representation used by saves.
+    pub fn script_id(&self) -> VnResult<ScriptId> {
+        Ok(compute_script_id(&self.to_binary()?))
+    }
+
     /// Serializes the compiled script to a binary format with magic bytes, version, and checksum.
     ///
     /// # Preconditions

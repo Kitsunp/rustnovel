@@ -86,8 +86,8 @@ impl VnApp {
     }
 
     pub(super) fn quickload(&mut self) {
-        match self.save_store.quickload() {
-            Ok(data) => self.apply_loaded_save(data, "Quick loaded"),
+        match self.save_store.quickload_with_recovery() {
+            Ok(loaded) => self.apply_loaded_slot(loaded, "Quick loaded"),
             Err(err) => self.last_error = Some(format!("Quick load failed: {err}")),
         }
     }
@@ -104,18 +104,29 @@ impl VnApp {
     }
 
     pub(super) fn load_slot(&mut self, slot_id: u16) {
-        match self.save_store.load_slot(slot_id) {
-            Ok(data) => self.apply_loaded_save(data, &format!("Loaded slot {slot_id}")),
+        match self.save_store.load_slot_with_recovery(slot_id) {
+            Ok(loaded) => self.apply_loaded_slot(loaded, &format!("Loaded slot {slot_id}")),
             Err(err) => self.last_error = Some(format!("Load slot {slot_id} failed: {err}")),
         }
     }
 
-    fn apply_loaded_save(&mut self, data: visual_novel_engine::SaveData, status: &str) {
-        if let Err(err) = data.validate_script_id(&self.script_id) {
-            self.last_error = Some(format!("Save data mismatch: {err}"));
-            return;
+    fn apply_loaded_slot(&mut self, loaded: visual_novel_engine::SaveSlotLoad, status: &str) {
+        match loaded.recovery {
+            Some(recovery) => {
+                let reason = recovery
+                    .primary_error
+                    .map_or_else(|| "missing".to_string(), |error| error.to_string());
+                self.apply_loaded_save(
+                    loaded.data,
+                    &format!("{status} from backup. Primary save: {reason}"),
+                );
+            }
+            None => self.apply_loaded_save(loaded.data, status),
         }
-        match self.engine.set_state(data.state) {
+    }
+
+    fn apply_loaded_save(&mut self, data: visual_novel_engine::SaveData, status: &str) {
+        match self.engine.load_save_data(data) {
             Ok(()) => {
                 self.last_error = None;
                 self.last_status = Some(status.to_string());
@@ -127,8 +138,18 @@ impl VnApp {
     }
 
     pub(super) fn list_save_slots_for_menu(&mut self) -> Vec<SaveSlotEntry> {
-        match self.save_store.list_slots() {
-            Ok(entries) => entries,
+        match self.save_store.list_slots_with_issues() {
+            Ok(listing) => {
+                if let Some(issue) = listing.issues.first() {
+                    self.last_error = Some(format!(
+                        "List saves: {} issue(s); {}: {}",
+                        listing.issues.len(),
+                        issue.path.display(),
+                        issue.error
+                    ));
+                }
+                listing.entries
+            }
             Err(err) => {
                 self.last_error = Some(format!("List saves failed: {err}"));
                 Vec::new()
@@ -151,7 +172,7 @@ impl VnApp {
 
     #[allow(dead_code)]
     pub(super) fn save_state(&mut self, path: &Path) {
-        let data = visual_novel_engine::SaveData::new(self.script_id, self.engine.state().clone());
+        let data = self.current_save_data();
         match crate::persist::save_state_to(path, &data) {
             Ok(()) => {
                 self.last_error = None;
@@ -164,18 +185,7 @@ impl VnApp {
     #[allow(dead_code)]
     pub(super) fn load_state(&mut self, path: &Path) {
         match crate::persist::load_state_from(path) {
-            Ok(data) => {
-                if let Err(err) = data.validate_script_id(&self.script_id) {
-                    self.last_error = Some(format!("Save data mismatch: {err}"));
-                    return;
-                }
-                if let Err(err) = self.engine.set_state(data.state) {
-                    self.last_error = Some(format!("Failed to load state: {err}"));
-                } else {
-                    self.last_error = None;
-                    self.last_status = Some(format!("Loaded: {}", path.display()));
-                }
-            }
+            Ok(data) => self.apply_loaded_save(data, &format!("Loaded: {}", path.display())),
             Err(err) => self.last_error = Some(format!("Failed to load state: {err}")),
         }
     }

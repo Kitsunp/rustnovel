@@ -16,6 +16,85 @@ impl AuthoringDocumentSession {
     ) -> DocumentApplyResult {
         match command {
             AuthoringDocumentCommand::Graph(command) => self.apply_graph_command(command),
+            AuthoringDocumentCommand::MoveNodes { positions } => {
+                let mut before = std::collections::BTreeMap::new();
+                let mut validation_dirty = false;
+                for (&id, &position) in positions {
+                    if !position.x.is_finite() || !position.y.is_finite() {
+                        return Err(format!("node {id} position must be finite"));
+                    }
+                    let previous = self
+                        .document
+                        .graph
+                        .get_node_pos(id)
+                        .ok_or_else(|| format!("node {id} does not exist"))?;
+                    if previous != position {
+                        validation_dirty |= super::super::validation::layout_position_is_invalid(
+                            previous.x, previous.y,
+                        )
+                            != super::super::validation::layout_position_is_invalid(
+                                position.x, position.y,
+                            );
+                        before.insert(id, previous);
+                    }
+                }
+                if before.is_empty() {
+                    return Err("no-op node move".to_string());
+                }
+                for id in before.keys() {
+                    self.document.graph.set_node_pos(*id, positions[id]);
+                }
+                let field_paths = before
+                    .keys()
+                    .map(|id| format!("graph.nodes[{id}].position"))
+                    .collect();
+                let targets = before
+                    .keys()
+                    .map(|id| DiagnosticTarget::Node { node_id: *id })
+                    .collect();
+                Ok((
+                    AuthoringDocumentDelta::NodesMoved {
+                        before,
+                        validation_dirty,
+                    },
+                    DocumentApplyMetadata {
+                        kind: OperationKind::NodeMoved,
+                        diagnostic_id: None,
+                        diagnostic_target: None,
+                        field_paths,
+                        targets,
+                        before_value: None,
+                        after_value: None,
+                    },
+                ))
+            }
+            AuthoringDocumentCommand::ReplaceGraph {
+                graph,
+                kind,
+                field_path,
+                before_value,
+                after_value,
+                ..
+            } => {
+                if self.document.graph.has_same_content(graph) {
+                    return Err("no-op graph replacement".to_string());
+                }
+                let before = std::mem::replace(&mut self.document.graph, graph.as_ref().clone());
+                Ok((
+                    AuthoringDocumentDelta::GraphReplaced {
+                        before: Box::new(before),
+                    },
+                    DocumentApplyMetadata {
+                        kind: kind.clone(),
+                        diagnostic_id: None,
+                        diagnostic_target: None,
+                        field_paths: field_path.iter().cloned().collect(),
+                        targets: vec![DiagnosticTarget::Graph],
+                        before_value: before_value.clone(),
+                        after_value: after_value.clone(),
+                    },
+                ))
+            }
             AuthoringDocumentCommand::SetLayerVisible { object_id, visible } => {
                 self.set_layer_visible(object_id, *visible)
             }
@@ -28,7 +107,12 @@ impl AuthoringDocumentSession {
             AuthoringDocumentCommand::ClearBackgroundFitOverride { node_id } => {
                 self.clear_background_fit(*node_id)
             }
-            AuthoringDocumentCommand::RevertLast => unreachable!("handled by apply"),
+            AuthoringDocumentCommand::ResetComposerOverrides => self.reset_composer_overrides(),
+            AuthoringDocumentCommand::RevertLast
+            | AuthoringDocumentCommand::UndoLast
+            | AuthoringDocumentCommand::RedoLast => {
+                unreachable!("handled by apply")
+            }
         }
     }
 
@@ -36,41 +120,15 @@ impl AuthoringDocumentSession {
         if matches!(command, AuthoringCommand::RevertLast) {
             return Err("use AuthoringDocumentCommand::RevertLast for document undo".to_string());
         }
+        if matches!(command, AuthoringCommand::RedoLast) {
+            return Err("use AuthoringDocumentCommand::RedoLast for document redo".to_string());
+        }
 
-        let graph = std::mem::take(&mut self.document.graph);
-        let mut graph_bus = AuthoringCommandBus::new(graph);
-        let outcome = match graph_bus.apply(command.clone()) {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                let (graph, _, _) = graph_bus.into_parts();
-                self.document.graph = graph;
-                return Err(error);
-            }
-        };
-        let (graph, _, _) = graph_bus.into_parts();
-        self.document.graph = graph;
-        let kind = outcome
-            .operation
-            .operation_kind_v2
-            .clone()
-            .ok_or_else(|| "graph command did not produce an operation kind v2".to_string())?;
-        Ok((
-            AuthoringDocumentDelta::Graph(Box::new(outcome.delta)),
-            DocumentApplyMetadata {
-                kind,
-                diagnostic_id: outcome.operation.diagnostic_id,
-                diagnostic_target: outcome.operation.diagnostic_target,
-                field_paths: outcome
-                    .operation
-                    .field_paths
-                    .into_iter()
-                    .map(|path| path.value)
-                    .collect(),
-                targets: outcome.operation.affected_targets,
-                before_value: outcome.operation.before_value,
-                after_value: outcome.operation.after_value,
-            },
-        ))
+        let (delta, metadata) = AuthoringCommandBus::apply_to_graph_unlogged_with_metadata(
+            &mut self.document.graph,
+            command,
+        )?;
+        Ok((AuthoringDocumentDelta::Graph(Box::new(delta)), metadata))
     }
 
     fn set_layer_visible(&mut self, object_id: &str, visible: bool) -> DocumentApplyResult {
@@ -136,6 +194,9 @@ impl AuthoringDocumentSession {
     }
 
     fn set_background_fit(&mut self, node_id: u32, fit: BackgroundFit) -> DocumentApplyResult {
+        if self.document.graph.get_node(node_id).is_none() {
+            return Err(format!("background fit node {node_id} not found"));
+        }
         let key = node_id.to_string();
         let before = self
             .document
@@ -187,6 +248,39 @@ impl AuthoringDocumentSession {
                 before_value: json_string(&Some(before)),
                 after_value: json_string(&Option::<BackgroundFit>::None),
             },
+        ))
+    }
+
+    fn reset_composer_overrides(&mut self) -> DocumentApplyResult {
+        if self.document.composer_layer_overrides.is_empty()
+            && self.document.composer_background_fit_overrides.is_empty()
+        {
+            return Err("no-op composer overrides reset".to_string());
+        }
+        let before_layers = std::mem::take(&mut self.document.composer_layer_overrides);
+        let before_background_fits =
+            std::mem::take(&mut self.document.composer_background_fit_overrides);
+        let metadata = DocumentApplyMetadata {
+            kind: OperationKind::FieldEdited,
+            diagnostic_id: None,
+            diagnostic_target: None,
+            field_paths: vec![
+                "composer.layers".to_string(),
+                "composer.background_fit".to_string(),
+            ],
+            targets: vec![DiagnosticTarget::Graph],
+            before_value: json_string(&(&before_layers, &before_background_fits)),
+            after_value: json_string(&(
+                &self.document.composer_layer_overrides,
+                &self.document.composer_background_fit_overrides,
+            )),
+        };
+        Ok((
+            AuthoringDocumentDelta::ComposerOverridesReset {
+                before_layers,
+                before_background_fits,
+            },
+            metadata,
         ))
     }
 

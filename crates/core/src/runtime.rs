@@ -4,12 +4,13 @@ pub use crate::engine::{
     PrefetchMode, StateChange,
 };
 pub use crate::event::{
-    AudioActionCompiled, AudioActionRaw, CharacterPatchCompiled, CharacterPatchRaw,
-    CharacterPlacementCompiled, CharacterPlacementRaw, ChoiceCompiled, ChoiceOptionCompiled,
-    ChoiceOptionRaw, ChoiceRaw, CmpOp, CondCompiled, CondRaw, DialogueCompiled, DialogueRaw,
-    EventCompiled, EventRaw, ScenePatchCompiled, ScenePatchRaw, SceneTransitionCompiled,
-    SceneTransitionRaw, SceneUpdateCompiled, SceneUpdateRaw, SetCharacterPositionCompiled,
-    SetCharacterPositionRaw, SharedStr,
+    audio_action_code, audio_action_name, audio_channel_code, audio_channel_name,
+    transition_kind_code, transition_kind_name, AudioActionCompiled, AudioActionRaw,
+    CharacterPatchCompiled, CharacterPatchRaw, CharacterPlacementCompiled, CharacterPlacementRaw,
+    ChoiceCompiled, ChoiceOptionCompiled, ChoiceOptionRaw, ChoiceRaw, CmpOp, CondCompiled, CondRaw,
+    DialogueCompiled, DialogueRaw, EventCompiled, EventRaw, ScenePatchCompiled, ScenePatchRaw,
+    SceneTransitionCompiled, SceneTransitionRaw, SceneUpdateCompiled, SceneUpdateRaw,
+    SetCharacterPositionCompiled, SetCharacterPositionRaw, SharedStr,
 };
 pub use crate::event_behavior::{
     event_asset_refs_for_raw, event_behavior, event_behavior_for_compiled, event_behavior_for_raw,
@@ -39,7 +40,7 @@ pub use crate::scene_frame::{
     SafeAreaMode, SceneFrame, SceneFramePresenter, StageFitPolicy, StageProfile, TypographyToken,
     UiDensity, UiResponse, UiTheme, UiThemeValidationReport, WindowMode,
 };
-pub use crate::script::{ScriptCompiled, ScriptRaw};
+pub use crate::script::{RuntimeScriptInput, ScriptCompiled, ScriptRaw};
 pub use crate::state::EngineState;
 pub use crate::trace::{StateDigest, UiTrace, UiTraceStep, UiView as TraceUiView, VisualDigest};
 pub use crate::ui::{UiState, UiView};

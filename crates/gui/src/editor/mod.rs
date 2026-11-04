@@ -31,7 +31,7 @@ pub mod project_io;
 pub mod quick_fix;
 pub mod resource_service;
 pub mod route_tree_view;
-pub mod scene_frame_presenter;
+pub use crate::scene_frame_presenter;
 pub mod scene_stage;
 pub mod script_sync;
 pub mod timeline_panel;
@@ -101,7 +101,7 @@ pub fn run_editor_with_project(
         options,
         Box::new(move |cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Box::new(EditorApp::new(initial_project.clone()))
+            Ok(Box::new(EditorApp::new(initial_project.clone())))
         }),
     )
 }

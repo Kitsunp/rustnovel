@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use visual_novel_engine::{runtime::ScriptRaw, GraphStats, StoryGraph};
 
 /// Python wrapper for GraphStats.
-#[pyclass(name = "GraphStats")]
+#[pyclass(name = "GraphStats", from_py_object)]
 #[derive(Clone)]
 pub struct PyGraphStats {
     #[pyo3(get)]
@@ -57,7 +57,7 @@ impl PyGraphStats {
 }
 
 /// Python wrapper for a graph node.
-#[pyclass(name = "GraphNode")]
+#[pyclass(name = "GraphNode", from_py_object)]
 #[derive(Clone)]
 pub struct PyGraphNode {
     #[pyo3(get)]
@@ -83,7 +83,7 @@ impl PyGraphNode {
 }
 
 /// Python wrapper for a graph edge.
-#[pyclass(name = "GraphEdge")]
+#[pyclass(name = "GraphEdge", from_py_object)]
 #[derive(Clone)]
 pub struct PyGraphEdge {
     #[pyo3(get)]

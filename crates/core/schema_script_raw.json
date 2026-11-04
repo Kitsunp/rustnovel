@@ -543,6 +543,7 @@
               "type": "string"
             },
             "scale": {
+              "description": "Omission preserves the existing character scale; use 1.0 to reset it.",
               "type": [
                 "number",
                 "null"

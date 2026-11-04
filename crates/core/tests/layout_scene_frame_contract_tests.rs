@@ -6,8 +6,8 @@ use visual_novel_engine::{
         SceneUpdateRaw, ScriptRaw,
     },
     validate_ui_theme, ComponentRegistry, DisplayOrientation, DisplayProfile, LayoutPolicy,
-    RenderCommand, SafeAreaInsets, SecurityPolicy, StageProfile, ThemeColorRgba, TypographyToken,
-    UiTheme, WindowMode,
+    LayoutRect, RenderCommand, SafeAreaInsets, SafeAreaMode, SecurityPolicy, StageFitPolicy,
+    StageProfile, ThemeColorRgba, TypographyToken, UiTheme, WindowMode,
 };
 
 use std::collections::BTreeMap;
@@ -49,6 +49,61 @@ fn layout_resolves_required_viewport_matrix_without_invalid_geometry() {
             assert!(resolved.stage_rect.height.is_finite());
             assert!(resolved.stage_rect.width > 0.0);
             assert!(resolved.stage_rect.height > 0.0);
+        }
+    }
+    let mut display = DisplayProfile::new(1200.0, 800.0);
+    display.safe_area = SafeAreaInsets {
+        left: 100.0,
+        right: 100.0,
+        top: 50.0,
+        bottom: 150.0,
+    };
+    for (policy, respected, ignored) in [
+        (
+            StageFitPolicy::Contain,
+            [100.0, 100.0, 1000.0, 500.0],
+            [0.0, 100.0, 1200.0, 600.0],
+        ),
+        (
+            StageFitPolicy::Cover,
+            [0.0, 50.0, 1200.0, 600.0],
+            [-200.0, 0.0, 1600.0, 800.0],
+        ),
+        (
+            StageFitPolicy::Stretch,
+            [100.0, 50.0, 1000.0, 600.0],
+            [0.0, 0.0, 1200.0, 800.0],
+        ),
+        (
+            StageFitPolicy::PixelPerfect,
+            [100.0, 100.0, 1000.0, 500.0],
+            [0.0, 100.0, 1200.0, 600.0],
+        ),
+    ] {
+        for (mode, [x, y, width, height]) in [
+            (SafeAreaMode::Respect, respected),
+            (SafeAreaMode::Ignore, ignored),
+        ] {
+            let resolved = resolve_layout(
+                display.clone(),
+                StageProfile {
+                    design_size: [1000.0, 500.0],
+                    policy,
+                    safe_area_mode: mode,
+                },
+                LayoutPolicy::default(),
+            );
+            assert_eq!(
+                resolved.stage_rect,
+                LayoutRect {
+                    x,
+                    y,
+                    width,
+                    height
+                },
+                "{policy:?}/{mode:?}"
+            );
+            assert_eq!(resolved.display.safe_area, display.safe_area);
         }
     }
 }
@@ -156,6 +211,9 @@ fn scene_frame_emits_real_visual_and_dialogue_commands() {
     .expect("engine");
 
     let scene_frame = engine.scene_frame();
+    let mut expected_presentation = scene_frame.clone();
+    assert!(expected_presentation.route.take().is_some());
+    assert_eq!(engine.presentation_frame(), expected_presentation);
     assert!(scene_frame.commands.iter().any(|command| matches!(
         command,
         RenderCommand::Image { asset, .. } if asset == "bg/room.png"

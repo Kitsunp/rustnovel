@@ -98,7 +98,7 @@ impl<'a> NodeEditorPanel<'a> {
                         self.graph_to_screen(rect, self.calculate_port_pos(pos, &node, from_port));
                     painter.line_segment(
                         [from, cursor],
-                        egui::Stroke::new(2.0, egui::Color32::YELLOW),
+                        egui::Stroke::new(2.0_f32, egui::Color32::YELLOW),
                     );
                 }
             }

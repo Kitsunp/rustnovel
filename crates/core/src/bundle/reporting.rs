@@ -9,9 +9,8 @@ use crate::error::VnResult;
 
 use super::helpers::{invalid_bundle, normalize_path_display, sha256_hex, to_hex};
 use super::{
-    build_export_plan, export_bundle, BundleFileEntry, ExportBundleReport, ExportDiagnostic,
-    ExportPlan, ExportRuntimeSmokeCheck, ExportRuntimeSmokeResult, ExportService,
-    ExportTargetPlatform,
+    BundleFileEntry, ExportBundleReport, ExportDiagnostic, ExportPlan, ExportRuntimeSmokeCheck,
+    ExportRuntimeSmokeResult, ExportService, ExportTargetPlatform,
 };
 
 pub(super) fn build_compat_report(
@@ -210,27 +209,12 @@ fn classify_bundle_file_role(path: &str) -> &'static str {
 }
 
 pub fn export_executable_bundle(spec: super::ExportBundleSpec) -> VnResult<ExportBundleReport> {
-    let target = spec.target_platform;
-    let plan = build_export_plan(&spec)?;
-    ExportService::new().validate_export_plan(&plan)?;
-    let expected = target.expected_executable_name();
-    if plan.executable.as_deref() != Some(expected) {
-        return Err(invalid_bundle(executable_requirement_message(
-            target,
-            expected,
-            Some(&plan),
-        )));
-    }
-    let report = export_bundle(spec)?;
-    if report.executable.as_deref() != Some(expected) {
-        return Err(invalid_bundle(executable_requirement_message(
-            target, expected, None,
-        )));
-    }
-    Ok(report)
+    ExportService::new()
+        .prepare_export(spec)?
+        .execute_executable()
 }
 
-fn executable_requirement_message(
+pub(super) fn executable_requirement_message(
     target: ExportTargetPlatform,
     expected: &str,
     plan: Option<&ExportPlan>,

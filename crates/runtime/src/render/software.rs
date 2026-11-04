@@ -2,7 +2,9 @@ use ab_glyph::FontArc;
 use pixels::{Pixels, SurfaceTexture};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use visual_novel_engine::runtime::{ImageFit, LayoutRect, RenderCommand};
+use vnengine_assets::{decode_image_bytes, AssetLimits, LoadedImage};
 use winit::window::Window;
 
 use super::backend::{RenderBackend, RenderFrame};
@@ -17,6 +19,7 @@ use text::{
 
 const DESIGN_WIDTH: f32 = 1280.0;
 const DESIGN_HEIGHT: f32 = 720.0;
+const IMAGE_RETRY_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Trait for the actual drawing logic acting on a framebuffer.
 pub trait SoftwareDrawStrategy {
@@ -76,23 +79,28 @@ impl<'a> RenderBackend for SoftwareBackend<'a> {
     }
 }
 
-#[derive(Clone)]
-struct DecodedImage {
-    width: u32,
-    height: u32,
-    rgba: Vec<u8>,
+enum CachedImage {
+    Ready(LoadedImage),
+    Failed { error: String, retry_at: Instant },
 }
 
 /// Default implementation of software drawing.
 pub struct BuiltinSoftwareDrawer {
     font: Option<FontArc>,
-    images: HashMap<String, DecodedImage>,
-    failed_images: HashSet<String>,
+    images: HashMap<String, CachedImage>,
 }
 
 impl BuiltinSoftwareDrawer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Returns the load or decode error for an active image placeholder.
+    pub fn image_error(&self, asset: &str) -> Option<&str> {
+        match self.images.get(asset) {
+            Some(CachedImage::Failed { error, .. }) => Some(error),
+            _ => None,
+        }
     }
 
     fn draw_command(
@@ -153,9 +161,10 @@ impl BuiltinSoftwareDrawer {
             return;
         }
 
-        let image = match self.load_image(render_frame, asset) {
-            Some(image) => image.clone(),
-            None => {
+        self.ensure_image(render_frame, asset);
+        match &self.images[asset] {
+            CachedImage::Ready(image) => draw_image_nearest(frame, size, target, image, fit),
+            CachedImage::Failed { error, .. } => {
                 draw_rect(
                     frame,
                     size,
@@ -164,11 +173,14 @@ impl BuiltinSoftwareDrawer {
                         ..target
                     },
                 );
-                self.draw_text(frame, size, asset, "system.warning", rect);
-                return;
+                let implicit = render_frame
+                    .scene_frame
+                    .visual
+                    .is_implicit_character_image(asset);
+                let label = if implicit { asset } else { error };
+                self.draw_text(frame, size, label, "system.warning", rect);
             }
-        };
-        draw_image_nearest(frame, size, target, &image, fit);
+        }
     }
 
     fn draw_text(
@@ -210,40 +222,42 @@ impl BuiltinSoftwareDrawer {
         }
     }
 
-    fn load_image(&mut self, render_frame: RenderFrame<'_>, asset: &str) -> Option<&DecodedImage> {
-        if self.images.contains_key(asset) {
-            return self.images.get(asset);
-        }
-        if self.failed_images.contains(asset) {
-            return None;
-        }
+    fn ensure_image(&mut self, render_frame: RenderFrame<'_>, asset: &str) {
+        let reload = match self.images.get(asset) {
+            Some(CachedImage::Failed { retry_at, .. }) if Instant::now() >= *retry_at => true,
+            Some(_) => return,
+            None => false,
+        };
 
-        let bytes = match render_frame.assets.load_bytes(asset) {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                eprintln!("software renderer could not load image '{asset}': {err}");
-                self.failed_images.insert(asset.to_string());
-                return None;
+        let bytes = if reload {
+            render_frame.assets.reload_bytes(asset)
+        } else {
+            render_frame.assets.load_bytes(asset)
+        };
+        let image = bytes
+            .map_err(|error| format!("Could not load image '{asset}': {error}"))
+            .and_then(|bytes| {
+                decode_image_bytes(asset, &bytes, &AssetLimits::default())
+                    .map_err(|error| error.to_string())
+            });
+        let entry = match image {
+            Ok(image) => CachedImage::Ready(image),
+            Err(error) => {
+                if !render_frame
+                    .scene_frame
+                    .visual
+                    .is_implicit_character_image(asset)
+                    && self.image_error(asset) != Some(error.as_str())
+                {
+                    eprintln!("{error}");
+                }
+                CachedImage::Failed {
+                    error,
+                    retry_at: Instant::now() + IMAGE_RETRY_INTERVAL,
+                }
             }
         };
-        let rgba = match image::load_from_memory(&bytes) {
-            Ok(image) => image.to_rgba8(),
-            Err(err) => {
-                eprintln!("software renderer could not decode image '{asset}': {err}");
-                self.failed_images.insert(asset.to_string());
-                return None;
-            }
-        };
-        let (width, height) = rgba.dimensions();
-        self.images.insert(
-            asset.to_string(),
-            DecodedImage {
-                width,
-                height,
-                rgba: rgba.into_raw(),
-            },
-        );
-        self.images.get(asset)
+        self.images.insert(asset.to_owned(), entry);
     }
 }
 
@@ -252,13 +266,26 @@ impl Default for BuiltinSoftwareDrawer {
         Self {
             font: load_system_font(),
             images: HashMap::new(),
-            failed_images: HashSet::new(),
         }
     }
 }
 
 impl SoftwareDrawStrategy for BuiltinSoftwareDrawer {
     fn draw(&mut self, frame: &mut [u8], size: (u32, u32), render_frame: RenderFrame<'_>) {
+        let active_images = render_frame
+            .scene_frame
+            .commands
+            .iter()
+            .filter_map(|command| {
+                if let RenderCommand::Image { asset, .. } = command {
+                    Some(asset.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<HashSet<_>>();
+        self.images
+            .retain(|asset, _| active_images.contains(asset.as_str()));
         clear(frame, [22, 24, 34, 255]);
         for command in &render_frame.scene_frame.commands {
             self.draw_command(frame, size, command, render_frame);
@@ -286,9 +313,7 @@ impl SoftwareDrawStrategy for BuiltinSoftwareDrawer {
 }
 
 fn clear(frame: &mut [u8], color: [u8; 4]) {
-    for chunk in frame.chunks_exact_mut(4) {
-        chunk.copy_from_slice(&color);
-    }
+    frame.as_chunks_mut::<4>().0.fill(color);
 }
 
 #[derive(Clone, Copy)]
@@ -336,13 +361,14 @@ fn draw_image_nearest(
     frame: &mut [u8],
     size: (u32, u32),
     rect: RectSpec,
-    image: &DecodedImage,
+    image: &LoadedImage,
     fit: ImageFit,
 ) {
-    if image.width == 0 || image.height == 0 || rect.width == 0 || rect.height == 0 {
+    let [image_width, image_height] = image.size.map(|value| value as u32);
+    if image_width == 0 || image_height == 0 || rect.width == 0 || rect.height == 0 {
         return;
     }
-    let plan = image_draw_plan(rect, image.width, image.height, fit);
+    let plan = image_draw_plan(rect, image_width, image_height, fit);
     if plan.dest.width == 0 || plan.dest.height == 0 {
         return;
     }
@@ -353,25 +379,20 @@ fn draw_image_nearest(
         let v = (row - plan.dest.y) as f32 / plan.dest.height as f32;
         let src_y = (plan.src_y + v * plan.src_h)
             .floor()
-            .clamp(0.0, (image.height - 1) as f32) as u32;
+            .clamp(0.0, (image_height - 1) as f32) as u32;
         for col in plan.dest.x..max_x {
             let u = (col - plan.dest.x) as f32 / plan.dest.width as f32;
             let src_x = (plan.src_x + u * plan.src_w)
                 .floor()
-                .clamp(0.0, (image.width - 1) as f32) as u32;
-            let idx = ((src_y * image.width + src_x) * 4) as usize;
-            if idx + 4 <= image.rgba.len() {
+                .clamp(0.0, (image_width - 1) as f32) as u32;
+            let idx = ((src_y * image_width + src_x) * 4) as usize;
+            if let Some(pixel) = image.pixels.get(idx..idx + 4) {
                 blend_pixel(
                     frame,
                     size.0,
                     col,
                     row,
-                    [
-                        image.rgba[idx],
-                        image.rgba[idx + 1],
-                        image.rgba[idx + 2],
-                        image.rgba[idx + 3],
-                    ],
+                    [pixel[0], pixel[1], pixel[2], pixel[3]],
                 );
             }
         }
@@ -438,8 +459,14 @@ fn image_draw_plan(
 }
 
 fn blend_pixel(frame: &mut [u8], width: u32, x: u32, y: u32, color: [u8; 4]) {
-    let idx = ((y * width + x) * 4) as usize;
-    if idx + 4 > frame.len() {
+    let Some(idx) = (y as usize)
+        .checked_mul(width as usize)
+        .and_then(|row| row.checked_add(x as usize))
+        .and_then(|pixel| pixel.checked_mul(4))
+    else {
+        return;
+    };
+    if x >= width || idx > frame.len().saturating_sub(4) || frame.len() < 4 {
         return;
     }
     let alpha = color[3] as f32 / 255.0;
@@ -449,3 +476,7 @@ fn blend_pixel(frame: &mut [u8], width: u32, x: u32, y: u32, color: [u8; 4]) {
     frame[idx + 2] = (color[2] as f32 * alpha + frame[idx + 2] as f32 * inverse).round() as u8;
     frame[idx + 3] = 255;
 }
+
+#[cfg(test)]
+#[path = "software/tests.rs"]
+mod tests;

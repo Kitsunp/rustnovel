@@ -11,7 +11,6 @@ fn dropped_character_adds_to_selected_scene_without_creating_extra_node_and_upse
         .node_graph
         .add_node(empty_scene(), egui::pos2(0.0, 0.0));
     let before_nodes = workbench.node_graph.len();
-    let before_assign = workbench.node_graph.clone();
 
     add_character(
         &mut workbench,
@@ -27,7 +26,7 @@ fn dropped_character_adds_to_selected_scene_without_creating_extra_node_and_upse
         420,
         260,
     );
-    workbench.commit_modified_graph(before_assign);
+    workbench.commit_modified_graph();
 
     assert_eq!(workbench.node_graph.len(), before_nodes);
     assert_scene_character(
@@ -38,7 +37,7 @@ fn dropped_character_adds_to_selected_scene_without_creating_extra_node_and_upse
         "assets/characters/ava_happy.png",
         420,
     );
-    let entry = workbench
+    let entry = workbench.document()
         .operation_log
         .last()
         .expect("character assignment should be logged");

@@ -1,8 +1,11 @@
 mod apply;
+mod edit;
 mod inverse;
 mod read_model;
 mod replay;
 mod types;
+
+use super::command_bus::CommandApplyMetadata as DocumentApplyMetadata;
 
 use super::{
     authoring_document_layout_sha256, authoring_document_sha256,
@@ -20,27 +23,16 @@ pub use types::{
     AuthoringDocumentDelta,
 };
 
-pub(super) struct DocumentApplyMetadata {
-    pub(super) kind: OperationKind,
-    pub(super) diagnostic_id: Option<String>,
-    pub(super) diagnostic_target: Option<DiagnosticTarget>,
-    pub(super) field_paths: Vec<String>,
-    pub(super) targets: Vec<DiagnosticTarget>,
-    pub(super) before_value: Option<String>,
-    pub(super) after_value: Option<String>,
-}
-
 pub(super) type DocumentApplyResult =
     Result<(AuthoringDocumentDelta, DocumentApplyMetadata), String>;
 
 #[derive(Clone, Debug)]
 pub struct AuthoringDocumentSession {
     document: AuthoringDocument,
-    undo_deltas: Vec<AuthoringDocumentDelta>,
-    redo_deltas: Vec<AuthoringDocumentDelta>,
+    undo_deltas: Vec<(AuthoringDocumentDelta, usize)>,
+    redo_command_indices: Vec<usize>,
     recorded_commands: Vec<AuthoringDocumentCommand>,
     cached_fingerprint: Option<AuthoringReportFingerprint>,
-    cached_validation: Option<Vec<LintIssue>>,
     dirty: AuthoringDirtyFlags,
     read_model: AuthoringReadModel,
 }
@@ -49,6 +41,36 @@ pub struct AuthoringDocumentSession {
 pub struct AuthoringDocumentCommandApplyResult {
     pub document: AuthoringDocument,
     pub outcome: AuthoringDocumentCommandOutcome,
+}
+
+#[derive(Clone, Debug)]
+pub struct AuthoringDocumentCommandsApplyResult {
+    pub document: AuthoringDocument,
+    pub outcomes: Vec<AuthoringDocumentCommandOutcome>,
+}
+
+/// Applies a batch in one session, preserving its history and caches.
+/// The owned document is returned only on success; callers must save it afterwards.
+pub fn apply_authoring_document_commands_headless(
+    document: AuthoringDocument,
+    commands: Vec<AuthoringDocumentCommand>,
+) -> Result<AuthoringDocumentCommandsApplyResult, String> {
+    if commands.is_empty() {
+        return Err("command batch must not be empty".to_string());
+    }
+    let mut session = AuthoringDocumentSession::new(document);
+    let mut outcomes = Vec::with_capacity(commands.len());
+    for (index, command) in commands.into_iter().enumerate() {
+        outcomes.push(
+            session
+                .apply(command)
+                .map_err(|error| format!("command {} failed: {error}", index + 1))?,
+        );
+    }
+    Ok(AuthoringDocumentCommandsApplyResult {
+        document: session.into_document(),
+        outcomes,
+    })
 }
 
 pub fn apply_authoring_document_command_headless(
@@ -69,10 +91,9 @@ impl AuthoringDocumentSession {
         Self {
             document,
             undo_deltas: Vec::new(),
-            redo_deltas: Vec::new(),
+            redo_command_indices: Vec::new(),
             recorded_commands: Vec::new(),
             cached_fingerprint: None,
-            cached_validation: None,
             dirty: AuthoringDirtyFlags::default(),
             read_model,
         }
@@ -107,61 +128,94 @@ impl AuthoringDocumentSession {
     }
 
     pub fn redo_delta_count(&self) -> usize {
-        self.redo_deltas.len()
+        self.redo_command_indices.len()
+    }
+
+    pub fn last_undo_command_index(&self) -> Option<usize> {
+        self.undo_deltas.last().map(|(_, index)| *index)
+    }
+
+    pub fn is_command_in_history(&self, index: usize) -> bool {
+        self.undo_deltas
+            .iter()
+            .any(|(_, candidate)| *candidate == index)
+            || self.redo_command_indices.contains(&index)
+    }
+
+    /// Limits retained inverse deltas without changing the command replay log.
+    pub fn limit_undo_history(&mut self, max_steps: usize) {
+        let excess = self.undo_deltas.len().saturating_sub(max_steps);
+        self.undo_deltas.drain(..excess);
+    }
+
+    /// Appends evidence for an external action, such as a manifest asset import.
+    /// It does not mutate document content or create a reversible command.
+    pub fn record_external_operation(
+        &mut self,
+        operation: OperationLogEntry,
+        verification: VerificationRun,
+    ) {
+        self.document.operation_log.push(operation);
+        self.document.verification_runs.push(verification);
+        self.cached_fingerprint = None;
     }
 
     pub fn apply(
         &mut self,
         command: AuthoringDocumentCommand,
     ) -> Result<AuthoringDocumentCommandOutcome, String> {
-        if matches!(command, AuthoringDocumentCommand::RevertLast) {
-            return self.revert_last();
+        if matches!(
+            command,
+            AuthoringDocumentCommand::RevertLast | AuthoringDocumentCommand::UndoLast
+        ) {
+            return self.revert_last(command);
         }
+        if matches!(command, AuthoringDocumentCommand::RedoLast) {
+            return self.redo_last();
+        }
+        self.apply_forward(command, None)
+    }
 
+    fn apply_forward(
+        &mut self,
+        command: AuthoringDocumentCommand,
+        redo_index: Option<usize>,
+    ) -> Result<AuthoringDocumentCommandOutcome, String> {
         let before_fingerprint = self.current_fingerprint();
-        let before_issues = self.current_validation();
         let (delta, metadata) = self.apply_without_logging(&command)?;
-        self.read_model.update_from_delta(&self.document, &delta);
-        let dirty = AuthoringDirtyFlags::for_delta(&delta);
-        self.dirty.include(dirty);
-        let after_fingerprint = self.fingerprint_after_delta(&before_fingerprint, &delta);
-        let after_issues = if dirty.validation_dirty {
-            self.cached_validation = None;
-            self.current_validation()
-        } else {
-            self.cached_validation = Some(before_issues.clone());
-            before_issues.clone()
+        let (after_fingerprint, before_issues) =
+            self.refresh_after_delta(&before_fingerprint, &delta);
+        let after_issues = self.read_model.diagnostics();
+        let details = match &command {
+            AuthoringDocumentCommand::Graph(command) => metadata.graph_details(command),
+            AuthoringDocumentCommand::ReplaceGraph { details, .. } => details.clone(),
+            AuthoringDocumentCommand::MoveNodes { .. } => match metadata.targets.as_slice() {
+                [DiagnosticTarget::Node { node_id }] => format!("Moved node {node_id}"),
+                nodes => format!("Moved {} nodes", nodes.len()),
+            },
+            _ => format!("authoring document command applied: {command:?}"),
         };
-        if dirty.validation_dirty {
-            self.read_model.replace_diagnostics(&after_issues);
-        }
-        let mut operation = OperationLogEntry::new_typed(
-            metadata.kind,
-            OperationStatus::Applied,
-            format!("authoring document command applied: {command:?}"),
-        )
-        .with_before_after_fingerprints(&before_fingerprint, &after_fingerprint);
-        for field_path in metadata.field_paths {
-            operation = operation.with_field_path(field_path);
-        }
-        for target in metadata.targets {
-            operation = operation.with_target(target);
-        }
-        operation.diagnostic_id = metadata.diagnostic_id;
-        operation.diagnostic_target = metadata.diagnostic_target;
-        operation.before_value = metadata.before_value;
-        operation.after_value = metadata.after_value;
+        let operation = metadata
+            .into_operation(redo_index.map(|_| OperationKind::Redo), details)
+            .with_before_after_fingerprints(&before_fingerprint, &after_fingerprint);
         let verification = VerificationRun::from_diagnostics(
             operation.operation_id.clone(),
             "document_command_bus",
             &after_fingerprint,
-            &before_issues,
-            &after_issues,
+            before_issues.as_deref().unwrap_or(after_issues),
+            after_issues,
         );
 
-        self.undo_deltas.push(delta.clone());
-        self.redo_deltas.clear();
-        self.recorded_commands.push(command);
+        self.undo_deltas.push((
+            delta.clone(),
+            redo_index.unwrap_or(self.recorded_commands.len()),
+        ));
+        self.redo_command_indices.clear();
+        self.recorded_commands.push(if redo_index.is_some() {
+            AuthoringDocumentCommand::RedoLast
+        } else {
+            command
+        });
         self.document.operation_log.push(operation.clone());
         self.document.verification_runs.push(verification.clone());
         Ok(AuthoringDocumentCommandOutcome {
@@ -185,13 +239,20 @@ impl AuthoringDocumentSession {
         fingerprint
     }
 
-    fn current_validation(&mut self) -> Vec<LintIssue> {
-        if let Some(issues) = &self.cached_validation {
-            return issues.clone();
-        }
-        let issues = validate_authoring_graph_no_io(&self.document.graph);
-        self.cached_validation = Some(issues.clone());
-        issues
+    fn refresh_after_delta(
+        &mut self,
+        before: &AuthoringReportFingerprint,
+        delta: &AuthoringDocumentDelta,
+    ) -> (AuthoringReportFingerprint, Option<Vec<LintIssue>>) {
+        self.read_model.update_from_delta(&self.document, delta);
+        let dirty = AuthoringDirtyFlags::for_delta(delta);
+        self.dirty.include(dirty);
+        let after = self.fingerprint_after_delta(before, delta);
+        let before_issues = dirty.validation_dirty.then(|| {
+            self.read_model
+                .replace_diagnostics(validate_authoring_graph_no_io(&self.document.graph))
+        });
+        (after, before_issues)
     }
 
     fn fingerprint_after_delta(
@@ -213,36 +274,31 @@ impl AuthoringDocumentSession {
         }
     }
 
-    fn revert_last(&mut self) -> Result<AuthoringDocumentCommandOutcome, String> {
-        let delta = self
+    fn revert_last(
+        &mut self,
+        command: AuthoringDocumentCommand,
+    ) -> Result<AuthoringDocumentCommandOutcome, String> {
+        let (delta, command_index) = self
             .undo_deltas
             .pop()
             .ok_or_else(|| "no document command delta to revert".to_string())?;
         let before_fingerprint = self.current_fingerprint();
-        let before_issues = self.current_validation();
         if let Err(error) = self.apply_inverse_delta(&delta) {
-            self.undo_deltas.push(delta);
+            self.undo_deltas.push((delta, command_index));
             return Err(error);
         }
         let reverted = AuthoringDocumentDelta::Reverted {
-            reverted: Box::new(delta.clone()),
+            reverted: Box::new(delta),
         };
-        self.read_model.update_from_delta(&self.document, &reverted);
-        let dirty = AuthoringDirtyFlags::for_delta(&reverted);
-        self.dirty.include(dirty);
-        let after_fingerprint = self.fingerprint_after_delta(&before_fingerprint, &reverted);
-        let after_issues = if dirty.validation_dirty {
-            self.cached_validation = None;
-            self.current_validation()
-        } else {
-            self.cached_validation = Some(before_issues.clone());
-            before_issues.clone()
-        };
-        if dirty.validation_dirty {
-            self.read_model.replace_diagnostics(&after_issues);
-        }
+        let (after_fingerprint, before_issues) =
+            self.refresh_after_delta(&before_fingerprint, &reverted);
+        let after_issues = self.read_model.diagnostics();
         let operation = OperationLogEntry::new_typed(
-            OperationKind::Revert,
+            if matches!(command, AuthoringDocumentCommand::UndoLast) {
+                OperationKind::Undo
+            } else {
+                OperationKind::Revert
+            },
             OperationStatus::Applied,
             "reverted last document command delta",
         )
@@ -251,12 +307,11 @@ impl AuthoringDocumentSession {
             operation.operation_id.clone(),
             "document_command_bus",
             &after_fingerprint,
-            &before_issues,
-            &after_issues,
+            before_issues.as_deref().unwrap_or(after_issues),
+            after_issues,
         );
-        self.redo_deltas.push(delta);
-        self.recorded_commands
-            .push(AuthoringDocumentCommand::RevertLast);
+        self.redo_command_indices.push(command_index);
+        self.recorded_commands.push(command);
         self.document.operation_log.push(operation.clone());
         self.document.verification_runs.push(verification.clone());
         Ok(AuthoringDocumentCommandOutcome {
@@ -266,6 +321,22 @@ impl AuthoringDocumentSession {
             before_fingerprint,
             after_fingerprint,
         })
+    }
+
+    fn redo_last(&mut self) -> Result<AuthoringDocumentCommandOutcome, String> {
+        let index = self
+            .redo_command_indices
+            .pop()
+            .ok_or_else(|| "no document command to redo".to_string())?;
+        // A successful forward command clears the redo branch. Preserve its
+        // remaining entries while reapplying exactly one command.
+        let pending = std::mem::take(&mut self.redo_command_indices);
+        let result = self.apply_forward(self.recorded_commands[index].clone(), Some(index));
+        self.redo_command_indices = pending;
+        if result.is_err() {
+            self.redo_command_indices.push(index);
+        }
+        result
     }
 }
 
@@ -342,8 +413,10 @@ fn delta_preserves_semantic_fingerprint(delta: &AuthoringDocumentDelta) -> bool 
         AuthoringDocumentDelta::LayerVisibleChanged { .. }
         | AuthoringDocumentDelta::LayerLockedChanged { .. }
         | AuthoringDocumentDelta::BackgroundFitChanged { .. }
-        | AuthoringDocumentDelta::BackgroundFitCleared { .. } => true,
-        AuthoringDocumentDelta::Graph(_) => false,
+        | AuthoringDocumentDelta::BackgroundFitCleared { .. }
+        | AuthoringDocumentDelta::ComposerOverridesReset { .. }
+        | AuthoringDocumentDelta::NodesMoved { .. } => true,
+        AuthoringDocumentDelta::Graph(_) | AuthoringDocumentDelta::GraphReplaced { .. } => false,
         AuthoringDocumentDelta::Reverted { reverted } => {
             delta_preserves_semantic_fingerprint(reverted)
         }

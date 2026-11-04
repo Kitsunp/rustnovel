@@ -1,4 +1,6 @@
 use super::*;
+use crate::scene_frame_presenter::scale_rect;
+use visual_novel_engine::{ImageFit, RenderCommand, SceneFrame};
 
 impl VnApp {
     pub(super) fn render_toolbar(&mut self, ui: &mut egui::Ui) {
@@ -77,7 +79,7 @@ impl VnApp {
         reserved_status_height: f32,
     ) {
         let event = self.engine.current_event();
-        let visual = self.preview_visual_state(event.as_ref().ok());
+        let frame = self.engine.presentation_frame();
         let available = player_stage_available_size(ui.available_size(), reserved_status_height);
         let viewport = player_stage_viewport_size(available, DEFAULT_STAGE_SIZE);
         let (viewport_rect, _) = ui.allocate_exact_size(viewport, egui::Sense::hover());
@@ -85,8 +87,8 @@ impl VnApp {
 
         let painter = ui.painter().with_clip_rect(stage_rect);
         painter.rect_filled(stage_rect, 0.0, egui::Color32::from_rgb(16, 18, 24));
-        self.paint_background(ui, stage_rect, visual.background.as_deref());
-        self.paint_character_labels(ui, stage_rect, &visual);
+        self.paint_scene_images(ui, stage_rect, &frame);
+        self.paint_character_labels(ui, stage_rect, &frame.visual);
 
         match event {
             Ok(event) => self.render_event_overlay(ui, ctx, stage_rect, event),
@@ -95,19 +97,50 @@ impl VnApp {
         }
     }
 
-    fn paint_background(
+    fn paint_scene_images(&mut self, ui: &egui::Ui, stage_rect: egui::Rect, frame: &SceneFrame) {
+        let sx = stage_rect.width() / DEFAULT_STAGE_SIZE.0;
+        let sy = stage_rect.height() / DEFAULT_STAGE_SIZE.1;
+        for command in &frame.commands {
+            let RenderCommand::Image {
+                asset, rect, fit, ..
+            } = command
+            else {
+                continue;
+            };
+            // Characters without an assigned image keep their existing label surface.
+            if frame.visual.is_implicit_character_image(asset) {
+                continue;
+            }
+            self.paint_scene_image(
+                ui,
+                stage_rect,
+                scale_rect(stage_rect, *rect, sx, sy),
+                asset,
+                *fit,
+            );
+        }
+    }
+
+    fn paint_scene_image(
         &mut self,
-        ui: &mut egui::Ui,
+        ui: &egui::Ui,
         stage_rect: egui::Rect,
-        background: Option<&str>,
+        bounds: egui::Rect,
+        asset: &str,
+        fit: ImageFit,
     ) {
-        let Some(background) = background else {
-            return;
-        };
-        match self.assets.texture_for_asset(ui.ctx(), background) {
+        match self.assets.texture_for_asset(ui.ctx(), asset) {
             Ok(Some(texture)) => {
-                let image_rect = cover_rect(stage_rect, texture.size_vec2());
-                let painter = ui.painter().with_clip_rect(stage_rect);
+                let image_rect = match fit {
+                    ImageFit::Contain => {
+                        fit_rect_to_stage(bounds, (texture.size_vec2().x, texture.size_vec2().y))
+                    }
+                    ImageFit::Cover => cover_rect(bounds, texture.size_vec2()),
+                    ImageFit::Stretch => bounds,
+                };
+                let painter = ui
+                    .painter()
+                    .with_clip_rect(ui.clip_rect().intersect(stage_rect).intersect(bounds));
                 painter.image(
                     texture.id(),
                     image_rect,
@@ -116,7 +149,13 @@ impl VnApp {
                 );
             }
             Ok(None) => {}
-            Err(err) => self.last_error = Some(format!("Asset error: {err}")),
+            Err(err) => {
+                let message = format!("Asset error: {err}");
+                if self.last_error.as_deref() != Some(message.as_str()) {
+                    self.last_error = Some(message);
+                    ui.ctx().request_repaint();
+                }
+            }
         }
     }
 
@@ -196,7 +235,7 @@ impl VnApp {
         ui.painter().rect_stroke(
             rect,
             layout.corner_radius,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(130)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(130)),
         );
 
         let mut should_advance = false;
@@ -222,7 +261,7 @@ impl VnApp {
                         .color(egui::Color32::WHITE)
                         .size(layout.text_font_size),
                 )
-                .wrap(true),
+                .wrap(),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
@@ -272,7 +311,7 @@ impl VnApp {
         ui.painter().rect_stroke(
             layout.panel,
             corner_radius,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(120)),
         );
 
         let mut selected = None;
@@ -286,7 +325,7 @@ impl VnApp {
                         .strong()
                         .size(layout.prompt_font_size),
                 )
-                .wrap(true),
+                .wrap(),
             );
             ui.add_space(layout.prompt_option_gap);
             egui::ScrollArea::vertical()
@@ -343,7 +382,7 @@ impl VnApp {
                     ))
                     .color(egui::Color32::WHITE),
                 )
-                .wrap(true),
+                .wrap(),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Continue").clicked() {
@@ -389,16 +428,6 @@ impl VnApp {
                 }
             });
         });
-    }
-
-    fn preview_visual_state(&self, event: Option<&EventCompiled>) -> VisualState {
-        let mut visual = self.engine.visual_state().clone();
-        match event {
-            Some(EventCompiled::Scene(scene)) => visual.apply_scene(scene),
-            Some(EventCompiled::Patch(patch)) => visual.apply_patch(patch),
-            _ => {}
-        }
-        visual
     }
 
     pub(super) fn advance_passthrough_events(&mut self, ctx: &egui::Context) {

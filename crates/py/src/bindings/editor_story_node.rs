@@ -5,20 +5,12 @@ use visual_novel_engine::runtime::{
     CharacterPatchRaw, CharacterPlacementRaw, CondRaw, EventRaw, ScenePatchRaw,
 };
 
-use super::support::parse_cmp_op;
+use super::super::conversion::parse_cmp_op;
 
-type PyCharacterPlacementInput = (String, Option<String>, Option<String>);
-type PyCharacterPlacementFullInput = (
-    String,
-    Option<String>,
-    Option<String>,
-    Option<i32>,
-    Option<i32>,
-    Option<f32>,
-);
+use super::super::character_input::CharacterInput;
 
 /// A node in the story graph.
-#[pyclass(name = "StoryNode")]
+#[pyclass(name = "StoryNode", from_py_object)]
 #[derive(Clone)]
 pub struct PyStoryNode {
     pub(super) inner: StoryNode,
@@ -51,28 +43,9 @@ impl PyStoryNode {
     fn scene(
         background: Option<String>,
         music: Option<String>,
-        characters: Vec<PyCharacterPlacementInput>,
+        characters: Vec<CharacterInput>,
     ) -> Self {
-        let characters = characters
-            .into_iter()
-            .map(|(name, expression, position)| CharacterPlacementRaw {
-                name,
-                expression,
-                position,
-                x: None,
-                y: None,
-                scale: None,
-            })
-            .collect();
-
-        Self {
-            inner: StoryNode::Scene {
-                profile: None,
-                background,
-                music,
-                characters,
-            },
-        }
+        Self::scene_full(None, background, music, characters)
     }
 
     #[staticmethod]
@@ -81,20 +54,11 @@ impl PyStoryNode {
         profile: Option<String>,
         background: Option<String>,
         music: Option<String>,
-        characters: Vec<PyCharacterPlacementFullInput>,
+        characters: Vec<CharacterInput>,
     ) -> Self {
         let characters = characters
             .into_iter()
-            .map(
-                |(name, expression, position, x, y, scale)| CharacterPlacementRaw {
-                    name,
-                    expression,
-                    position,
-                    x,
-                    y,
-                    scale,
-                },
-            )
+            .map(CharacterPlacementRaw::from)
             .collect();
 
         Self {
@@ -157,42 +121,11 @@ impl PyStoryNode {
     fn scene_patch(
         background: Option<String>,
         music: Option<String>,
-        add: Vec<PyCharacterPlacementInput>,
-        update: Vec<PyCharacterPlacementInput>,
+        add: Vec<CharacterInput>,
+        update: Vec<CharacterInput>,
         remove: Vec<String>,
     ) -> Self {
-        let add = add
-            .into_iter()
-            .map(|(name, expression, position)| CharacterPlacementRaw {
-                name,
-                expression,
-                position,
-                x: None,
-                y: None,
-                scale: None,
-            })
-            .collect();
-        let update = update
-            .into_iter()
-            .map(|(name, expression, position)| CharacterPatchRaw {
-                name,
-                expression,
-                position,
-                x: None,
-                y: None,
-                scale: None,
-            })
-            .collect();
-
-        Self {
-            inner: StoryNode::ScenePatch(ScenePatchRaw {
-                background,
-                music,
-                add,
-                update,
-                remove,
-            }),
-        }
+        Self::scene_patch_full(background, music, add, update, remove)
     }
 
     #[staticmethod]
@@ -200,34 +133,12 @@ impl PyStoryNode {
     fn scene_patch_full(
         background: Option<String>,
         music: Option<String>,
-        add: Vec<PyCharacterPlacementFullInput>,
-        update: Vec<PyCharacterPlacementInput>,
+        add: Vec<CharacterInput>,
+        update: Vec<CharacterInput>,
         remove: Vec<String>,
     ) -> Self {
-        let add = add
-            .into_iter()
-            .map(
-                |(name, expression, position, x, y, scale)| CharacterPlacementRaw {
-                    name,
-                    expression,
-                    position,
-                    x,
-                    y,
-                    scale,
-                },
-            )
-            .collect();
-        let update = update
-            .into_iter()
-            .map(|(name, expression, position)| CharacterPatchRaw {
-                name,
-                expression,
-                position,
-                x: None,
-                y: None,
-                scale: None,
-            })
-            .collect();
+        let add = add.into_iter().map(CharacterPlacementRaw::from).collect();
+        let update = update.into_iter().map(CharacterPatchRaw::from).collect();
 
         Self {
             inner: StoryNode::ScenePatch(ScenePatchRaw {

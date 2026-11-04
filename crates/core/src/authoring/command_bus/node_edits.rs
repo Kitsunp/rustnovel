@@ -88,7 +88,7 @@ impl AuthoringCommandBus {
         )
     }
 
-    fn replace_node(
+    pub(super) fn replace_node(
         &mut self,
         node_id: u32,
         replacement: StoryNode,
@@ -96,15 +96,25 @@ impl AuthoringCommandBus {
     ) -> CommandApplyResult {
         let node = self
             .graph
-            .get_node_mut(node_id)
+            .get_node(node_id)
             .ok_or_else(|| format!("node {node_id} not found"))?;
-        let before = node.clone();
-        *node = replacement.clone();
+        if *node == replacement {
+            return Err(format!("node {node_id} is unchanged"));
+        }
+        let before = std::mem::replace(
+            self.graph
+                .get_node_mut(node_id)
+                .expect("node checked above"),
+            replacement.clone(),
+        );
+        let removed_connections = self.graph.prune_node_connections(node_id, &replacement);
+        self.graph.mark_modified();
         Ok((
             AuthoringDelta::NodeEdited {
                 node_id,
                 before,
                 after: replacement,
+                removed_connections,
             },
             OperationKind::FieldEdited,
             Some(field_path),

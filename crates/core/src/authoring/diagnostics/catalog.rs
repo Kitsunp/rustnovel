@@ -31,9 +31,13 @@ pub(super) fn message_key(code: LintCode) -> String {
 }
 
 pub(super) fn docs_ref(code: LintCode) -> String {
+    let topic = match code {
+        LintCode::AssetAccessError => LintCode::AssetReferenceMissing,
+        code => code,
+    };
     format!(
         "docs/diagnostics/authoring.md#{}",
-        code.label().to_ascii_lowercase().replace('_', "-")
+        topic.label().to_ascii_lowercase().replace('_', "-")
     )
 }
 
@@ -71,6 +75,7 @@ fn spec_es(code: LintCode) -> Spec {
         LintCode::AudioAssetMissing => ("Audio faltante", "Una accion play no tiene asset valido.", "La ruta de audio esta ausente o no existe.", "Elige un archivo de audio valido o cambia la accion a stop.", "Play con asset existente."),
         LintCode::AudioAssetEmpty => ("Audio vacio", "Un campo de audio esta vacio.", "El valor contiene espacios o cadena vacia.", "Limpia el campo o selecciona un asset real.", "Audio None o ruta valida."),
         LintCode::AssetReferenceMissing => ("Asset inexistente", "Una referencia no se encuentra.", "El asset no existe bajo la raiz del proyecto.", "Importa el asset o corrige la ruta relativa.", "Asset existente."),
+        LintCode::AssetAccessError => ("Asset inaccesible", "No se pudo validar la referencia.", "El sistema de archivos devolvio un error.", "Revisa el acceso al asset y sus directorios.", "Asset accesible."),
         LintCode::SceneBackgroundEmpty => ("Background vacio", "La escena declara fondo sin ruta.", "El campo background esta vacio.", "Limpia el valor o selecciona una imagen de fondo.", "Background None o imagen valida."),
         LintCode::UnsafeAssetPath => ("Ruta insegura", "Una ruta escapa del proyecto o es absoluta.", "La referencia viola la politica segura de paths.", "Reimporta el archivo para copiarlo dentro de assets.", "Ruta relativa segura."),
         LintCode::InvalidAudioChannel => ("Canal de audio invalido", "El canal no existe en runtime.", "El nombre no pertenece al contrato de audio.", "Usa bgm, sfx o voice segun corresponda.", "Canal soportado."),
@@ -145,6 +150,7 @@ fn spec_en(code: LintCode) -> Spec {
         LintCode::AudioAssetMissing => ("Missing audio asset", "A play action has no valid asset.", "The audio path is absent or missing.", "Choose a valid audio file or change the action to stop.", "Play with existing asset."),
         LintCode::AudioAssetEmpty => ("Empty audio asset", "An audio field is empty.", "The value is whitespace or empty.", "Clear the field or choose a real asset.", "Audio None or valid path."),
         LintCode::AssetReferenceMissing => ("Missing asset reference", "A reference cannot be found.", "The asset does not exist under project root.", "Import the asset or correct the relative path.", "Existing asset."),
+        LintCode::AssetAccessError => ("Asset inaccessible", "The reference could not be validated.", "The filesystem returned an error.", "Check access to the asset and its directories.", "Accessible asset."),
         LintCode::SceneBackgroundEmpty => ("Empty scene background", "A scene declares a background with no path.", "The background field is empty.", "Clear it or choose a background image.", "None or valid image."),
         LintCode::UnsafeAssetPath => ("Unsafe asset path", "A path escapes the project or is absolute.", "The reference violates safe path policy.", "Reimport the file so it is copied into assets.", "Safe relative path."),
         LintCode::InvalidAudioChannel => ("Invalid audio channel", "The channel does not exist in runtime.", "The name is outside the audio contract.", "Use bgm, sfx or voice as appropriate.", "Supported channel."),

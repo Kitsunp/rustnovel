@@ -8,6 +8,9 @@ mod theme_controls;
 #[path = "app_ui/theme_editor.rs"]
 mod theme_editor;
 
+#[cfg(test)]
+mod save_confirmation_tests;
+
 impl EditorWorkbench {
     pub fn ui(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top_menu_bar").show(ctx, |ui| {
@@ -32,6 +35,8 @@ impl EditorWorkbench {
         self.render_export_report_panel(ctx);
         self.render_profiler_cache_panel(ctx);
         self.render_layout_debug_overlay(ctx);
+        self.resource_service
+            .trim_texture_cache(&mut self.composer_image_cache, ctx.frame_nr());
         self.persist_layout_prefs_if_changed();
     }
 
@@ -166,18 +171,14 @@ impl EditorWorkbench {
             }
         }
         if !should_save {
+            if !self.show_save_confirm {
+                self.diff_dialog = None;
+            }
             return;
         }
 
-        if self.run_dry_validation() {
-            if let Some(path) = self.pending_save_path.clone() {
-                self.execute_save(&path, "");
-                self.toast = Some(ToastState::success("Saved successfully"));
-            }
-        } else {
-            self.toast = Some(ToastState::error(
-                "Save blocked: fix validation errors first",
-            ));
+        if let Some(path) = self.pending_save_path.clone() {
+            self.execute_save(&path, "");
         }
         self.diff_dialog = None;
         self.show_save_confirm = false;
@@ -379,6 +380,8 @@ impl EditorWorkbench {
                 ui.label(format!("compile cache hits: {compile_hits}"));
                 ui.label(format!("compile cache misses: {compile_misses}"));
                 if ui.button("Clear asset cache").clicked() {
+                    self.composer_image_cache.clear();
+                    self.composer_image_failures.clear();
                     self.resource_service.clear();
                     self.toast = Some(ToastState::success("Asset cache cleared"));
                 }
@@ -408,7 +411,7 @@ impl EditorWorkbench {
         painter.rect_stroke(
             rect,
             0.0,
-            egui::Stroke::new(1.5, egui::Color32::from_rgb(90, 190, 255)),
+            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(90, 190, 255)),
         );
 
         egui::Area::new(egui::Id::new("layout_debug_overlay_panel"))

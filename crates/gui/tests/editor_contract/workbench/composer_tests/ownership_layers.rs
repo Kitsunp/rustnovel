@@ -132,6 +132,7 @@ fn composer_owner_map_keeps_duplicate_character_instances_separate() {
 fn engine_preview_owner_hints_keep_duplicate_character_nodes_separate() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);
+    workbench.composer_preview_mode = crate::editor::ComposerPreviewMode::SelectedRoute;
 
     let start = workbench
         .node_graph
@@ -333,6 +334,7 @@ fn selected_authoring_overlay_replaces_same_runtime_overlay_layer() {
 fn presentation_snapshot_layers_match_runtime_scene_layers() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);
+    workbench.composer_preview_mode = crate::editor::ComposerPreviewMode::SelectedRoute;
 
     let start = workbench
         .node_graph

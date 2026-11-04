@@ -352,7 +352,7 @@ fn draw_route_label_at_rect(
         4.0,
         egui::Color32::from_rgba_unmultiplied(18, 20, 28, 224),
     );
-    painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, color));
+    painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0_f32, color));
     painter.text(
         rect.center(),
         egui::Align2::CENTER_CENTER,

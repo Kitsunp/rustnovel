@@ -1,50 +1,34 @@
-# Script de instalación y configuración para Visual Novel Engine
-# Requisitos: Rust, Python 3.8+
+# Rust is the default installation; Python bindings are optional.
+param([switch]$WithPython)
 
-Write-Host "=== Iniciando configuración de Visual Novel Engine ===" -ForegroundColor Cyan
-
-# 1. Comprobar herramientas
+$ErrorActionPreference = 'Stop'
+Push-Location -LiteralPath $PSScriptRoot
 try {
-    cargo --version | Out-Null
-    Write-Host "[OK] Rust detectado" -ForegroundColor Green
-} catch {
-    Write-Error "Rust no está instalado. Visita https://rustup.rs/"
-    exit 1
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+        throw 'Rust is required. Install it from https://rustup.rs/'
+    }
+    & ./scripts/build-desktop.ps1
+    if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed' }
+
+    if ($WithPython) {
+        if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+            throw 'Python is required only when -WithPython is requested.'
+        }
+        python -m pip install maturin
+        if ($LASTEXITCODE -ne 0) { throw 'Could not install maturin' }
+        # Keep this build separate from stale wheels or wheels for other interpreters.
+        $wheelOutput = Join-Path $PSScriptRoot ("target/wheels/install-" + [guid]::NewGuid().ToString('N'))
+        python -m maturin build --manifest-path crates/py/Cargo.toml --profile python --features extension-module --locked --out $wheelOutput
+        if ($LASTEXITCODE -ne 0) { throw 'Python wheel build failed' }
+        $bindingWheels = @(Get-ChildItem -LiteralPath $wheelOutput -Filter '*.whl')
+        if ($bindingWheels.Count -ne 1) { throw 'Expected exactly one Python wheel from this build' }
+        $bindingWheel = $bindingWheels[0]
+        python -m pip install $bindingWheel.FullName --force-reinstall
+        if ($LASTEXITCODE -ne 0) { throw 'Python binding installation failed' }
+        python -E -c "import sys; sys.path.pop(0); import visual_novel_engine; assert callable(visual_novel_engine.Engine); print('Python bindings loaded:', visual_novel_engine.__file__)"
+        if ($LASTEXITCODE -ne 0) { throw 'Installed Python bindings could not be loaded' }
+    }
+    Write-Output 'Rust desktop build complete. Open target/desktop/vn_editor.exe.'
+} finally {
+    Pop-Location
 }
-
-try {
-    python --version | Out-Null
-    Write-Host "[OK] Python detectado" -ForegroundColor Green
-} catch {
-    Write-Error "Python no está instalado."
-    exit 1
-}
-
-# 2. Compilar binarios de Rust (Release)
-Write-Host "`n=== Compilando Core y GUI (Rust) ===" -ForegroundColor Cyan
-cargo build --release
-if ($LASTEXITCODE -ne 0) { Write-Error "Fallo en compilación de Rust"; exit 1 }
-
-# 3. Preparar entorno Python
-Write-Host "`n=== Configurando entorno Python ===" -ForegroundColor Cyan
-
-# Instalar maturin si no existe
-python -m pip install maturin --quiet
-Write-Host "[OK] Maturin instalado/actualizado" -ForegroundColor Green
-
-# 4. Compilar e instalar bindings de Python
-Write-Host "`n=== Construyendo Bindings de Python ===" -ForegroundColor Cyan
-# Usamos maturin build e install explícitamente para mayor control
-python -m maturin build --manifest-path crates/py/Cargo.toml --release --out target/wheels
-if ($LASTEXITCODE -ne 0) { Write-Error "Fallo al construir wheel de Python"; exit 1 }
-
-# Encontrar el wheel generado más reciente
-$wheel = Get-ChildItem target/wheels/*.whl | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-Write-Host "Instalando: $($wheel.Name)"
-
-python -m pip install $wheel.FullName --force-reinstall
-if ($LASTEXITCODE -ne 0) { Write-Error "Fallo al instalar paquete Python"; exit 1 }
-
-Write-Host "`n=== ¡Instalación Completada! ===" -ForegroundColor Green
-Write-Host "Para probar Rust GUI: cargo run -p visual_novel_gui --example gui_demo"
-Write-Host "Para probar Python headless: python examples/python/headless_demo.py"

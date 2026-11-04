@@ -11,6 +11,7 @@ mod export_helpers;
 mod export_validation;
 mod labels;
 
+pub(super) use export::{compile_strict_projection, strict_projection};
 pub use export::{to_script, to_script_lossy_for_diagnostics, to_script_strict};
 
 pub fn from_script(script: &ScriptRaw) -> NodeGraph {

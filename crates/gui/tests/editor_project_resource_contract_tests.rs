@@ -10,9 +10,7 @@ use visual_novel_engine::authoring::{
 };
 use visual_novel_engine::runtime::{ChoiceOptionRaw, ChoiceRaw, DialogueRaw, EventRaw, ScriptRaw};
 use visual_novel_gui::editor::authoring_adapter::to_authoring_graph;
-use visual_novel_gui::editor::project_io::{
-    load_project, load_script, save_authoring_document_with_metadata, save_script,
-};
+use visual_novel_gui::editor::project_io::{load_project, load_script, save_script};
 use visual_novel_gui::editor::resource_service::EditorResourceService;
 use visual_novel_gui::editor::{BackgroundFit, EditorError, NodeGraph, StoryNode};
 
@@ -224,7 +222,7 @@ fn authoring_save_load_preserves_disconnected_draft_nodes() {
     let saved = fs::read_to_string(&path).expect("read saved document");
     assert!(saved.contains("authoring_schema_version"));
 
-    let loaded = load_script(path).expect("load authoring document");
+    let loaded = load_script(path.clone()).expect("load authoring document");
     assert_eq!(loaded.graph.len(), graph.len());
     assert_eq!(loaded.graph.get_node_pos(start), Some(egui::pos2(0.0, 0.0)));
     assert_eq!(
@@ -236,6 +234,55 @@ fn authoring_save_load_preserves_disconnected_draft_nodes() {
         Some(StoryNode::Dialogue { speaker, text })
             if speaker == "Draft" && text == "Disconnected but important"
     ));
+
+    // Legacy positional envelopes are also documents: keep their saved layout
+    // instead of applying the runtime-script automatic layout.
+    let mut document: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    document["composer_background_fit_overrides"][start.to_string()] = serde_json::json!("contain");
+    let positional = serde_json::json!([
+        document["authoring_schema_version"],
+        document["graph"],
+        document["composer_layer_overrides"],
+        document["composer_background_fit_overrides"],
+        document["operation_log"],
+        document["verification_runs"]
+    ]);
+    fs::write(&path, serde_json::to_vec(&positional).unwrap()).unwrap();
+    let loaded = load_script(path).expect("load positional authoring document");
+    assert_eq!(
+        loaded.graph.get_node_pos(draft),
+        Some(egui::pos2(240.0, 100.0))
+    );
+    assert_eq!(
+        loaded
+            .graph
+            .authoring_session
+            .document()
+            .composer_background_fit_overrides
+            .get(&start.to_string()),
+        Some(&visual_novel_engine::authoring::composer::BackgroundFit::Contain)
+    );
+}
+
+#[test]
+fn malformed_authoring_markers_do_not_fall_back_to_runtime_import() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("bad.json");
+    let script = ScriptRaw::new(
+        vec![EventRaw::Dialogue(DialogueRaw {
+            speaker: "Narrator".into(),
+            text: "Runtime-shaped input".into(),
+        })],
+        std::collections::BTreeMap::from([("start".into(), 0)]),
+    );
+    let mut value: serde_json::Value = serde_json::from_str(&script.to_json().unwrap()).unwrap();
+    value["authoring_schema_version"] = serde_json::json!("unsupported");
+    fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    let error = match load_script(path) {
+        Ok(_) => panic!("authoring markers must prevent a runtime fallback"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("legacy fallback disabled"), "{error}");
 }
 
 #[test]
@@ -333,21 +380,33 @@ fn authoring_save_load_preserves_operation_log_and_verification_runs() {
         &[],
     );
 
-    save_authoring_document_with_metadata(
-        &path,
-        &graph,
-        &std::collections::HashMap::new(),
-        &std::collections::HashMap::new(),
-        std::slice::from_ref(&operation),
-        std::slice::from_ref(&verification),
-    )
-    .expect("save with metadata");
+    let mut document =
+        visual_novel_engine::authoring::AuthoringDocument::new(to_authoring_graph(&graph));
+    document.operation_log = vec![operation.clone()];
+    document.verification_runs = vec![verification];
+    save_script(&path, &NodeGraph::from_document(document)).expect("save with metadata");
 
     let loaded = load_script(path).expect("load with metadata");
-    assert_eq!(loaded.operation_log.len(), 1);
-    assert_eq!(loaded.verification_runs.len(), 1);
     assert_eq!(
-        loaded.operation_log[0].operation_kind,
+        loaded
+            .graph
+            .authoring_session
+            .document()
+            .operation_log
+            .len(),
+        1
+    );
+    assert_eq!(
+        loaded
+            .graph
+            .authoring_session
+            .document()
+            .verification_runs
+            .len(),
+        1
+    );
+    assert_eq!(
+        loaded.graph.authoring_session.document().operation_log[0].operation_kind,
         operation.operation_kind
     );
 }
@@ -358,7 +417,7 @@ fn authoring_save_load_preserves_composer_overrides() {
     let path = dir.path().join("layers.vnauthoring");
     let mut graph = NodeGraph::new();
     graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
-    let mut layer_overrides = std::collections::HashMap::new();
+    let mut layer_overrides = std::collections::BTreeMap::new();
     layer_overrides.insert(
         "node:1:character:graph.nodes[1].visual.characters[0]:0".to_string(),
         LayerOverride {
@@ -366,23 +425,30 @@ fn authoring_save_load_preserves_composer_overrides() {
             locked: true,
         },
     );
-    let mut background_overrides = std::collections::HashMap::new();
+    let mut background_overrides = std::collections::BTreeMap::new();
     background_overrides.insert("1".to_string(), BackgroundFit::Contain);
 
-    save_authoring_document_with_metadata(
-        &path,
-        &graph,
-        &layer_overrides,
-        &background_overrides,
-        &[],
-        &[],
-    )
-    .expect("save composer overrides");
+    let mut document =
+        visual_novel_engine::authoring::AuthoringDocument::new(to_authoring_graph(&graph));
+    document.composer_layer_overrides = layer_overrides.clone();
+    document.composer_background_fit_overrides = background_overrides.clone();
+    save_script(&path, &NodeGraph::from_document(document)).expect("save composer overrides");
     let loaded = load_script(path).expect("load composer overrides");
 
-    assert_eq!(loaded.composer_layer_overrides, layer_overrides);
     assert_eq!(
-        loaded.composer_background_fit_overrides,
+        loaded
+            .graph
+            .authoring_session
+            .document()
+            .composer_layer_overrides,
+        layer_overrides
+    );
+    assert_eq!(
+        loaded
+            .graph
+            .authoring_session
+            .document()
+            .composer_background_fit_overrides,
         background_overrides
     );
 }
@@ -419,13 +485,17 @@ fn decoded_image_cache_multiview_and_fingerprint_invalidation() {
     let mut service = EditorResourceService::new();
 
     let first = service
-        .image_for_view(tmp.path(), "assets/bg.png", "browser")
+        .image_for_view_shared(tmp.path(), "assets/bg.png", "browser")
         .expect("first image");
     let decode_ms_after_first = service.metrics().decode_ms;
     let cached = service
-        .image_for_view(tmp.path(), "assets/bg.png", "composer")
+        .image_for_view_shared(tmp.path(), "assets/bg.png", "composer")
         .expect("cached image");
     assert_eq!(cached.pixels, first.pixels);
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &cached),
+        "views must share the decoded pixel buffer"
+    );
     assert_eq!(service.metrics().decode_ms, decode_ms_after_first);
 
     fs::write(&path, tiny_png([0, 0, 255, 255])).expect("new png");
@@ -433,6 +503,10 @@ fn decoded_image_cache_multiview_and_fingerprint_invalidation() {
         .image_for_view(tmp.path(), "assets/bg.png", "player")
         .expect("second image");
     assert_ne!(first.pixels, second.pixels);
+    assert_eq!(
+        first.pixels, cached.pixels,
+        "reloading must preserve images already borrowed by a view"
+    );
     assert!(service.metrics().evictions >= 1);
 }
 
@@ -443,6 +517,7 @@ fn asset_cache_fingerprint_and_audio_metadata_invalidation() {
     let bg = tmp.path().join("assets/bg.bin");
     fs::create_dir_all(tmp.path().join("assets")).expect("asset dir");
     fs::write(&bg, b"old").expect("old asset");
+    let modified = fs::metadata(&bg).unwrap().modified().unwrap();
     let mut service = EditorResourceService::new();
 
     assert_eq!(
@@ -452,6 +527,13 @@ fn asset_cache_fingerprint_and_audio_metadata_invalidation() {
         b"old"
     );
     fs::write(&bg, b"new").expect("new asset");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&bg)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    assert_eq!(fs::metadata(&bg).unwrap().modified().unwrap(), modified);
     assert_eq!(
         service
             .load_bytes(tmp.path(), "assets/bg.bin")
@@ -472,6 +554,17 @@ fn asset_cache_fingerprint_and_audio_metadata_invalidation() {
     assert_ne!(first.fingerprint, second.fingerprint);
     assert!(second.duration > first.duration);
     assert!(service.metrics().evictions >= 2);
+    let limit = vnengine_assets::AssetLimits::default().max_bytes;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&bg)
+        .unwrap()
+        .set_len(limit + 1)
+        .unwrap();
+    assert!(service
+        .load_bytes_shared(tmp.path(), "assets/bg.bin")
+        .unwrap_err()
+        .contains("too large"));
 }
 
 fn tiny_wav(duration: Duration, sample_rate: u32) -> Vec<u8> {

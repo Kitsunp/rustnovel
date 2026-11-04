@@ -6,6 +6,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::PlayerMenuConfig;
+mod import;
+pub(crate) use import::register_asset_path;
+pub use import::{
+    import_project_asset, AssetImportError, AssetImportKind, AssetImportResult,
+    DEFAULT_ASSET_IMPORT_LIMIT,
+};
 
 pub const MANIFEST_SCHEMA_VERSION: &str = "1.0";
 
@@ -246,7 +252,7 @@ impl ProjectManifest {
         normalized.manifest_schema_version = MANIFEST_SCHEMA_VERSION.to_string();
         let content = toml::to_string_pretty(&normalized)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(path, content)?;
+        crate::atomic_io::atomic_replace(path, content.as_bytes())?;
         Ok(())
     }
 

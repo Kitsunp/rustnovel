@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::authoring::{
     DiagnosticTarget, FieldPath, LintCode, LintIssue, SemanticValue, SemanticValueKind,
@@ -12,7 +12,7 @@ pub(super) fn validate_asset<F>(
     asset_exists: &F,
     issues: &mut Vec<LintIssue>,
 ) where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> Result<(), AssetProbeError>,
 {
     let field_path = node_id
         .map(|id| format!("graph.nodes[{id}].{label}"))
@@ -28,7 +28,7 @@ pub(super) fn validate_asset_at<F>(
     asset_exists: &F,
     issues: &mut Vec<LintIssue>,
 ) where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> Result<(), AssetProbeError>,
 {
     let Some(path) = value else {
         return;
@@ -71,19 +71,35 @@ pub(super) fn validate_asset_at<F>(
             .with_semantic_value(semantic_value)
             .with_evidence_trace(),
         );
-    } else if should_probe_asset_exists(path) && !asset_exists(path) {
-        issues.push(
-            LintIssue::error(
-                node_id,
-                ValidationPhase::Graph,
+    } else if should_probe_asset_exists(path) {
+        let Err(error) = asset_exists(path) else {
+            return;
+        };
+        let (code, message) = match error {
+            AssetProbeError::Missing => (
                 LintCode::AssetReferenceMissing,
-                "Asset reference does not exist",
-            )
-            .with_asset_path(Some(path.clone()))
-            .with_target(target)
-            .with_field_path(field_path.value)
-            .with_semantic_value(semantic_value)
-            .with_evidence_trace(),
+                "Asset reference does not exist".to_string(),
+            ),
+            AssetProbeError::OutsideRoot => (
+                LintCode::UnsafeAssetPath,
+                "Asset resolves outside the project root".to_string(),
+            ),
+            AssetProbeError::NotFile => (
+                LintCode::AssetAccessError,
+                "Asset reference is not a file".to_string(),
+            ),
+            AssetProbeError::Inaccessible(err) => (
+                LintCode::AssetAccessError,
+                format!("Asset reference could not be accessed: {err}"),
+            ),
+        };
+        issues.push(
+            LintIssue::error(node_id, ValidationPhase::Graph, code, message)
+                .with_asset_path(Some(path.clone()))
+                .with_target(target)
+                .with_field_path(field_path.value)
+                .with_semantic_value(semantic_value)
+                .with_evidence_trace(),
         );
     }
 }
@@ -99,13 +115,44 @@ pub fn asset_exists_from_project_root(project_root: &Path, path: &str) -> bool {
 }
 
 pub(super) fn asset_exists_from_canonical_project_root(canonical_root: &Path, path: &str) -> bool {
+    resolve_asset_from_canonical_project_root(canonical_root, path).is_ok()
+}
+
+#[derive(Debug)]
+pub(crate) enum AssetProbeError {
+    Missing,
+    OutsideRoot,
+    NotFile,
+    Inaccessible(std::io::Error),
+}
+
+pub(in crate::authoring) fn resolve_asset_from_canonical_project_root(
+    canonical_root: &Path,
+    path: &str,
+) -> Result<PathBuf, AssetProbeError> {
     if is_unsafe_asset_ref(path) {
-        return false;
+        return Err(AssetProbeError::OutsideRoot);
     }
-    let Ok(candidate) = canonical_root.join(path.trim()).canonicalize() else {
-        return false;
-    };
-    candidate.starts_with(canonical_root) && candidate.is_file()
+    let candidate = canonical_root
+        .join(path.trim())
+        .canonicalize()
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                AssetProbeError::Missing
+            } else {
+                AssetProbeError::Inaccessible(err)
+            }
+        })?;
+    if !candidate.starts_with(canonical_root) {
+        return Err(AssetProbeError::OutsideRoot);
+    }
+    let metadata = candidate
+        .metadata()
+        .map_err(AssetProbeError::Inaccessible)?;
+    if !metadata.is_file() {
+        return Err(AssetProbeError::NotFile);
+    }
+    Ok(candidate)
 }
 
 pub fn should_probe_asset_exists(path: &str) -> bool {
@@ -123,13 +170,26 @@ pub fn is_unsafe_asset_ref(path: &str) -> bool {
         return false;
     }
     let lower = path.to_ascii_lowercase();
-    path.starts_with('/')
+    let reserved_component = path.split(['/', '\\']).any(|part| {
+        let name = part.split('.').next().unwrap_or(part).to_ascii_uppercase();
+        matches!(name.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || (name.len() == 4
+                && (name.starts_with("COM") || name.starts_with("LPT"))
+                && name.as_bytes()[3].is_ascii_digit()
+                && name.as_bytes()[3] != b'0')
+            || (part.ends_with('.') || part.ends_with(' '))
+    });
+    path.contains(':')
+        || path.chars().any(|c| c.is_control())
+        || reserved_component
+        || path.starts_with('/')
         || path.starts_with('\\')
         || path.contains('\\')
         || lower.contains("://")
         || lower.contains("%2e")
         || lower.contains("%2f")
         || lower.contains("%5c")
+        || lower.contains("%00")
         || path.chars().nth(1).is_some_and(|second| {
             second == ':' && path.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
         })

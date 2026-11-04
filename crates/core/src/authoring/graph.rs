@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::{HashSet, VecDeque};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +15,11 @@ use super::{AuthoringPosition, StoryNode};
 mod choice_ops;
 mod fragment_ops;
 mod fragments;
+mod mutation;
+mod structural_edits;
+pub use mutation::GraphMutationUndo;
+mod removal;
+pub use removal::NodeRemovalContext;
 mod search;
 pub use fragments::{DecisionHub, FragmentPort, GraphFragment, GraphStack, PortalNode};
 use search::searchable_text;
@@ -53,7 +59,8 @@ pub struct SceneProfile {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct NodeGraph {
-    nodes: Vec<(u32, StoryNode, AuthoringPosition)>,
+    // Clones retain immutable entries; mutable access detaches only its node.
+    nodes: Vec<Arc<(u32, StoryNode, AuthoringPosition)>>,
     connections: Vec<GraphConnection>,
     pub(super) scene_profiles: BTreeMap<String, SceneProfile>,
     #[serde(default)]
@@ -91,7 +98,7 @@ impl NodeGraph {
     pub fn add_node(&mut self, node: StoryNode, pos: AuthoringPosition) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
-        self.nodes.push((id, node, pos));
+        self.nodes.push(Arc::new((id, node, pos)));
         self.modified = true;
         id
     }
@@ -101,17 +108,17 @@ impl NodeGraph {
     }
 
     pub fn add_node_with_id(&mut self, id: u32, node: StoryNode, pos: AuthoringPosition) -> bool {
-        if self.nodes.iter().any(|(node_id, _, _)| *node_id == id) {
+        if self.nodes().any(|(node_id, _, _)| *node_id == id) {
             return false;
         }
         self.next_id = self.next_id.max(id.saturating_add(1));
-        self.nodes.push((id, node, pos));
+        self.nodes.push(Arc::new((id, node, pos)));
         self.modified = true;
         true
     }
 
     pub fn remove_node(&mut self, id: u32) {
-        self.nodes.retain(|(nid, _, _)| *nid != id);
+        self.nodes.retain(|entry| entry.0 != id);
         self.connections
             .retain(|conn| conn.from != id && conn.to != id);
         self.bookmarks.retain(|_, target| *target != id);
@@ -135,6 +142,35 @@ impl NodeGraph {
         self.modified
     }
 
+    /// Compares persisted graph content, ignoring the transient dirty flag.
+    pub fn has_same_content(&self, other: &Self) -> bool {
+        self.nodes == other.nodes && self.has_same_non_node_content(other)
+    }
+
+    // Compilation consumes node data and layout validity, not the layout itself.
+    pub(super) fn has_same_compilation_input(&self, other: &Self) -> bool {
+        use super::validation::layout_position_is_invalid;
+
+        self.nodes.len() == other.nodes.len()
+            && self.nodes.iter().zip(&other.nodes).all(|(left, right)| {
+                Arc::ptr_eq(left, right)
+                    || (left.0 == right.0
+                        && left.1 == right.1
+                        && layout_position_is_invalid(left.2.x, left.2.y)
+                            == layout_position_is_invalid(right.2.x, right.2.y))
+            })
+            && self.has_same_non_node_content(other)
+    }
+
+    fn has_same_non_node_content(&self, other: &Self) -> bool {
+        self.connections == other.connections
+            && self.scene_profiles == other.scene_profiles
+            && self.bookmarks == other.bookmarks
+            && self.fragments == other.fragments
+            && self.graph_stack == other.graph_stack
+            && self.next_id == other.next_id
+    }
+
     pub fn clear_modified(&mut self) {
         self.modified = false;
     }
@@ -144,8 +180,7 @@ impl NodeGraph {
     }
 
     pub fn get_node(&self, id: u32) -> Option<&StoryNode> {
-        self.nodes
-            .iter()
+        self.nodes()
             .find(|(node_id, _, _)| *node_id == id)
             .map(|(_, node, _)| node)
     }
@@ -153,32 +188,30 @@ impl NodeGraph {
     pub fn get_node_mut(&mut self, id: u32) -> Option<&mut StoryNode> {
         self.nodes
             .iter_mut()
-            .find(|(node_id, _, _)| *node_id == id)
-            .map(|(_, node, _)| node)
+            .find(|entry| entry.0 == id)
+            .map(|entry| &mut Arc::make_mut(entry).1)
     }
 
     pub fn get_node_pos(&self, id: u32) -> Option<AuthoringPosition> {
-        self.nodes
-            .iter()
+        self.nodes()
             .find(|(node_id, _, _)| *node_id == id)
             .map(|(_, _, pos)| *pos)
     }
 
     pub fn set_node_pos(&mut self, id: u32, pos: AuthoringPosition) -> bool {
-        let Some((_, _, current)) = self.nodes.iter_mut().find(|(node_id, _, _)| *node_id == id)
-        else {
+        let Some(entry) = self.nodes.iter_mut().find(|entry| entry.0 == id) else {
             return false;
         };
-        if *current == pos {
+        if entry.2 == pos {
             return false;
         }
-        *current = pos;
+        Arc::make_mut(entry).2 = pos;
         self.modified = true;
         true
     }
 
     pub fn nodes(&self) -> impl Iterator<Item = &(u32, StoryNode, AuthoringPosition)> {
-        self.nodes.iter()
+        self.nodes.iter().map(Arc::as_ref)
     }
 
     pub fn connections(&self) -> impl Iterator<Item = &GraphConnection> {
@@ -186,7 +219,7 @@ impl NodeGraph {
     }
 
     pub fn flow_analysis(&self, start_nodes: &[u32]) -> FlowGraphAnalysis {
-        let nodes = self.nodes.iter().map(|(id, _, _)| *id).collect::<Vec<_>>();
+        let nodes = self.nodes().map(|(id, _, _)| *id).collect::<Vec<_>>();
         let edges = self
             .connections
             .iter()
@@ -243,13 +276,7 @@ impl NodeGraph {
                 return;
             }
             self.ensure_choice_option(from, from_port);
-        } else if matches!(from_node, StoryNode::JumpIf { .. }) {
-            if from_port > 1 {
-                return;
-            }
-        } else if matches!(from_node, StoryNode::SubgraphCall { .. }) {
-            // Fragment output ports are validated against the selected fragment during strict export.
-        } else if from_port != 0 {
+        } else if !from_node.has_output_port(from_port) {
             return;
         }
         if self
@@ -301,16 +328,14 @@ impl NodeGraph {
         if needle.is_empty() {
             return Vec::new();
         }
-        self.nodes
-            .iter()
+        self.nodes()
             .filter_map(|(id, node, _)| searchable_text(node).contains(&needle).then_some(*id))
             .collect()
     }
 
     pub fn script_order_node_ids(&self) -> Vec<u32> {
         let start_id = self
-            .nodes
-            .iter()
+            .nodes()
             .find(|(_, node, _)| matches!(node, StoryNode::Start))
             .map(|(id, _, _)| *id);
 
@@ -357,7 +382,7 @@ impl NodeGraph {
             .collect::<Vec<_>>();
         let mut ordered_set = ordered.iter().copied().collect::<HashSet<_>>();
 
-        for (id, node, _) in &self.nodes {
+        for (id, node, _) in self.nodes() {
             if !node.is_marker() && ordered_set.insert(*id) {
                 ordered.push(*id);
             }

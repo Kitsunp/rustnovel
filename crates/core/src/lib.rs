@@ -1,5 +1,6 @@
 mod asset_refs;
 mod assets;
+pub mod atomic_io;
 mod audio;
 pub mod authoring;
 mod bundle;
@@ -12,11 +13,14 @@ mod event_behavior;
 mod event_signature;
 mod execution_contract;
 mod graph;
+mod hashing;
 mod localization;
 pub mod manifest;
 mod migration;
 mod player_menu;
 mod protected_content;
+#[cfg(any(feature = "python", feature = "python-embed"))]
+pub mod python;
 mod render;
 mod renpy_import;
 mod repro;
@@ -39,8 +43,9 @@ pub use assets::{AssetId, AssetId128, AssetManifest};
 pub use authoring::{
     apply_authoring_document_command_headless, asset_exists_from_project_root,
     export_runtime_script_from_authoring, is_unsafe_asset_ref, load_authoring_document_or_script,
-    load_runtime_script_from_entry, parse_authoring_document_or_script,
-    parse_runtime_script_from_entry, quick_fix as authoring_quick_fix,
+    load_runtime_input_from_entry, load_runtime_script_from_entry,
+    parse_authoring_document_or_script, parse_runtime_script_from_entry,
+    quick_fix as authoring_quick_fix, read_runtime_input_from_entry,
     source_looks_like_authoring_document, validate_authoring_graph, validate_authoring_graph_no_io,
     validate_authoring_graph_with_probe, validate_authoring_graph_with_project_root,
     validate_authoring_graph_with_resolver, AuthoringDirtyFlags, AuthoringDocument,
@@ -57,7 +62,7 @@ pub use bundle::{
     build_export_plan, export_bundle, export_executable_bundle, export_windows_executable_bundle,
     BundleAssetEntry, BundleIntegrity, ExportBundleReport, ExportBundleSpec, ExportCompatReport,
     ExportDiagnostic, ExportPlan, ExportRuntimeSmokeCheck, ExportRuntimeSmokeResult, ExportService,
-    ExportTargetPlatform,
+    ExportTargetPlatform, PreparedExport,
 };
 pub use error::{VnError, VnResult};
 pub use localization::{
@@ -109,8 +114,9 @@ pub use schema_policy::{
 };
 pub use security::SecurityPolicy;
 pub use storage::{
-    compute_script_id, SaveData, SaveError, SaveSlotEntry, SaveSlotMetadata, SaveSlotStore,
-    SaveStoreError, ScriptId, AUTH_SAVE_KEY,
+    compute_script_id, SaveData, SaveError, SaveRecovery, SaveSlotEntry, SaveSlotListIssue,
+    SaveSlotListing, SaveSlotLoad, SaveSlotMetadata, SaveSlotStore, SaveStoreError, ScriptId,
+    AUTH_SAVE_KEY, AUTH_SAVE_MAGIC, DEFAULT_MAX_SAVE_BYTES, MAX_SAVE_METADATA_BYTES,
 };
 pub use version::{COMPILED_FORMAT_VERSION, SAVE_FORMAT_VERSION, SCRIPT_SCHEMA_VERSION};
 
@@ -131,6 +137,3 @@ pub use graph::{
     analyze_flow_graph, EdgeType, FlowGraphAnalysis, GraphEdge, GraphNode, GraphStats, NodeType,
     StoryGraph,
 };
-
-// Python bindings are now handled in the `vnengine_py` crate.
-// Core remains agnostic to the language binding layer.

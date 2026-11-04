@@ -43,6 +43,97 @@ fn authoring_graph_roundtrips_script_without_gui_types() {
 }
 
 #[test]
+fn compiler_reuses_strict_projection_and_preserves_preview_only_fallback() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let node = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Ava".into(),
+            text: "Hola".into(),
+        },
+        pos(0.0, 90.0),
+    );
+    let end = graph.add_node(StoryNode::End, pos(0.0, 180.0));
+    graph.connect(start, node);
+    graph.connect(node, end);
+    let strict = graph.to_script_strict().expect("strict export");
+    let result = compiler::compile_authoring_graph(&graph, None);
+    assert!(result.engine_result.is_ok());
+    assert_eq!(
+        serde_json::to_value(&result.script).unwrap(),
+        serde_json::to_value(strict).unwrap()
+    );
+    assert!(result
+        .phase_trace
+        .iter()
+        .any(|phase| phase.phase == compiler::CompilationPhase::ScriptCompile && phase.ok));
+
+    *graph.get_node_mut(node).unwrap() = StoryNode::Generic(EventRaw::Dialogue(DialogueRaw {
+        speaker: "Ava".into(),
+        text: "Preview".into(),
+    }));
+    assert!(graph.to_script_strict().is_err());
+    let expected = graph.to_script_lossy_for_diagnostics();
+    let result = compiler::compile_authoring_graph(&graph, None);
+    assert!(result.engine_result.is_ok());
+    assert_eq!(
+        serde_json::to_value(&result.script).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+    assert!(result
+        .issues
+        .iter()
+        .any(|issue| issue.code == LintCode::CompileError
+            && issue.severity == LintSeverity::Warning
+            && issue.message.contains("export remains blocked")));
+    assert!(result.phase_trace.iter().any(|phase| phase.phase
+        == compiler::CompilationPhase::ScriptCompile
+        && !phase.ok
+        && phase
+            .detail
+            .contains("continuing with diagnostic runtime script")));
+}
+
+#[test]
+fn compiler_keeps_strict_compile_error_and_diagnostic_projection() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let audio = graph.add_node(
+        StoryNode::AudioAction {
+            channel: "not-a-channel".into(),
+            action: "play".into(),
+            asset: Some("music/theme.ogg".into()),
+            volume: None,
+            fade_duration_ms: None,
+            loop_playback: None,
+        },
+        pos(0.0, 90.0),
+    );
+    let end = graph.add_node(StoryNode::End, pos(0.0, 180.0));
+    graph.connect(start, audio);
+    graph.connect(audio, end);
+    let strict_error = graph.to_script_strict().unwrap_err().to_string();
+    let diagnostic = graph.to_script_lossy_for_diagnostics();
+    let result = compiler::compile_authoring_graph(&graph, None);
+    assert_eq!(
+        result.engine_result.err().unwrap(),
+        format!("Strict authoring export failed: {strict_error}")
+    );
+    assert_eq!(
+        serde_json::to_value(result.script).unwrap(),
+        serde_json::to_value(diagnostic).unwrap()
+    );
+    assert!(
+        result
+            .issues
+            .iter()
+            .any(|issue| issue.code == LintCode::CompileError
+                && issue.severity == LintSeverity::Error)
+    );
+    assert!(result.dry_run_report.is_none());
+}
+
+#[test]
 fn authoring_validation_and_safe_quick_fix_are_headless() {
     let mut graph = NodeGraph::new();
     let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
@@ -56,6 +147,16 @@ fn authoring_validation_and_safe_quick_fix_are_headless() {
     let end = graph.add_node(StoryNode::End, pos(0.0, 180.0));
     graph.connect(start, dialogue);
     graph.connect(dialogue, end);
+
+    let preview = compiler::compile_authoring_graph(&graph, None);
+    assert!(preview.engine_result.is_ok());
+    assert!(composer::ComposerPreviewSession::start_from_node(&graph, dialogue).is_ok());
+    let limits = ResourceLimiter::default();
+    let strict = SecurityPolicy::default();
+    assert!(strict.validate_raw(&preview.script, limits).is_err());
+    assert!(strict
+        .validate_compiled(&preview.script.compile().unwrap(), limits)
+        .is_err());
 
     let issue = validate_authoring_graph(&graph)
         .into_iter()
@@ -414,6 +515,211 @@ fn route_coverage_report_marks_route_and_depth_limits() {
 
     let depth_limited = compiler::enumerate_choice_routes_with_report(&script, 100, 32, 0);
     assert!(depth_limited.depth_limit_hit);
+
+    let options = vec![
+        ChoiceOptionRaw {
+            text: "A".into(),
+            target: "second".into(),
+        },
+        ChoiceOptionRaw {
+            text: "B".into(),
+            target: "second".into(),
+        },
+    ];
+    let joined = ScriptRaw::new(
+        vec![
+            EventRaw::Choice(ChoiceRaw {
+                prompt: "First".into(),
+                options,
+            }),
+            EventRaw::Choice(ChoiceRaw {
+                prompt: "Second".into(),
+                options: vec![
+                    ChoiceOptionRaw {
+                        text: "C".into(),
+                        target: "end".into(),
+                    },
+                    ChoiceOptionRaw {
+                        text: "D".into(),
+                        target: "end".into(),
+                    },
+                ],
+            }),
+            EventRaw::Dialogue(DialogueRaw {
+                speaker: "Ava".into(),
+                text: "Done".into(),
+            }),
+        ],
+        BTreeMap::from([("start".into(), 0), ("second".into(), 1), ("end".into(), 2)]),
+    );
+    let joined_routes = compiler::enumerate_choice_routes_with_report(&joined, 100, 32, 12);
+    assert_eq!(
+        joined_routes.routes,
+        vec![vec![0, 0], vec![0, 1], vec![1, 0], vec![1, 1]],
+        "converging branches must still explore later choices"
+    );
+    assert!(
+        !joined_routes.depth_limit_hit,
+        "joining a branch is not a loop or depth limit"
+    );
+}
+
+#[test]
+fn dry_run_preserves_duplicate_instances_and_explicit_scene_clears() {
+    use visual_novel_engine::runtime::{ScenePatchRaw, SceneUpdateRaw};
+    let script = ScriptRaw::new(
+        vec![
+            EventRaw::Scene(SceneUpdateRaw {
+                background: Some("room.png".into()),
+                music: Some("theme.ogg".into()),
+                characters: vec![character("Ava", "happy.png"), character("Ava", "sad.png")],
+            }),
+            EventRaw::Dialogue(DialogueRaw {
+                speaker: "Ava".into(),
+                text: "Two instances".into(),
+            }),
+            EventRaw::Patch(ScenePatchRaw {
+                background: Some(String::new()),
+                music: Some(String::new()),
+                update: vec![visual_novel_engine::runtime::CharacterPatchRaw {
+                    name: "missing".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            EventRaw::Dialogue(DialogueRaw {
+                speaker: "Ava".into(),
+                text: "Cleared scene".into(),
+            }),
+        ],
+        BTreeMap::from([("start".into(), 0)]),
+    );
+    let result = compiler::compile_authoring_graph(&NodeGraph::from_script(&script), None);
+    let parity = result
+        .issues
+        .iter()
+        .filter(|issue| issue.code == LintCode::DryRunParityMismatch)
+        .collect::<Vec<_>>();
+    assert!(parity.is_empty(), "{parity:?}");
+}
+
+#[test]
+fn dry_run_control_flow_matches_runtime_at_scene_and_host_boundaries() {
+    use visual_novel_engine::runtime::SceneUpdateRaw;
+    let policy = compiler::ChoicePolicy::Strategy(compiler::ChoiceStrategy::First);
+    for jump in [
+        EventRaw::Jump {
+            target: "room".into(),
+        },
+        EventRaw::JumpIf {
+            cond: CondRaw::Flag {
+                key: "unset".into(),
+                is_set: false,
+            },
+            target: "room".into(),
+        },
+        EventRaw::Choice(ChoiceRaw {
+            prompt: "Enter?".into(),
+            options: vec![ChoiceOptionRaw {
+                text: "Yes".into(),
+                target: "room".into(),
+            }],
+        }),
+    ] {
+        let script = ScriptRaw::new(
+            vec![
+                jump,
+                EventRaw::Scene(SceneUpdateRaw {
+                    background: Some("room.png".into()),
+                    music: Some("theme.ogg".into()),
+                    characters: vec![character("Ava", "happy.png")],
+                }),
+                EventRaw::Dialogue(DialogueRaw {
+                    speaker: "Ava".into(),
+                    text: "Arrived".into(),
+                }),
+            ],
+            BTreeMap::from([("start".into(), 0), ("room".into(), 1)]),
+        );
+        let engine = Engine::new(
+            script.clone(),
+            SecurityPolicy::default(),
+            ResourceLimiter::default(),
+        )
+        .unwrap();
+        let outcome = compiler::run_dry_run(engine, &policy, 16);
+        let issues = compiler::check_preview_runtime_parity(&script, &outcome.report, &policy);
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    let blocked = ScriptRaw::new(
+        vec![
+            EventRaw::ExtCall {
+                command: "host.open_inventory".into(),
+                args: vec![],
+            },
+            EventRaw::Dialogue(DialogueRaw {
+                speaker: "Ava".into(),
+                text: "After host completion".into(),
+            }),
+        ],
+        BTreeMap::from([("start".into(), 0)]),
+    );
+    let engine = Engine::new(
+        blocked.clone(),
+        SecurityPolicy::default(),
+        ResourceLimiter::default(),
+    )
+    .unwrap();
+    let outcome = compiler::run_dry_run(engine, &policy, 16);
+    assert_eq!(
+        outcome.report.stop_reason,
+        compiler::DryRunStopReason::ExternalCallBlocked
+    );
+    let issues = compiler::check_preview_runtime_parity(&blocked, &outcome.report, &policy);
+    assert!(issues.is_empty(), "{issues:?}");
+
+    let script = ScriptRaw::new(
+        vec![EventRaw::Choice(ChoiceRaw {
+            prompt: "Again?".into(),
+            options: vec![
+                ChoiceOptionRaw {
+                    text: "Again".into(),
+                    target: "start".into(),
+                },
+                ChoiceOptionRaw {
+                    text: "Finish".into(),
+                    target: "__end".into(),
+                },
+            ],
+        })],
+        BTreeMap::from([("start".into(), 0), ("__end".into(), 1)]),
+    );
+    for policy in [
+        compiler::ChoicePolicy::Scripted(vec![0, 1]),
+        compiler::ChoicePolicy::Strategy(compiler::ChoiceStrategy::First),
+        compiler::ChoicePolicy::Strategy(compiler::ChoiceStrategy::Last),
+        compiler::ChoicePolicy::Strategy(compiler::ChoiceStrategy::Alternating),
+    ] {
+        let engine = Engine::new(
+            script.clone(),
+            SecurityPolicy::default(),
+            ResourceLimiter::default(),
+        )
+        .unwrap();
+        let outcome = compiler::run_dry_run(engine, &policy, 16);
+        let expected = if matches!(
+            policy,
+            compiler::ChoicePolicy::Strategy(compiler::ChoiceStrategy::First)
+        ) {
+            compiler::DryRunStopReason::StepLimit
+        } else {
+            compiler::DryRunStopReason::Finished
+        };
+        assert_eq!(outcome.report.stop_reason, expected);
+        let issues = compiler::check_preview_runtime_parity(&script, &outcome.report, &policy);
+        assert!(issues.is_empty(), "{issues:?}");
+    }
 }
 
 #[test]

@@ -87,6 +87,49 @@ pub fn scene_entity_object_id(
     stable_entity_object_id(source_node_id, &kind, &source_field_path, index)
 }
 
+/// Bind rendered instances to the document's existing, persistent layer IDs.
+pub fn authoring_entity_object_ids(
+    scene: &SceneState,
+    owners: &HashMap<u32, u32>,
+    graph: &visual_novel_engine::authoring::NodeGraph,
+) -> HashMap<u32, String> {
+    let objects = visual_novel_engine::authoring::composer::list_layered_objects(graph, None);
+    authoring_entity_object_ids_from_layers(scene, owners, &objects)
+}
+
+pub(crate) fn authoring_entity_object_ids_from_layers(
+    scene: &SceneState,
+    owners: &HashMap<u32, u32>,
+    objects: &[LayeredSceneObject],
+) -> HashMap<u32, String> {
+    let mut used = vec![false; objects.len()];
+    let mut ids = HashMap::new();
+    for entity in scene.iter_sorted() {
+        let owner = owners.get(&entity.id.raw()).copied();
+        let matched = objects.iter().enumerate().position(|(index, object)| {
+            !used[index]
+                && object.source_node_id == owner
+                && match &entity.kind {
+                    EntityKind::Character(character) => {
+                        object.character_name.as_deref() == Some(character.name.as_ref())
+                            && (object.expression.is_none()
+                                || object.expression.as_deref() == character.expression.as_deref())
+                    }
+                    EntityKind::Image(image) => {
+                        object.kind == StageLayerKind::Background
+                            && object.asset_path.as_deref() == Some(image.path.as_ref())
+                    }
+                    _ => false,
+                }
+        });
+        if let Some(index) = matched {
+            used[index] = true;
+            ids.insert(entity.id.raw(), objects[index].object_id.clone());
+        }
+    }
+    ids
+}
+
 fn scene_entity_parts(
     entity: &Entity,
     index: usize,
@@ -258,4 +301,68 @@ fn stable_entity_object_id(
         token = token.replace("__", "_");
     }
     format!("{owner}:{kind:?}:{index}:{}", token.trim_matches('_'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use visual_novel_engine::authoring::{
+        AuthoringDocument, AuthoringDocumentCommand, AuthoringDocumentSession, AuthoringPosition,
+        NodeGraph,
+    };
+
+    #[test]
+    fn indexed_layer_binding_matches_graph_projection_after_layout_history() {
+        let mut graph = NodeGraph::new();
+        let node = graph.add_node(
+            StoryNode::Scene {
+                profile: None,
+                background: Some("room.png".into()),
+                music: Some("music.ogg".into()),
+                characters: vec![visual_novel_engine::runtime::CharacterPlacementRaw {
+                    name: "Ava".into(),
+                    expression: Some("ava.png".into()),
+                    ..Default::default()
+                }],
+            },
+            AuthoringPosition::new(0.0, 0.0),
+        );
+        let mut session = AuthoringDocumentSession::new(AuthoringDocument::new(graph));
+        let mut scene = SceneState::new();
+        let background = scene
+            .spawn(EntityKind::Image(visual_novel_engine::ImageData {
+                path: "room.png".into(),
+                tint: None,
+            }))
+            .unwrap();
+        let character = scene
+            .spawn(EntityKind::Character(visual_novel_engine::CharacterData {
+                name: "Ava".into(),
+                expression: Some("ava.png".into()),
+            }))
+            .unwrap();
+        let owners = HashMap::from([(background.raw(), node), (character.raw(), node)]);
+        let check = |session: &AuthoringDocumentSession| {
+            let old = authoring_entity_object_ids(&scene, &owners, &session.document().graph);
+            let indexed = authoring_entity_object_ids_from_layers(
+                &scene,
+                &owners,
+                session.read_model().composer_layers(),
+            );
+            assert_eq!(old, indexed);
+            assert_eq!(indexed.len(), 2);
+        };
+        check(&session);
+        session
+            .apply(AuthoringDocumentCommand::MoveNodes {
+                positions: std::collections::BTreeMap::from([(
+                    node,
+                    AuthoringPosition::new(50.0, 70.0),
+                )]),
+            })
+            .unwrap();
+        check(&session);
+        session.apply(AuthoringDocumentCommand::UndoLast).unwrap();
+        check(&session);
+    }
 }

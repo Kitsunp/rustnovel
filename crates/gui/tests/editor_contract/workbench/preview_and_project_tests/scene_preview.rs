@@ -4,6 +4,7 @@ use super::*;
 fn sync_graph_to_script_builds_non_empty_scene_preview_from_visual_events() {
     let config = VnConfig::default();
     let mut workbench = EditorWorkbench::new(config);
+    workbench.composer_preview_mode = crate::editor::ComposerPreviewMode::SelectedRoute;
 
     let start = workbench
         .node_graph

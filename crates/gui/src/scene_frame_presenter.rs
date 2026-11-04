@@ -96,7 +96,7 @@ impl EguiSceneFramePresenter {
                     z: _,
                 } => {
                     let rect = scale_rect(stage_rect, *rect, sx, sy);
-                    let stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(120));
+                    let stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_gray(120));
                     painter.rect_stroke(rect, 2.0, stroke);
                     let fit = match fit {
                         ImageFit::Contain => "contain",
@@ -129,14 +129,14 @@ impl EguiSceneFramePresenter {
             painter.rect_stroke(
                 stage_rect,
                 0.0,
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(90, 180, 255)),
+                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(90, 180, 255)),
             );
         }
         response
     }
 }
 
-fn scale_rect(origin: egui::Rect, rect: LayoutRect, sx: f32, sy: f32) -> egui::Rect {
+pub(crate) fn scale_rect(origin: egui::Rect, rect: LayoutRect, sx: f32, sy: f32) -> egui::Rect {
     egui::Rect::from_min_size(
         egui::pos2(origin.left() + rect.x * sx, origin.top() + rect.y * sy),
         egui::vec2(rect.width * sx, rect.height * sy),

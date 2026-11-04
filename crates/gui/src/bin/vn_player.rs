@@ -7,16 +7,14 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use visual_novel_engine::{
-    resolve_layout,
-    runtime::{Engine, ScriptRaw},
-    DisplayProfile, ExportRuntimeSmokeCheck, ExportRuntimeSmokeResult, LayoutPolicy,
-    PlayerMenuConfig, ProjectManifest, RenderCommand, ResourceLimiter, SceneFramePresenter,
-    SecurityPolicy, StageProfile, UiTheme,
+    resolve_layout, runtime::RuntimeScriptInput, DisplayProfile, ExportRuntimeSmokeCheck,
+    ExportRuntimeSmokeResult, LayoutPolicy, PlayerMenuConfig, ProjectManifest, RenderCommand,
+    ResourceLimiter, SceneFramePresenter, SecurityPolicy, StageProfile, UiTheme,
 };
-use visual_novel_gui::{run_app, SecurityMode, VnConfig};
+use visual_novel_gui::{run_app_input, SecurityMode, VnConfig};
+use visual_novel_runtime::render::{BuiltinSoftwareDrawer, RenderFrame, SoftwareDrawStrategy};
 use visual_novel_runtime::{
-    AssetStore as RuntimeAssetStore, ConfigurableInput, InputAction, RuntimeApp,
-    RuntimeSceneFramePresenter, SilentAudio,
+    ConfigurableInput, InputAction, RuntimeApp, RuntimeSceneFramePresenter, SilentAudio,
 };
 
 #[path = "vn_player/launch.rs"]
@@ -36,8 +34,13 @@ fn main() {
     if let Err(err) = tracing_subscriber::fmt::try_init() {
         eprintln!("Player logging already initialized or unavailable: {err}");
     }
-    if let Err(err) = run_from_args(std::env::args().skip(1)) {
-        eprintln!("Error running player: {err}");
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let interactive = args.is_empty() || (args.len() == 1 && !args[0].starts_with('-'));
+    if let Err(err) = run_from_args(args) {
+        visual_novel_gui::report_startup_error(
+            &format!("Error running player: {err}"),
+            interactive,
+        );
         std::process::exit(1);
     }
 }
@@ -71,7 +74,10 @@ fn run_from_args(args: impl IntoIterator<Item = String>) -> Result<(), Box<dyn s
             }
             "--title" => title = Some(next_value(&mut iter, "--title")?),
             "--smoke" => smoke = true,
-            "--smoke-report" => smoke_report_path = Some(next_path(&mut iter, "--smoke-report")?),
+            "--smoke-report" => {
+                smoke_report_path = Some(next_path(&mut iter, "--smoke-report")?);
+                smoke = true;
+            }
             "--require-manifest" => require_manifest = true,
             "--untrusted" => security_mode = SecurityMode::Untrusted,
             "--trusted" => security_mode = SecurityMode::Trusted,
@@ -89,7 +95,7 @@ fn run_from_args(args: impl IntoIterator<Item = String>) -> Result<(), Box<dyn s
     let launch_paths =
         resolve_launch_paths(script_path, assets_root, manifest_path, require_manifest);
     let script_path = launch_paths.script_path.clone();
-    let script_json = std::fs::read_to_string(&script_path)?;
+    let script = RuntimeScriptInput::load(&script_path, ResourceLimiter::default());
     let project_manifest = match launch_paths.bundle_root.as_deref() {
         Some(root) => load_packaged_project_manifest(root)?,
         None => None,
@@ -108,17 +114,12 @@ fn run_from_args(args: impl IntoIterator<Item = String>) -> Result<(), Box<dyn s
         .unwrap_or((None, None));
 
     if smoke {
-        run_smoke(
-            &script_json,
-            &launch_paths,
-            security_mode,
-            smoke_report_path,
-        )?;
+        run_smoke(script, &launch_paths, security_mode, smoke_report_path)?;
         return Ok(());
     }
 
-    run_app(
-        script_json,
+    run_app_input(
+        script?,
         Some(VnConfig {
             title: title.unwrap_or_else(|| {
                 project_manifest

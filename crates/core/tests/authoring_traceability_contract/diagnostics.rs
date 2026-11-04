@@ -145,6 +145,27 @@ fn extcall_host_required_fidelity_contract() {
 
 #[test]
 fn verification_run_tracks_resolved_and_introduced_diagnostics() {
+    for (raw, key) in [
+        ("", ""),
+        ("___", ""),
+        ("  Alpha__Beta  ", "Alpha_Beta"),
+        ("A\\B/C", "A_B_C"),
+        ("a:: ..--b", "a_b"),
+        ("Árbol 日本 🦀", "rbol"),
+        ("A\u{301}B", "A_B"),
+        ("\u{a0}MiXeD 019\u{a0}", "MiXeD_019"),
+        ("a\t\r\nb", "a_b"),
+    ] {
+        assert_eq!(FieldPath::new(raw).stable_key(), key);
+        let issue = LintIssue::warning(
+            Some(7),
+            ValidationPhase::Graph,
+            LintCode::AssetReferenceMissing,
+            "missing",
+        )
+        .with_asset_path(Some(raw.into()));
+        assert_eq!(issue.diagnostic_id(), format!("authoring-diagnostic-v2:GRAPH:VAL_ASSET_NOT_FOUND:node=7:asset={key}:target=node_7"));
+    }
     let graph = NodeGraph::new();
     let script = graph.to_script_lossy_for_diagnostics();
     let fingerprint = build_authoring_report_fingerprint(&graph, &script);

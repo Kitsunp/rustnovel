@@ -115,13 +115,13 @@ impl NodeEditorPanel<'_> {
 
             // Undo/Redo
             if ui
-                .add_enabled(self.undo_stack.can_undo(), egui::Button::new("↩"))
+                .add_enabled(self.can_undo(), egui::Button::new("↩"))
                 .clicked()
             {
                 self.apply_undo_shortcut();
             }
             if ui
-                .add_enabled(self.undo_stack.can_redo(), egui::Button::new("↪"))
+                .add_enabled(self.can_redo(), egui::Button::new("↪"))
                 .clicked()
             {
                 self.apply_redo_shortcut();

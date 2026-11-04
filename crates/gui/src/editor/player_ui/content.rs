@@ -1,4 +1,5 @@
 use std::time::Duration;
+pub use visual_novel_engine::runtime::transition_kind_name as transition_kind_label;
 
 use eframe::egui;
 use tracing::info;
@@ -18,15 +19,6 @@ pub struct ChoiceOverlayContent<'a> {
     pub prompt: &'a str,
     pub localized_options: &'a [String],
     pub options: &'a [ChoiceOptionCompiled],
-}
-
-pub fn transition_kind_label(kind: u8) -> &'static str {
-    match kind {
-        0 => "fade",
-        1 => "dissolve",
-        2 => "cut",
-        _ => "unknown",
-    }
 }
 
 pub fn render_transition(
@@ -194,7 +186,7 @@ pub fn render_dialogue_overlay(
     ui.painter().rect_stroke(
         rect,
         layout.corner_radius,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(130)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(130)),
     );
     let mut should_advance = false;
     ui.allocate_ui_at_rect(rect.shrink2(layout.content_padding), |ui| {
@@ -206,7 +198,7 @@ pub fn render_dialogue_overlay(
                     .color(egui::Color32::from_rgb(180, 210, 255))
                     .size(layout.speaker_font_size),
             )
-            .wrap(true),
+            .wrap(),
         );
         ui.add_space(layout.speaker_text_gap);
         let text_height = (rect.height()
@@ -222,7 +214,7 @@ pub fn render_dialogue_overlay(
                     .color(egui::Color32::WHITE)
                     .size(layout.text_font_size),
             )
-            .wrap(true),
+            .wrap(),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let label = if text_complete {
@@ -352,7 +344,7 @@ pub fn render_choice_overlay(
     ui.painter().rect_stroke(
         layout.panel,
         corner_radius,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(120)),
     );
 
     let mut selected = None;
@@ -365,7 +357,7 @@ pub fn render_choice_overlay(
                     .color(egui::Color32::WHITE)
                     .size(layout.prompt_font_size),
             )
-            .wrap(true),
+            .wrap(),
         );
         ui.add_space(layout.prompt_option_gap);
         egui::ScrollArea::vertical()
@@ -438,7 +430,7 @@ pub fn render_scene_overlay(
     ui.painter().rect_stroke(
         rect,
         6.0,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(120)),
     );
 
     let mut should_advance = false;
@@ -453,7 +445,7 @@ pub fn render_scene_overlay(
                 ))
                 .color(egui::Color32::WHITE),
             )
-            .wrap(true),
+            .wrap(),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button("Continue").clicked() {

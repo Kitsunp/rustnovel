@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use super::route_sim::simulate_raw_sequence;
-use super::{ChoicePolicy, DryRunReport};
+use super::{ChoicePolicy, DryRunReport, DryRunStopReason};
 use crate::authoring::{LintCode, LintIssue, ValidationPhase};
 use crate::event::EventRaw;
 use crate::script::ScriptRaw;
@@ -13,7 +13,17 @@ pub fn check_preview_runtime_parity(
 ) -> Vec<LintIssue> {
     let mut issues = Vec::new();
     let runtime_steps = &report.steps;
-    let raw_report = simulate_raw_sequence(script, report.max_steps, policy);
+    // A host call or runtime error ends verification at the recorded boundary.
+    // Statements after that boundary have not run and cannot be compared yet.
+    let max_steps = if matches!(
+        report.stop_reason,
+        DryRunStopReason::ExternalCallBlocked | DryRunStopReason::RuntimeError
+    ) {
+        runtime_steps.len()
+    } else {
+        report.max_steps
+    };
+    let raw_report = simulate_raw_sequence(script, max_steps, policy);
     let raw_steps = &raw_report.steps;
     let route_label = policy.label();
     for error in &raw_report.errors {

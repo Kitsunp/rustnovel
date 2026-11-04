@@ -1,11 +1,11 @@
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::error::VnResult;
 
 use super::helpers::{
     canonicalize_within_root, invalid_bundle, normalize_path_display, sanitize_relative_path,
-    sha256_hex,
 };
 use super::ExportTargetPlatform;
 
@@ -51,9 +51,9 @@ pub(super) fn copy_runtime_artifact(
             destination.display()
         ))
     })?;
-    let bytes = fs::read(&destination).map_err(|e| {
+    let (sha256, _) = crate::atomic_io::sha256_file(&destination).map_err(|error| {
         invalid_bundle(format!(
-            "read copied runtime artifact '{}': {e}",
+            "hash copied runtime artifact '{}': {error}",
             destination.display()
         ))
     })?;
@@ -61,7 +61,7 @@ pub(super) fn copy_runtime_artifact(
     Ok(Some(CopiedRuntimeArtifact {
         rel_path: normalize_path_display(Path::new("runtime").join(file_name).as_path()),
         output_path: destination,
-        sha256: sha256_hex(&bytes),
+        sha256,
     }))
 }
 
@@ -90,13 +90,16 @@ pub(super) fn materialize_executable(
         ExportTargetPlatform::Linux | ExportTargetPlatform::Macos => return Ok(None),
     };
     let executable_out = output_root.join(executable_rel);
-    fs::copy(&runtime.output_path, &executable_out).map_err(|e| {
-        invalid_bundle(format!(
-            "copy executable '{}' -> '{}': {e}",
-            runtime.output_path.display(),
-            executable_out.display()
-        ))
-    })?;
+    let _ = fs::remove_file(&executable_out);
+    if fs::hard_link(&runtime.output_path, &executable_out).is_err() {
+        fs::copy(&runtime.output_path, &executable_out).map_err(|e| {
+            invalid_bundle(format!(
+                "copy executable '{}' -> '{}': {e}",
+                runtime.output_path.display(),
+                executable_out.display()
+            ))
+        })?;
+    }
     make_executable(&executable_out)?;
     Ok(Some(executable_rel.to_string()))
 }
@@ -106,6 +109,21 @@ pub(super) fn write_launcher(
     output_root: &Path,
     runtime_rel: Option<&str>,
 ) -> VnResult<String> {
+    if let Some(runtime) = runtime_rel {
+        let safe = !runtime.is_empty()
+            && !runtime.starts_with('/')
+            && !runtime
+                .split('/')
+                .any(|component| component.is_empty() || component == "." || component == "..")
+            && runtime
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | ' '));
+        if !safe {
+            return Err(invalid_bundle(
+                "runtime launcher path contains unsafe characters",
+            ));
+        }
+    }
     match target {
         ExportTargetPlatform::Windows => {
             let launcher_path = output_root.join("launch.bat");
@@ -168,34 +186,42 @@ pub(super) fn runtime_artifact_matches_target(
     path: &Path,
     target: ExportTargetPlatform,
 ) -> VnResult<bool> {
-    let bytes = fs::read(path)
-        .map_err(|e| invalid_bundle(format!("read runtime artifact '{}': {e}", path.display())))?;
-    Ok(match target {
-        ExportTargetPlatform::Windows => is_windows_pe(&bytes),
-        ExportTargetPlatform::Linux => is_linux_elf(&bytes),
-        ExportTargetPlatform::Macos => is_macos_mach_o(&bytes),
+    let validate = || -> std::io::Result<bool> {
+        let mut file = fs::File::open(path)?;
+        let mut header = Vec::with_capacity(64);
+        Read::by_ref(&mut file).take(64).read_to_end(&mut header)?;
+        match target {
+            ExportTargetPlatform::Windows => {
+                if header.len() < 64 || &header[..2] != b"MZ" {
+                    return Ok(false);
+                }
+                let offset = u32::from_le_bytes(
+                    header[0x3c..0x40]
+                        .try_into()
+                        .expect("four-byte header offset"),
+                );
+                file.seek(SeekFrom::Start(u64::from(offset)))?;
+                let mut signature = [0; 6];
+                match file.read_exact(&mut signature) {
+                    Ok(()) => Ok(&signature[..4] == b"PE\0\0"
+                        && matches!(
+                            u16::from_le_bytes([signature[4], signature[5]]),
+                            0x014c | 0x8664 | 0xaa64
+                        )),
+                    Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
+                    Err(error) => Err(error),
+                }
+            }
+            ExportTargetPlatform::Linux => Ok(is_linux_elf(&header)),
+            ExportTargetPlatform::Macos => Ok(is_macos_mach_o(&header)),
+        }
+    };
+    validate().map_err(|error| {
+        invalid_bundle(format!(
+            "read runtime artifact '{}': {error}",
+            path.display()
+        ))
     })
-}
-
-fn is_windows_pe(bytes: &[u8]) -> bool {
-    if bytes.len() < 0x40 || &bytes[..2] != b"MZ" {
-        return false;
-    }
-    let pe_offset =
-        u32::from_le_bytes([bytes[0x3c], bytes[0x3d], bytes[0x3e], bytes[0x3f]]) as usize;
-    let Some(signature) = bytes.get(pe_offset..pe_offset + 4) else {
-        return false;
-    };
-    if signature != b"PE\0\0" {
-        return false;
-    }
-    let Some(machine) = bytes.get(pe_offset + 4..pe_offset + 6) else {
-        return false;
-    };
-    matches!(
-        u16::from_le_bytes([machine[0], machine[1]]),
-        0x014c | 0x8664 | 0xaa64
-    )
 }
 
 fn is_linux_elf(bytes: &[u8]) -> bool {

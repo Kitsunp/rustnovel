@@ -26,6 +26,18 @@ features = ["extension-module"]
 [tool.ruff]
 extend-exclude = [".pytest_cache", "pytest-cache-files-*", "target"]
 
+[tool.ruff.lint]
+# Preserve Python 3.8 annotations, including runtime inspection of public types.
+ignore = ["UP006", "UP007", "UP045"]
+
+[tool.ruff.lint.per-file-ignores]
+# Public validation errors intentionally remain ValueError for API compatibility.
+"python/vnengine/builder.py" = ["TRY004"]
+"python/vnengine/script_types.py" = ["TRY004"]
+"python/vnengine/types.py" = ["TRY004"]
+# Legacy stub aliases do not require a typing_extensions dependency.
+"python/visual_novel_engine.pyi" = ["PYI026"]
+
 [tool.mypy]
 files = ["python", "tests/python", "examples/python"]
 mypy_path = "python"

@@ -67,7 +67,6 @@ impl<'a> NodeEditorPanel<'a> {
                     let size = egui::vec2(node_visual_width(node), height) * self.graph.zoom();
                     let node_rect = egui::Rect::from_min_size(screen_pos, size);
                     if node_rect.contains(pos) {
-                        self.undo_stack.push(self.graph.clone());
                         self.graph.dragging_node = Some(*id);
                         break;
                     }
@@ -99,6 +98,7 @@ impl<'a> NodeEditorPanel<'a> {
 
         // 3. Handle Drag End
         if response.drag_stopped() {
+            self.graph.commit_drag_positions();
             self.graph.dragging_node = None;
             if let Some((from, _)) = self.graph.connecting_from {
                 if let Some(pos) = response.interact_pointer_pos() {
@@ -149,7 +149,7 @@ impl<'a> NodeEditorPanel<'a> {
             painter.rect_stroke(
                 marquee_rect,
                 0.0,
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 180, 255)),
+                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(120, 180, 255)),
             );
         }
 
@@ -171,7 +171,15 @@ impl<'a> NodeEditorPanel<'a> {
 
             // Shape
             let bg_color = if is_selected || is_dragging {
-                node.color().linear_multiply(1.3)
+                let color = egui::Rgba::from(node.color());
+                // Brighten RGB without treating opacity as a brightness factor.
+                egui::Rgba::from_rgba_premultiplied(
+                    (color.r() * 1.3).min(color.a()),
+                    (color.g() * 1.3).min(color.a()),
+                    (color.b() * 1.3).min(color.a()),
+                    color.a(),
+                )
+                .into()
             } else if is_connecting {
                 egui::Color32::YELLOW.linear_multiply(0.3)
             } else {
@@ -187,7 +195,7 @@ impl<'a> NodeEditorPanel<'a> {
             painter.rect_stroke(
                 node_rect,
                 2.0 * self.graph.zoom(),
-                egui::Stroke::new(2.0, border_color),
+                egui::Stroke::new(2.0_f32, border_color),
             );
 
             // Content
@@ -230,7 +238,7 @@ impl<'a> NodeEditorPanel<'a> {
 
                         painter.line_segment(
                             [opt_rect.left_top(), opt_rect.left_bottom()],
-                            egui::Stroke::new(1.0, egui::Color32::BLACK),
+                            egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
                         );
                         painter.rect_filled(
                             egui::Rect::from_min_size(
@@ -298,7 +306,7 @@ impl<'a> NodeEditorPanel<'a> {
                     );
                     painter.line_segment(
                         [add_rect.left_top(), add_rect.left_bottom()],
-                        egui::Stroke::new(1.0, egui::Color32::BLACK),
+                        egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
                     );
                     painter.text(
                         add_rect.left_center() + egui::vec2(5.0, 0.0),
@@ -480,7 +488,8 @@ impl<'a> NodeEditorPanel<'a> {
                     self.graph.editing = Some(id);
                 }
             } else {
-                self.graph.editing = Some(id);
+                self.graph.set_single_selection(Some(id));
+                self.graph.composer_inspection_request = Some(id);
             }
         }
     }

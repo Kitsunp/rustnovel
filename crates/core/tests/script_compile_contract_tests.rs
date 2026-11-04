@@ -67,4 +67,20 @@ fn compile_rejects_invalid_transition_kind() {
         .compile()
         .expect_err("invalid transition kind must fail");
     assert!(err.to_string().contains("invalid transition kind"));
+    let mut valid = script.clone();
+    if let EventRaw::Transition(transition) = &mut valid.events[0] {
+        transition.kind = "cut".into();
+    }
+    let mut compiled = valid.compile().unwrap();
+    if let visual_novel_engine::runtime::EventCompiled::Transition(transition) =
+        &mut compiled.events[0]
+    {
+        transition.kind = u8::MAX;
+    }
+    let error = visual_novel_engine::SecurityPolicy::default()
+        .validate_compiled(&compiled, visual_novel_engine::ResourceLimiter::default())
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("invalid compiled transition kind"));
 }

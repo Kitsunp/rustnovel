@@ -1,6 +1,6 @@
 use super::{
-    DisplayProfile, LayoutPolicy, LayoutRect, LayoutResolution, StageFitPolicy, StageProfile,
-    UiTheme, UiThemeValidationReport,
+    DisplayProfile, LayoutPolicy, LayoutRect, LayoutResolution, SafeAreaInsets, SafeAreaMode,
+    StageFitPolicy, StageProfile, UiTheme, UiThemeValidationReport,
 };
 
 pub fn validate_ui_theme(theme: &UiTheme) -> UiThemeValidationReport {
@@ -48,10 +48,12 @@ pub fn resolve_layout(
         })
         .map(|bp| bp.id.clone())
         .unwrap_or_else(|| "default".to_string());
-    let available_width =
-        (display.logical_size[0] - display.safe_area.left - display.safe_area.right).max(1.0);
-    let available_height =
-        (display.logical_size[1] - display.safe_area.top - display.safe_area.bottom).max(1.0);
+    let safe_area = match stage.safe_area_mode {
+        SafeAreaMode::Ignore => SafeAreaInsets::default(),
+        SafeAreaMode::Respect => display.safe_area,
+    };
+    let available_width = (display.logical_size[0] - safe_area.left - safe_area.right).max(1.0);
+    let available_height = (display.logical_size[1] - safe_area.top - safe_area.bottom).max(1.0);
     let sx = available_width / stage.design_size[0].max(1.0);
     let sy = available_height / stage.design_size[1].max(1.0);
     let scale = match stage.policy {
@@ -68,8 +70,8 @@ pub fn resolve_layout(
         _ => stage.design_size[1] * scale,
     };
     let stage_rect = LayoutRect {
-        x: display.safe_area.left + (available_width - width) * 0.5,
-        y: display.safe_area.top + (available_height - height) * 0.5,
+        x: safe_area.left + (available_width - width) * 0.5,
+        y: safe_area.top + (available_height - height) * 0.5,
         width,
         height,
     };

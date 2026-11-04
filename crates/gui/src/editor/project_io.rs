@@ -1,13 +1,11 @@
-use crate::editor::authoring_adapter::{from_authoring_graph, to_authoring_graph};
 use crate::editor::errors::EditorError;
 use crate::editor::node_graph::NodeGraph;
+use sha2::{Digest, Sha256};
 use std::path::{Component, Path, PathBuf};
 use visual_novel_engine::{
     authoring::{
-        composer::{BackgroundFit, LayerOverride},
-        export_runtime_script_from_authoring, parse_authoring_document_or_script,
-        source_looks_like_authoring_document, AuthoringDocument, OperationLogEntry,
-        VerificationRun,
+        export_runtime_script_from_authoring, parse_authoring_entry_with_format, AuthoringDocument,
+        AuthoringEntryFormat,
     },
     manifest::{ManifestMigrationReport, ProjectManifest},
 };
@@ -21,10 +19,10 @@ pub struct LoadedProject {
 pub struct LoadedScript {
     pub graph: NodeGraph,
     pub was_imported: bool,
-    pub composer_layer_overrides: std::collections::HashMap<String, LayerOverride>,
-    pub composer_background_fit_overrides: std::collections::HashMap<String, BackgroundFit>,
-    pub operation_log: Vec<OperationLogEntry>,
-    pub verification_runs: Vec<VerificationRun>,
+}
+
+pub(super) fn document_version(source: &[u8]) -> [u8; 32] {
+    Sha256::digest(source).into()
 }
 
 pub fn resolve_existing_project_path(
@@ -80,6 +78,13 @@ pub fn resolve_existing_project_path(
 }
 
 pub fn load_project(path: PathBuf) -> Result<LoadedProject, EditorError> {
+    load_project_with_version(path).map(|(project, _)| project)
+}
+
+pub(super) fn load_project_with_version(
+    path: PathBuf,
+) -> Result<(LoadedProject, Option<[u8; 32]>), EditorError> {
+    let path = std::path::absolute(path).map_err(EditorError::IoError)?;
     // 1. Load Manifest (TOML)
     let manifest_content = std::fs::read_to_string(&path).map_err(EditorError::IoError)?;
 
@@ -90,56 +95,52 @@ pub fn load_project(path: PathBuf) -> Result<LoadedProject, EditorError> {
     let manifest_migration_report = migration_report.changed().then_some(migration_report);
 
     // 2. Load Entry Point Script if exists
-    let entry_point_script = {
-        let project_root = path.parent().unwrap_or(&path);
-        match resolve_existing_project_path(
-            project_root,
-            Path::new(&manifest.settings.entry_point),
-        )? {
-            Some(script_path) => Some((script_path.clone(), load_script(script_path)?)),
-            None => None,
-        }
+    let project_root = path.parent().unwrap_or(&path);
+    let entry_path =
+        resolve_existing_project_path(project_root, Path::new(&manifest.settings.entry_point))?;
+    let (entry_point_script, entry_version) = if let Some(script_path) = entry_path {
+        let (script, version) = load_script_with_version(&script_path)?;
+        (Some((script_path, script)), Some(version))
+    } else {
+        (None, None)
     };
 
-    Ok(LoadedProject {
-        manifest,
-        manifest_migration_report,
-        entry_point_script,
-    })
+    Ok((
+        LoadedProject {
+            manifest,
+            manifest_migration_report,
+            entry_point_script,
+        },
+        entry_version,
+    ))
 }
 
 pub fn load_script(path: PathBuf) -> Result<LoadedScript, EditorError> {
-    let source = std::fs::read_to_string(&path).map_err(EditorError::IoError)?;
-    if let Ok(document) = AuthoringDocument::from_json(&source) {
-        return Ok(LoadedScript {
-            graph: from_authoring_graph(&document.graph),
-            was_imported: false,
-            composer_layer_overrides: document.composer_layer_overrides.into_iter().collect(),
-            composer_background_fit_overrides: document
-                .composer_background_fit_overrides
-                .into_iter()
-                .collect(),
-            operation_log: document.operation_log,
-            verification_runs: document.verification_runs,
-        });
-    }
-    let source_has_authoring_layout = source_looks_like_authoring_document(&source);
-    let graph = parse_authoring_document_or_script(&source)
-        .map_err(|e| EditorError::CompileError(format!("Parse error: {}", e)))?;
-    let mut graph = from_authoring_graph(&graph);
-    if !source_has_authoring_layout {
+    load_script_with_version(&path).map(|(script, _)| script)
+}
+
+pub(super) fn load_script_with_version(
+    path: &Path,
+) -> Result<(LoadedScript, [u8; 32]), EditorError> {
+    let source = std::fs::read_to_string(path).map_err(EditorError::IoError)?;
+    let (document, format) = parse_authoring_entry_with_format(&source)
+        .map_err(|error| EditorError::CompileError(error.to_string()))?;
+    let mut graph = NodeGraph::from_document(document);
+    if format == AuthoringEntryFormat::RuntimeScript {
         graph.auto_layout_hierarchical();
         graph.zoom_to_fit();
+        graph.authoring_session = visual_novel_engine::authoring::AuthoringDocumentSession::new(
+            AuthoringDocument::new(graph.authoring_graph().clone()),
+        );
         graph.clear_modified();
     }
-    Ok(LoadedScript {
-        graph,
-        was_imported: false,
-        composer_layer_overrides: std::collections::HashMap::new(),
-        composer_background_fit_overrides: std::collections::HashMap::new(),
-        operation_log: Vec::new(),
-        verification_runs: Vec::new(),
-    })
+    Ok((
+        LoadedScript {
+            graph,
+            was_imported: false,
+        },
+        document_version(source.as_bytes()),
+    ))
 }
 
 pub fn save_script(path: &std::path::Path, graph: &NodeGraph) -> Result<(), EditorError> {
@@ -150,47 +151,26 @@ pub fn save_authoring_document(
     path: &std::path::Path,
     graph: &NodeGraph,
 ) -> Result<(), EditorError> {
-    save_authoring_document_with_metadata(
+    visual_novel_engine::authoring::save_authoring_document(
         path,
-        graph,
-        &std::collections::HashMap::new(),
-        &std::collections::HashMap::new(),
-        &[],
-        &[],
+        graph.authoring_session.document(),
     )
+    .map_err(|error| EditorError::CompileError(error.to_string()))
 }
 
-pub fn save_authoring_document_with_metadata(
-    path: &std::path::Path,
+pub(super) fn save_authoring_document_with_version(
+    path: &Path,
     graph: &NodeGraph,
-    composer_layer_overrides: &std::collections::HashMap<String, LayerOverride>,
-    composer_background_fit_overrides: &std::collections::HashMap<String, BackgroundFit>,
-    operation_log: &[OperationLogEntry],
-    verification_runs: &[VerificationRun],
-) -> Result<(), EditorError> {
-    let mut document = AuthoringDocument::new(to_authoring_graph(graph));
-    document.composer_layer_overrides = composer_layer_overrides
-        .iter()
-        .map(|(key, value)| (key.clone(), *value))
-        .collect();
-    document.composer_background_fit_overrides = composer_background_fit_overrides
-        .iter()
-        .map(|(key, value)| (key.clone(), *value))
-        .collect();
-    document.operation_log = operation_log.to_vec();
-    document.verification_runs = verification_runs.to_vec();
-    let json = document
-        .to_json()
-        .map_err(|e| EditorError::CompileError(format!("Serialization error: {}", e)))?;
-
-    crate::editor::atomic_io::atomic_replace(path, json.as_bytes())
-        .map_err(EditorError::IoError)?;
-
-    Ok(())
+) -> Result<[u8; 32], EditorError> {
+    visual_novel_engine::authoring::save_authoring_document_with_version(
+        path,
+        graph.authoring_session.document(),
+    )
+    .map_err(|error| EditorError::CompileError(error.to_string()))
 }
 
 pub fn export_runtime_script(path: &std::path::Path, graph: &NodeGraph) -> Result<(), EditorError> {
-    let script = export_runtime_script_from_authoring(&to_authoring_graph(graph))
+    let script = export_runtime_script_from_authoring(graph.authoring_graph())
         .map_err(|e| EditorError::CompileError(format!("Strict export error: {}", e)))?;
     let json = script
         .to_json()

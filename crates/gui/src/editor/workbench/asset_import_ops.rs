@@ -101,74 +101,21 @@ impl EditorWorkbench {
             .as_mut()
             .ok_or_else(|| "load a project manifest before importing assets".to_string())?;
 
-        let canonical_root = project_root
-            .canonicalize()
-            .map_err(|err| format!("project root unavailable: {err}"))?;
-        let canonical_source = source
-            .canonicalize()
-            .map_err(|err| format!("source file unavailable: {err}"))?;
-        if !canonical_source.is_file() {
-            return Err(format!("source is not a file: {}", source.display()));
+        let result = visual_novel_engine::manifest::import_project_asset(
+            &project_root,
+            &manifest_path,
+            manifest,
+            source,
+            kind.into(),
+            vnengine_assets::AssetLimits::default().max_bytes,
+        )
+        .map_err(|error| error.to_string())?;
+        if !result.imported {
+            return Ok(result.path);
         }
-
-        let extension = normalized_extension(&canonical_source)
-            .ok_or_else(|| "asset file needs an extension".to_string())?;
-        if !kind.accepts_extension(&extension) {
-            return Err(format!(
-                "unsupported .{} file for {}; allowed: {}",
-                extension,
-                kind.label(),
-                kind.allowed_extensions().join(", ")
-            ));
-        }
-
-        let metadata = std::fs::metadata(&canonical_source)
-            .map_err(|err| format!("source metadata unavailable: {err}"))?;
-        let limits = vnengine_assets::AssetLimits::default();
-        if metadata.len() > limits.max_bytes {
-            return Err(format!(
-                "asset is too large: {} bytes (max {})",
-                metadata.len(),
-                limits.max_bytes
-            ));
-        }
-
-        let rel_path = if canonical_source.starts_with(&canonical_root) {
-            canonical_source
-                .strip_prefix(&canonical_root)
-                .map_err(|err| format!("failed to relativize project asset: {err}"))?
-                .to_path_buf()
-        } else {
-            copy_external_asset(&canonical_source, &project_root, kind, &extension)?
-        };
-
-        let rel_path = vnengine_assets::sanitize_rel_path(&rel_path)
-            .map_err(|err| format!("unsafe asset path rejected: {err}"))?;
-        let rel_string = rel_path.to_string_lossy().replace('\\', "/");
-        let asset_name = unique_manifest_name(manifest, kind, source);
-        let manifest_field_path = manifest_asset_field_path(kind, &asset_name);
-
-        match kind {
-            AssetImportKind::Background => {
-                manifest.assets.backgrounds.insert(asset_name, rel_path);
-            }
-            AssetImportKind::Character => {
-                manifest.assets.characters.insert(
-                    asset_name,
-                    visual_novel_engine::manifest::CharacterAsset {
-                        path: rel_path,
-                        scale: None,
-                    },
-                );
-            }
-            AssetImportKind::Audio => {
-                manifest.assets.audio.insert(asset_name, rel_path);
-            }
-        }
-
-        manifest
-            .save(&manifest_path)
-            .map_err(|err| format!("manifest save failed: {err}"))?;
+        let rel_string = result.path;
+        let canonical_source = result.source;
+        let manifest_field_path = kind.field_path(&result.name);
 
         self.composer_image_cache.clear();
         self.composer_image_failures.clear();
@@ -202,27 +149,30 @@ impl EditorWorkbench {
             .manifest_path
             .clone()
             .ok_or_else(|| "load a project manifest before removing assets".to_string())?;
-        let manifest = self
+        let mut candidate = self
             .manifest
-            .as_mut()
-            .ok_or_else(|| "load a project manifest before removing assets".to_string())?;
-        let manifest_field_path = manifest_asset_field_path(kind, name);
+            .as_ref()
+            .ok_or_else(|| "load a project manifest before removing assets".to_string())?
+            .clone();
+        let manifest_field_path = kind.field_path(name);
 
         let removed = match kind {
-            AssetImportKind::Background => manifest.assets.backgrounds.remove(name),
-            AssetImportKind::Character => manifest
+            AssetImportKind::Background => candidate.assets.backgrounds.remove(name),
+            AssetImportKind::Character => candidate
                 .assets
                 .characters
                 .remove(name)
                 .map(|asset| asset.path),
-            AssetImportKind::Audio => manifest.assets.audio.remove(name),
+            AssetImportKind::Audio => candidate.assets.audio.remove(name),
         }
         .ok_or_else(|| format!("{} asset '{name}' is not in the manifest", kind.label()))?;
         let removed_path = removed.to_string_lossy().replace('\\', "/");
 
-        manifest
+        candidate
             .save(&manifest_path)
             .map_err(|err| format!("manifest save failed: {err}"))?;
+
+        self.manifest = Some(candidate);
 
         self.composer_image_cache.clear();
         self.composer_image_failures.clear();
@@ -312,6 +262,9 @@ impl EditorWorkbench {
             }
             _ => return Err("selected node does not support that asset field".to_string()),
         }
+        if self.node_graph.get_node(node_id) == Some(&replacement) {
+            return Ok(());
+        }
         self.apply_node_replacement_with_command_bus(node_id, replacement)?;
 
         self.queue_editor_operation_with_values(
@@ -331,9 +284,37 @@ impl EditorWorkbench {
         name: &str,
         path: &str,
     ) -> Result<u32, String> {
+        let accepts_asset = |id: &u32| {
+            self.node_graph.get_node(*id).is_some_and(|node| {
+                matches!(node, StoryNode::Scene { .. } | StoryNode::ScenePatch(_))
+                    || (kind == AssetImportKind::Audio
+                        && matches!(node, StoryNode::AudioAction { .. }))
+            })
+        };
+        let visible_owner = |audio: bool| {
+            self.scene
+                .iter()
+                .filter(|entity| {
+                    if audio {
+                        matches!(entity.kind, visual_novel_engine::EntityKind::Audio(_))
+                    } else {
+                        matches!(entity.kind, visual_novel_engine::EntityKind::Image(_))
+                    }
+                })
+                .filter_map(|entity| self.composer_entity_owners.get(&entity.id.raw()).copied())
+                .find(accepts_asset)
+        };
         let node_id = self
-            .selected_node
-            .or(self.node_graph.selected)
+            .node_graph
+            .selected
+            .or(self.selected_node)
+            .filter(accepts_asset)
+            .or_else(|| {
+                (kind == AssetImportKind::Audio)
+                    .then(|| visible_owner(true))
+                    .flatten()
+            })
+            .or_else(|| visible_owner(false))
             .ok_or_else(|| "select a scene, patch, or audio node first".to_string())?;
         let node = self
             .node_graph

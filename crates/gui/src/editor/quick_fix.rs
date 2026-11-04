@@ -4,8 +4,7 @@ use crate::editor::{LintIssue, NodeGraph};
 pub use visual_novel_engine::authoring::quick_fix::{QuickFixCandidate, QuickFixRisk};
 
 pub fn suggest_fixes(issue: &LintIssue, graph: &NodeGraph) -> Vec<QuickFixCandidate> {
-    let authoring = to_authoring_graph(graph);
-    visual_novel_engine::authoring::quick_fix::suggest_fixes(issue, &authoring)
+    visual_novel_engine::authoring::quick_fix::suggest_fixes(issue, graph.authoring_graph())
 }
 
 pub fn apply_fix(graph: &mut NodeGraph, issue: &LintIssue, fix_id: &str) -> Result<bool, String> {

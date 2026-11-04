@@ -6,9 +6,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{VnError, VnResult};
 use crate::event::{
-    CharacterPlacementCompiled, ScenePatchCompiled, SceneUpdateCompiled,
+    AudioActionCompiled, CharacterPlacementCompiled, ScenePatchCompiled, SceneUpdateCompiled,
     SetCharacterPositionCompiled, SharedStr,
 };
+
+/// A missing patch value preserves the path; an explicit empty value clears it.
+pub(crate) fn apply_path_patch<T: AsRef<str> + Clone>(path: &mut Option<T>, value: &Option<T>) {
+    if let Some(value) = value {
+        *path = (!value.as_ref().is_empty()).then(|| value.clone());
+    }
+}
 
 /// Current visual state for rendering.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -19,10 +26,34 @@ pub struct VisualState {
 }
 
 impl VisualState {
+    /// Identifies a legacy character-name image with no explicit image reference.
+    /// An explicit background or expression at the same path takes precedence.
+    pub fn is_implicit_character_image(&self, asset: &str) -> bool {
+        self.background.as_deref() != Some(asset)
+            && self
+                .characters
+                .iter()
+                .any(|character| character.expression.is_none() && character.name.as_ref() == asset)
+            && !self
+                .characters
+                .iter()
+                .any(|character| character.expression.as_deref() == Some(asset))
+    }
+
+    /// Keeps the saved scene's music path in sync with explicit BGM actions.
+    pub(crate) fn apply_audio_action(&mut self, action: &AudioActionCompiled) {
+        crate::audio::apply_bgm_action(
+            &mut self.music,
+            action.channel,
+            action.action,
+            action.asset.as_ref(),
+        );
+    }
+
     /// Applies a scene update to the visual state.
     ///
     /// Note: Scene events preserve existing values when fields are None.
-    /// To fully replace/clear values, use Patch events with explicit null.
+    /// To fully replace/clear values, use Patch events with explicit empty paths.
     pub fn apply_scene(&mut self, update: &SceneUpdateCompiled) {
         if let Some(background) = &update.background {
             self.background = Some(background.clone());
@@ -38,20 +69,8 @@ impl VisualState {
 
     /// Applies a partial scene patch to the visual state.
     pub fn apply_patch(&mut self, patch: &ScenePatchCompiled) {
-        if let Some(background) = &patch.background {
-            if background.as_ref().is_empty() {
-                self.background = None;
-            } else {
-                self.background = Some(background.clone());
-            }
-        }
-        if let Some(music) = &patch.music {
-            if music.as_ref().is_empty() {
-                self.music = None;
-            } else {
-                self.music = Some(music.clone());
-            }
-        }
+        apply_path_patch(&mut self.background, &patch.background);
+        apply_path_patch(&mut self.music, &patch.music);
         if !patch.remove.is_empty() {
             let remove = patch
                 .remove
@@ -116,7 +135,9 @@ impl VisualState {
         {
             existing.x = Some(pos.x);
             existing.y = Some(pos.y);
-            existing.scale = pos.scale;
+            if let Some(scale) = pos.scale {
+                existing.scale = Some(scale);
+            }
             return Ok(());
         }
 

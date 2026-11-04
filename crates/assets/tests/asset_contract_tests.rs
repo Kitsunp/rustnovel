@@ -171,6 +171,13 @@ fn load_bytes_uses_cache_for_repeated_reads() {
         .expect("second read should be served from cache");
     assert_eq!(second, vec![1, 2, 3, 4]);
 
+    std::fs::write(&asset_path, [5u8, 6, 7, 8]).expect("replace file with repaired contents");
+    let repaired = store
+        .reload_bytes("audio/theme.ogg")
+        .expect("reload current file");
+    assert_eq!(repaired, vec![5, 6, 7, 8]);
+    assert_eq!(store.load_bytes("audio/theme.ogg").unwrap(), repaired);
+
     let _ = std::fs::remove_dir_all(root);
 }
 

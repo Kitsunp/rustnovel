@@ -1,14 +1,16 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use visual_novel_engine::authoring::{
-    parse_authoring_document_or_script, parse_runtime_script_from_entry,
-    validate_authoring_graph_with_project_root, AuthoringDocument, AuthoringPosition,
-    AuthoringValidationReport, LintCode, LintSeverity, NodeGraph, SceneProfile, StoryNode,
+    parse_authoring_document_or_script, parse_authoring_entry_with_format,
+    parse_runtime_script_from_entry, read_prepared_runtime_entry,
+    source_looks_like_authoring_document, validate_authoring_graph_with_project_root,
+    AuthoringDocument, AuthoringEntryFormat, AuthoringPosition, AuthoringValidationReport,
+    LintCode, LintSeverity, NodeGraph, SceneProfile, StoryNode,
 };
 use visual_novel_engine::{
     runtime::{
         AudioActionRaw, CharacterPlacementRaw, CondRaw, DialogueRaw, Engine, EventRaw,
-        SceneTransitionRaw, SceneUpdateRaw, ScriptRaw,
+        RuntimeScriptInput, SceneTransitionRaw, SceneUpdateRaw, ScriptRaw,
     },
     AssetId, ReproCase, ResourceLimiter, SecurityPolicy,
 };
@@ -46,12 +48,122 @@ fn runtime_entry_loader_accepts_script_and_authoring_document() {
     let loaded_script =
         parse_runtime_script_from_entry(&script_json).expect("legacy script should load");
     assert_eq!(loaded_script.events.len(), 1);
+    assert_eq!(
+        parse_authoring_entry_with_format(&script_json).unwrap().1,
+        AuthoringEntryFormat::RuntimeScript
+    );
 
     let document = AuthoringDocument::new(connected_dialogue_graph());
     let document_json = document.to_json().expect("authoring json");
     let loaded_authoring =
         parse_runtime_script_from_entry(&document_json).expect("authoring document should export");
     assert_eq!(loaded_authoring.events.len(), 1);
+
+    // A stream may split even the format header into separate reads.
+    struct Fragmented<'a>(&'a [u8]);
+    impl std::io::Read for Fragmented<'_> {
+        fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+            let count = output.len().min(1);
+            std::io::Read::read(&mut self.0, &mut output[..count])
+        }
+    }
+    let compiled = script.compile().unwrap().to_binary().unwrap();
+    let positional_document = serde_json::json!([
+        document.authoring_schema_version,
+        document.graph,
+        document.composer_layer_overrides,
+        document.composer_background_fit_overrides,
+        document.operation_log,
+        document.verification_runs
+    ])
+    .to_string();
+    for source in [&document_json, &positional_document] {
+        let (loaded, format) = parse_authoring_entry_with_format(source).unwrap();
+        assert_eq!(format, AuthoringEntryFormat::Document);
+        assert!(loaded.graph.has_same_content(&document.graph));
+    }
+    for source in [
+        script_json.as_bytes(),
+        document_json.as_bytes(),
+        positional_document.as_bytes(),
+        &compiled,
+    ] {
+        let input = visual_novel_engine::read_runtime_input_from_entry(Fragmented(source)).unwrap();
+        assert_eq!(
+            matches!(input, RuntimeScriptInput::Compiled(_)),
+            source == compiled.as_slice()
+        );
+        let engine = input
+            .into_engine(SecurityPolicy::default(), ResourceLimiter::default())
+            .unwrap();
+        assert_eq!(engine.script().events.len(), 1);
+        let prepared = read_prepared_runtime_entry(Fragmented(source))
+            .unwrap()
+            .into_engine(SecurityPolicy::default(), ResourceLimiter::default())
+            .unwrap();
+        assert_eq!(
+            prepared.script().to_binary().unwrap(),
+            engine.script().to_binary().unwrap()
+        );
+    }
+    let limit = ResourceLimiter::default().max_script_bytes;
+    let mut oversized = compiled;
+    oversized.resize(limit + 64, 0);
+    let mut reader = std::io::Cursor::new(oversized);
+    assert!(matches!(
+        visual_novel_engine::read_runtime_input_from_entry(&mut reader),
+        Err(visual_novel_engine::VnError::ResourceLimit(_))
+    ));
+    assert_eq!(reader.position(), limit as u64 + 1);
+
+    assert!(!source_looks_like_authoring_document(
+        r#"{"events": [], "other": {"graph": null}, "title": "operation_log"}"#
+    ));
+    let marked_runtime = r#"{"events": [], "gr\u0061ph": null}"#;
+    assert!(source_looks_like_authoring_document(marked_runtime));
+    assert!(parse_authoring_entry_with_format(marked_runtime)
+        .unwrap_err()
+        .to_string()
+        .contains("legacy fallback disabled"));
+    assert!(source_looks_like_authoring_document(
+        r#"{"other": 1e999, "title": "operation_log"}"#
+    ));
+    let unsupported_document = positional_document.replacen(
+        &format!("\"{}\"", document.authoring_schema_version),
+        "\"9.0\"",
+        1,
+    );
+    let error = parse_runtime_script_from_entry(&unsupported_document).unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("unsupported authoring_schema_version"));
+}
+
+#[test]
+fn prepared_authoring_entry_keeps_raw_policy() {
+    let policy = SecurityPolicy::default();
+    let limits = ResourceLimiter {
+        max_label_length: 16,
+        ..ResourceLimiter::default()
+    };
+    let script = ScriptRaw::new(
+        vec![EventRaw::SetFlag {
+            key: "a_flag_name_over_the_limit".into(),
+            value: true,
+        }],
+        BTreeMap::from([("start".into(), 0)]),
+    );
+    let document = AuthoringDocument::new(NodeGraph::from_script(&script));
+    let source = document.to_json().unwrap();
+    let projected = parse_runtime_script_from_entry(&source).unwrap();
+    policy
+        .validate_compiled(&projected.compile().unwrap(), limits)
+        .unwrap();
+    let prepared = read_prepared_runtime_entry(source.as_bytes()).unwrap();
+    assert!(matches!(
+        prepared.into_compiled(&policy, limits),
+        Err(visual_novel_engine::VnError::ResourceLimit(message)) if message == "flag key"
+    ));
 }
 
 #[test]
@@ -406,6 +518,67 @@ fn validation_covers_empty_keys_layout_and_scene_profile_assets() {
             .count()
             >= 2
     );
+}
+
+#[test]
+fn asset_validation_distinguishes_missing_from_non_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(dir.path().join("directory.png")).unwrap();
+    let mut graph = NodeGraph::new();
+    graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    for path in ["missing.png", "directory.png"] {
+        graph.add_node(
+            StoryNode::Scene {
+                profile: None,
+                background: Some(path.to_string()),
+                music: None,
+                characters: Vec::new(),
+            },
+            pos(0.0, 90.0),
+        );
+    }
+    let issues = validate_authoring_graph_with_project_root(&graph, dir.path());
+    let issue_for = |path: &str| {
+        issues
+            .iter()
+            .find(|issue| issue.asset_path.as_deref() == Some(path))
+            .unwrap()
+    };
+    assert_eq!(
+        issue_for("missing.png").code,
+        LintCode::AssetReferenceMissing
+    );
+    let not_file = issue_for("directory.png");
+    assert_eq!(not_file.code, LintCode::AssetAccessError);
+    assert!(not_file.message.contains("not a file"));
+    assert!(not_file.evidence_trace.is_some());
+}
+
+#[cfg(unix)]
+#[test]
+fn asset_validation_identifies_symlink_outside_project() {
+    use std::os::unix::fs::symlink;
+    let project = tempfile::tempdir().unwrap();
+    let external = tempfile::NamedTempFile::new().unwrap();
+    symlink(external.path(), project.path().join("outside.png")).unwrap();
+    let mut graph = NodeGraph::new();
+    graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("outside.png".to_string()),
+            music: None,
+            characters: Vec::new(),
+        },
+        pos(0.0, 90.0),
+    );
+    let issues = validate_authoring_graph_with_project_root(&graph, project.path());
+    let issue = issues
+        .iter()
+        .find(|issue| issue.asset_path.as_deref() == Some("outside.png"))
+        .unwrap();
+    assert_eq!(issue.code, LintCode::UnsafeAssetPath);
+    assert!(issue.message.contains("outside the project root"));
 }
 
 #[test]

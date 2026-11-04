@@ -91,6 +91,7 @@ impl<'a> LintPanel<'a> {
             }
             if ui
                 .add_enabled(self.can_revert_fix, egui::Button::new("Revert last fix"))
+                .on_disabled_hover_text("Available when the latest undoable edit is the quick-fix. Undo later edits first.")
                 .clicked()
             {
                 response.actions.push(LintPanelAction::RevertLastFix);

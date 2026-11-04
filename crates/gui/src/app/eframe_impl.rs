@@ -45,7 +45,7 @@ impl VnApp {
             .rect_filled(rect, 0.0, egui::Color32::from_rgb(14, 16, 22));
         ui.painter().line_segment(
             [rect.left_top(), rect.right_top()],
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(58, 64, 78)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(58, 64, 78)),
         );
         let content_rect = rect.shrink2(egui::vec2(10.0, PLAYER_STATUS_BAR_PADDING * 0.5));
         ui.allocate_ui_at_rect(content_rect, |ui| {
@@ -56,13 +56,13 @@ impl VnApp {
                             egui::RichText::new(message)
                                 .color(egui::Color32::from_rgb(130, 220, 160)),
                         )
-                        .wrap(false),
+                        .extend(),
                     );
                 }
                 if let Some(message) = &self.last_error {
                     ui.add(
                         egui::Label::new(egui::RichText::new(message).color(egui::Color32::RED))
-                            .wrap(false),
+                            .extend(),
                     );
                 }
             });
@@ -329,8 +329,7 @@ impl VnApp {
         self.render_audio_status(ui);
         ui.separator();
         ui.add(
-            egui::Label::new(format!("Save folder: {}", self.save_store.root().display()))
-                .wrap(true),
+            egui::Label::new(format!("Save folder: {}", self.save_store.root().display())).wrap(),
         );
         if dirty {
             self.persist_preferences();

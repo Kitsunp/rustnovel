@@ -73,6 +73,74 @@ fn test_audio_determinism() {
     assert_eq!(audio_step0, audio2_0, "Run 1 step 0 == Run 2 step 0");
     assert_eq!(audio_step1, audio2_1, "Run 1 step 1 == Run 2 step 1");
     assert_eq!(audio_step2, audio2_2, "Run 1 step 2 == Run 2 step 2");
+
+    for music in [None, Some("bgm_intro.ogg"), Some("bgm_battle.ogg")] {
+        for persisted in [false, true] {
+            let mut restored = Engine::new(
+                ScriptRaw::from_json(json).unwrap(),
+                SecurityPolicy::default(),
+                ResourceLimiter::default(),
+            )
+            .unwrap();
+            let mut snapshot = restored.state().clone();
+            snapshot.position = 1;
+            snapshot.visual.music = music.map(Into::into);
+            let mut rejected = restored.clone();
+            let mut invalid = snapshot.clone();
+            invalid.position = u32::MAX;
+            assert!(rejected.set_state(invalid).is_err());
+            assert_eq!(
+                rejected.take_audio_commands(),
+                audio_step0,
+                "failed restore preserves audio"
+            );
+            if persisted {
+                let script_id =
+                    visual_novel_engine::compute_script_id(&restored.script().to_binary().unwrap());
+                restored
+                    .load_save_data(visual_novel_engine::SaveData::new(
+                        script_id,
+                        snapshot.clone(),
+                    ))
+                    .unwrap();
+            } else {
+                restored.set_state(snapshot.clone()).unwrap();
+            }
+            let commands = restored.take_audio_commands();
+            assert_eq!(
+                commands.len(),
+                3,
+                "music={music:?}, persisted={persisted}: {commands:?}"
+            );
+            assert_eq!(commands[0], AudioCommand::StopSfx);
+            assert_eq!(commands[1], AudioCommand::StopVoice);
+            match (&commands[2], music) {
+                (
+                    AudioCommand::PlayBgm {
+                        path,
+                        resource,
+                        r#loop,
+                        volume,
+                        fade_in,
+                    },
+                    Some(expected),
+                ) => {
+                    assert_eq!(path.as_ref(), expected);
+                    assert_eq!(*resource, AssetId::from_path(expected));
+                    assert!(*r#loop);
+                    assert_eq!(*volume, None);
+                    assert_eq!(fade_in.as_millis(), 500);
+                }
+                (AudioCommand::StopBgm { fade_out }, None) => assert_eq!(fade_out.as_millis(), 500),
+                _ => panic!("restored music mismatch: {:?}", commands[2]),
+            }
+            assert!(restored.take_audio_commands().is_empty());
+            restored.set_state(snapshot).unwrap();
+            let (from_step, _) = restored.step().unwrap();
+            assert_eq!(from_step, commands, "step consumes restored audio once");
+            assert!(restored.take_audio_commands().is_empty());
+        }
+    }
 }
 
 #[test]

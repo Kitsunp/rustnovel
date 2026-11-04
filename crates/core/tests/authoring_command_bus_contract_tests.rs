@@ -46,11 +46,101 @@ fn command_bus_replay_headless() {
         },
     ];
 
-    let bus = AuthoringCommandBus::replay(&commands).expect("replay commands");
+    let mut bus = AuthoringCommandBus::replay(&commands).expect("replay commands");
     let script = bus.graph().to_script_strict().expect("strict script");
     script.compile().expect("compiled replay script");
     assert_eq!(bus.operation_log().len(), commands.len());
     assert_eq!(bus.verification_runs().len(), commands.len());
+    let original = bus.graph().clone();
+    let mut structural = AuthoringCommandBus::new(original.clone());
+    let mut document = AuthoringDocumentSession::new(AuthoringDocument::new(original.clone()));
+    for command in [
+        AuthoringCommand::Disconnect {
+            from: 0,
+            from_port: 0,
+        },
+        AuthoringCommand::RevertLast,
+        AuthoringCommand::RedoLast,
+        AuthoringCommand::RevertLast,
+        AuthoringCommand::Connect {
+            from: 1,
+            from_port: 0,
+            to: 1,
+        },
+        AuthoringCommand::RevertLast,
+        AuthoringCommand::RemoveNode { node_id: 0 },
+        AuthoringCommand::RevertLast,
+    ] {
+        let doc_command = match command {
+            AuthoringCommand::RevertLast => AuthoringDocumentCommand::RevertLast,
+            AuthoringCommand::RedoLast => AuthoringDocumentCommand::RedoLast,
+            _ => AuthoringDocumentCommand::Graph(command.clone()),
+        };
+        let outcome = structural.apply(command).unwrap();
+        let doc_outcome = document.apply(doc_command).unwrap();
+        let expected = validate_authoring_graph_no_io(structural.graph())
+            .iter()
+            .map(LintIssue::diagnostic_id)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            outcome
+                .verification
+                .diagnostic_ids
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            expected
+        );
+        assert_eq!(
+            outcome.verification.diagnostic_ids,
+            doc_outcome.verification.diagnostic_ids
+        );
+        assert_eq!(
+            outcome.verification.introduced_diagnostic_ids,
+            doc_outcome.verification.introduced_diagnostic_ids
+        );
+        assert_eq!(
+            outcome.verification.resolved_diagnostic_ids,
+            doc_outcome.verification.resolved_diagnostic_ids
+        );
+    }
+    bus.apply(AuthoringCommand::RevertLast).unwrap();
+    bus.apply(AuthoringCommand::RevertLast).unwrap();
+    assert_eq!(bus.redo_delta_count(), 2);
+    let first_redo = bus.apply(AuthoringCommand::RedoLast).unwrap();
+    assert_eq!(
+        first_redo.operation.operation_kind_v2,
+        Some(OperationKind::Redo)
+    );
+    assert_eq!(bus.redo_delta_count(), 1);
+    let count = bus.recorded_commands().len();
+    assert!(
+        bus.apply(commands[0].clone()).is_err(),
+        "failed command must preserve redo"
+    );
+    assert_eq!(bus.recorded_commands().len(), count);
+    assert_eq!(bus.redo_delta_count(), 1);
+    bus.apply(AuthoringCommand::RedoLast).unwrap();
+    assert!(bus.graph().has_same_content(&original));
+    assert!(bus.apply(AuthoringCommand::RedoLast).is_err());
+    let replayed = AuthoringCommandBus::replay(bus.recorded_commands()).unwrap();
+    assert!(replayed.graph().has_same_content(bus.graph()));
+    bus.apply(AuthoringCommand::RevertLast).unwrap();
+    bus.apply(AuthoringCommand::CreateNode {
+        node_id: 3,
+        node: StoryNode::End,
+        position: pos(100.0, 100.0),
+    })
+    .unwrap();
+    assert!(
+        bus.apply(AuthoringCommand::RedoLast).is_err(),
+        "new branch invalidates redo"
+    );
+    for command in [AuthoringCommand::RevertLast, AuthoringCommand::RedoLast] {
+        let mut graph = bus.graph().clone();
+        assert!(AuthoringCommandBus::apply_to_graph_unlogged(&mut graph, command).is_err());
+        assert!(graph.has_same_content(bus.graph()));
+    }
 }
 
 #[test]
@@ -131,6 +221,213 @@ fn undo_delta_memory_contract() {
     assert_eq!(bus.graph().len(), 1000);
     assert_eq!(bus.undo_delta_count(), created_delta_count + 50);
     assert_eq!(bus.redo_delta_count(), 0);
+
+    let mut document = AuthoringDocumentSession::new(AuthoringDocument::new(bus.graph().clone()));
+    for idx in 0..2 {
+        let text = format!("Large edit {idx}: {}", "x".repeat(64 * 1024));
+        let command = if idx == 0 {
+            AuthoringCommand::EditNode {
+                node_id: 1,
+                replacement: StoryNode::Dialogue {
+                    speaker: "Narrator".into(),
+                    text: text.clone(),
+                },
+            }
+        } else {
+            AuthoringCommand::EditDialogue {
+                node_id: 1,
+                speaker: "Narrator".into(),
+                text: text.clone(),
+            }
+        };
+        let graph_outcome = bus.apply(command.clone()).unwrap();
+        let document_outcome = document
+            .apply(AuthoringDocumentCommand::Graph(command))
+            .unwrap();
+        for operation in [&graph_outcome.operation, &document_outcome.operation] {
+            assert!(
+                operation.details.len() < 256,
+                "details duplicate {} bytes of edited content",
+                operation.details.len()
+            );
+            let saved: StoryNode =
+                serde_json::from_str(operation.after_value.as_deref().unwrap()).unwrap();
+            assert_eq!(
+                saved,
+                StoryNode::Dialogue {
+                    speaker: "Narrator".into(),
+                    text: text.clone()
+                }
+            );
+            assert!(operation.before_value.is_some());
+        }
+        assert_eq!(
+            graph_outcome.operation.details,
+            document_outcome.operation.details
+        );
+    }
+    let numeric = bus
+        .apply(AuthoringCommand::EditNode {
+            node_id: 1,
+            replacement: StoryNode::CharacterPlacement {
+                name: "Ava".into(),
+                x: 0,
+                y: 0,
+                scale: Some(f32::NAN),
+            },
+        })
+        .unwrap();
+    assert!(
+        numeric.operation.details.contains("NaN"),
+        "numeric details must retain values JSON cannot represent"
+    );
+}
+
+#[test]
+fn node_replacement_preserves_compatible_edges_and_restores_history() {
+    use std::collections::BTreeSet;
+    use visual_novel_engine::runtime::CondRaw;
+
+    let mut graph = NodeGraph::new();
+    for (id, node) in [
+        (0, StoryNode::Start),
+        (
+            1,
+            StoryNode::Choice {
+                prompt: "Route".into(),
+                options: vec!["A".into(), "B".into(), "C".into()],
+            },
+        ),
+        (2, StoryNode::default()),
+        (3, StoryNode::default()),
+        (4, StoryNode::default()),
+        (5, StoryNode::End),
+    ] {
+        assert!(graph.add_node_with_id(id, node, pos(0.0, id as f32 * 90.0)));
+    }
+    for (from, port, to) in [
+        (0, 0, 1),
+        (1, 0, 2),
+        (1, 2, 4),
+        (2, 0, 5),
+        (1, 1, 3),
+        (3, 0, 5),
+        (4, 0, 5),
+    ] {
+        graph.connect_port(from, port, to);
+    }
+    for (replacement, output_count, incoming) in [
+        (StoryNode::default(), 1, true),
+        (
+            StoryNode::Choice {
+                prompt: "Short".into(),
+                options: vec!["Only".into()],
+            },
+            1,
+            true,
+        ),
+        (
+            StoryNode::Choice {
+                prompt: "Empty".into(),
+                options: vec![],
+            },
+            0,
+            true,
+        ),
+        (
+            StoryNode::JumpIf {
+                target: "target".into(),
+                cond: CondRaw::Flag {
+                    key: "route".into(),
+                    is_set: true,
+                },
+            },
+            2,
+            true,
+        ),
+        (StoryNode::Start, 1, false),
+        (StoryNode::End, 0, true),
+        (
+            StoryNode::SubgraphCall {
+                fragment_id: "extension".into(),
+                entry_port: None,
+                exit_port: None,
+            },
+            usize::MAX,
+            true,
+        ),
+    ] {
+        let command = AuthoringCommand::EditNode {
+            node_id: 1,
+            replacement,
+        };
+        let expected_edges = graph
+            .connections()
+            .filter(|edge| {
+                (edge.from != 1 || edge.from_port < output_count) && (edge.to != 1 || incoming)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut bus = AuthoringCommandBus::new(graph.clone());
+        let assert_verification = |bus: &AuthoringCommandBus| {
+            let run = bus.verification_runs().last().unwrap();
+            let expected = validate_authoring_graph_no_io(bus.graph())
+                .iter()
+                .map(LintIssue::diagnostic_id)
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                run.diagnostic_ids.iter().cloned().collect::<BTreeSet<_>>(),
+                expected
+            );
+            let mut fresh = AuthoringCommandBus::new(bus.graph().clone());
+            let check = fresh
+                .apply(AuthoringCommand::ImportAsset {
+                    path: "audit.png".into(),
+                })
+                .unwrap();
+            assert_eq!(
+                run.story_semantic_sha256,
+                check.verification.story_semantic_sha256
+            );
+        };
+        bus.apply(command.clone()).unwrap();
+        assert_eq!(
+            bus.graph().connections().cloned().collect::<Vec<_>>(),
+            expected_edges
+        );
+        assert_verification(&bus);
+        let edited = bus.graph().clone();
+        let mut unlogged = graph.clone();
+        AuthoringCommandBus::apply_to_graph_unlogged(&mut unlogged, command.clone()).unwrap();
+        assert!(unlogged.has_same_content(&edited));
+        bus.apply(AuthoringCommand::RevertLast).unwrap();
+        assert!(
+            bus.graph().has_same_content(&graph),
+            "undo must restore edge order and node content"
+        );
+        assert_verification(&bus);
+        bus.apply(AuthoringCommand::RedoLast).unwrap();
+        assert!(bus.graph().has_same_content(&edited));
+        assert_verification(&bus);
+        let count = bus.recorded_commands().len();
+        let shared = bus.graph().clone();
+        let node_ptr = bus.graph().get_node(1).unwrap() as *const StoryNode;
+        assert!(
+            bus.apply(command).is_err(),
+            "unchanged edits must not grow history"
+        );
+        assert_eq!(bus.recorded_commands().len(), count);
+        assert_eq!(
+            bus.graph().get_node(1).unwrap() as *const StoryNode,
+            node_ptr
+        );
+        assert!(shared.has_same_content(bus.graph()));
+        let mut replay = AuthoringCommandBus::new(graph.clone());
+        for command in bus.recorded_commands() {
+            replay.apply(command.clone()).unwrap();
+        }
+        assert!(replay.graph().has_same_content(bus.graph()));
+    }
 }
 
 #[test]
@@ -221,8 +518,19 @@ fn operation_log_replay_create_connect_edit_import_move_revert() {
     );
     assert_eq!(bus.operation_log().len(), bus.verification_runs().len());
 
+    bus.apply(AuthoringCommand::RedoLast)
+        .expect("redo layer move");
+    let layer = composer::list_layered_objects(bus.graph(), Some(1))
+        .into_iter()
+        .find(|object| object.object_id == object_id)
+        .unwrap();
+    assert_eq!(
+        (layer.x, layer.y, layer.scale),
+        (Some(640), Some(360), Some(1.2))
+    );
+
     let replay = AuthoringCommandBus::replay(bus.recorded_commands()).expect("replay log commands");
-    assert_eq!(replay.graph().len(), bus.graph().len());
+    assert!(replay.graph().has_same_content(bus.graph()));
 }
 
 #[test]

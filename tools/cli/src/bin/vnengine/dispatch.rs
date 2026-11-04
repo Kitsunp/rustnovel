@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn run_command(cli: Cli, json_output: bool) -> Result<Option<serde_json::Value>> {
     match cli.command {
+        Command::Asset { command } => asset_import::run(command),
         Command::Validate { script } => {
             validate_script(&script)?;
             Ok(Some(serde_json::json!({
@@ -14,14 +15,20 @@ pub(super) fn run_command(cli: Cli, json_output: bool) -> Result<Option<serde_js
             script,
             project_root,
             output,
-        } => {
-            authoring::validate_authoring_script(
-                &script,
-                project_root.as_deref(),
-                output.as_deref(),
-            )?;
-            Ok(None)
-        }
+        } => authoring::validate_authoring_script(
+            &script,
+            project_root.as_deref(),
+            output.as_deref(),
+            json_output,
+        ),
+        Command::Authoring {
+            command: authoring::AuthoringCommand::Validate(args),
+        } => authoring::validate_authoring_script(
+            &args.project,
+            args.project_root.as_deref(),
+            args.output.as_deref(),
+            json_output,
+        ),
         Command::Authoring { command } => {
             authoring::run_authoring_command(command)?;
             Ok(None)
@@ -154,36 +161,12 @@ pub(super) fn run_command(cli: Cli, json_output: bool) -> Result<Option<serde_js
                 hmac_key,
             };
             if dry_run || plan {
-                let plan = ExportService::new().plan_export(&spec)?;
-                ExportService::new().validate_export_plan(&plan)?;
+                let service = ExportService::new();
+                let plan = service.plan_export(&spec)?;
                 if require_executable {
-                    let expected = spec.target_platform.expected_executable_name();
-                    if plan.executable.as_deref() != Some(expected) {
-                        let diagnostics = plan
-                            .diagnostics
-                            .iter()
-                            .filter(|diagnostic| diagnostic.blocking_release)
-                            .map(|diagnostic| {
-                                format!(
-                                    "{} trace_id={} phase={} target={} message={} action={}",
-                                    diagnostic.code,
-                                    diagnostic.trace_id,
-                                    diagnostic.phase,
-                                    diagnostic.target,
-                                    diagnostic.message,
-                                    diagnostic.suggested_action
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join("; ");
-                        let message = format!(
-                            "{} executable export cannot produce '{}'; blocking diagnostics: {}",
-                            spec.target_platform.as_str(),
-                            expected,
-                            diagnostics
-                        );
-                        return Err(visual_novel_engine::VnError::invalid_script(message).into());
-                    }
+                    service.validate_executable_export_plan(&plan, spec.target_platform)?;
+                } else {
+                    service.validate_export_plan(&plan)?;
                 }
                 if json_output {
                     Ok(Some(serde_json::to_value(plan)?))

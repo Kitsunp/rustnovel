@@ -4,9 +4,10 @@ use crate::authoring::{LintSeverity, NodeGraph, StoryNode};
 use crate::event::EventRaw;
 use crate::{VnError, VnResult};
 
-use super::export::to_script_lossy_for_diagnostics;
-
-pub(super) fn validate_strict_graph_export(graph: &NodeGraph) -> VnResult<()> {
+pub(super) fn validate_strict_graph_export(
+    graph: &NodeGraph,
+    script: &crate::script::ScriptRaw,
+) -> VnResult<()> {
     let node_lookup = graph
         .nodes()
         .map(|(id, node, _)| (*id, node))
@@ -16,11 +17,7 @@ pub(super) fn validate_strict_graph_export(graph: &NodeGraph) -> VnResult<()> {
         .filter_map(|(id, node, _)| matches!(node, StoryNode::Start).then_some(*id))
         .collect::<Vec<_>>();
     let flow = graph.flow_analysis(&start_nodes);
-    let script_labels = to_script_lossy_for_diagnostics(graph)
-        .labels
-        .keys()
-        .cloned()
-        .collect::<BTreeSet<_>>();
+    let script_labels = script.labels.keys().cloned().collect::<BTreeSet<_>>();
     let connected_ports = graph
         .connections()
         .map(|conn| (conn.from, conn.from_port))

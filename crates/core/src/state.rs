@@ -76,10 +76,16 @@ impl EngineState {
 
     /// Records a dialogue line into the history buffer.
     pub fn record_dialogue(&mut self, dialogue: &DialogueCompiled) {
+        self.trim_history();
         if self.history.len() >= HISTORY_LIMIT {
             self.history.pop_front();
         }
         self.history.push_back(dialogue.clone());
+    }
+
+    pub(crate) fn trim_history(&mut self) {
+        let excess = self.history.len().saturating_sub(HISTORY_LIMIT);
+        drop(self.history.drain(..excess));
     }
 }
 

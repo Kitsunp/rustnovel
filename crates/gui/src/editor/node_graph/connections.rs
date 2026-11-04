@@ -154,7 +154,7 @@ impl NodeGraph {
     /// Returns the number of connections.
     #[inline]
     pub fn connection_count(&self) -> usize {
-        self.authoring.connection_count()
+        self.authoring_graph().connection_count()
     }
 
     /// Removes a specific option from a Choice node and updates connections.

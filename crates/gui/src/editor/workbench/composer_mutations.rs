@@ -299,7 +299,8 @@ fn command_bus_character_object(
     for object in composer::list_layered_objects(graph, Some(node_id)) {
         if object.source_node_id != Some(node_id)
             || object.character_name.as_deref() != Some(edit.name.as_str())
-            || object.expression.as_deref() != edit.expression.as_deref()
+            || (object.expression.is_some()
+                && object.expression.as_deref() != edit.expression.as_deref())
         {
             continue;
         }

@@ -5,8 +5,8 @@ use visual_novel_engine::authoring::composer::{
 use visual_novel_engine::authoring::{AuthoringCommand, AuthoringDocumentCommand};
 
 use super::super::api_v2::{
-    stage_layer_names, PyComposerPreviewSession, PyComposerSnapshot, PyLayeredSceneObject,
-    PyOperationLogEntry, PyVerificationRun,
+    composer_resolution, stage_layer_names, PyComposerPreviewSession, PyComposerSnapshot,
+    PyLayeredSceneObject, PyOperationLogEntry, PyVerificationRun,
 };
 use super::{py_command_error, PyNodeGraph};
 
@@ -45,16 +45,16 @@ impl PyNodeGraph {
                 }
             }
         }
-        let resolution = stage_width.zip(stage_height);
+        let resolution = composer_resolution(stage_width, stage_height);
         let mut snapshot = build_composer_snapshot(
-            &self.inner,
+            self.inner(),
             selected_node_id,
             resolution,
             None,
             locale,
             None,
         );
-        apply_layer_overrides(&mut snapshot.objects, &self.layer_overrides);
+        apply_layer_overrides(&mut snapshot.objects, &self.doc().composer_layer_overrides);
         snapshot.into()
     }
 
@@ -72,8 +72,8 @@ impl PyNodeGraph {
                 .map(Into::into)
                 .collect();
         }
-        let mut objects = collect_layered_objects(&self.inner, selected_node_id);
-        apply_layer_overrides(&mut objects, &self.layer_overrides);
+        let mut objects = collect_layered_objects(self.inner(), selected_node_id);
+        apply_layer_overrides(&mut objects, &self.doc().composer_layer_overrides);
         objects.into_iter().map(Into::into).collect()
     }
 
@@ -152,7 +152,7 @@ impl PyNodeGraph {
         &self,
         node_id: u32,
     ) -> pyo3::PyResult<PyComposerPreviewSession> {
-        PyComposerPreviewSession::start(&self.inner, node_id)
+        PyComposerPreviewSession::start(self.inner(), node_id)
     }
 
     pub(super) fn py_edit_dialogue(

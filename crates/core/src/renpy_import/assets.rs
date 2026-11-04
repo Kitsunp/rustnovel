@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use crate::authoring::is_unsafe_asset_ref;
 use crate::error::{VnError, VnResult};
 use crate::event::EventRaw;
 
@@ -242,7 +243,7 @@ fn rewrite_path_and_copy(
                 return;
             }
         }
-        match fs::copy(&source, &destination) {
+        match crate::atomic_io::atomic_copy(&source, &destination) {
             Ok(_) => {
                 copied.insert(resolved_rel.clone());
             }
@@ -265,6 +266,9 @@ fn rewrite_path_and_copy(
 }
 
 fn normalize_asset_rel_path(raw: &str) -> Result<String, &'static str> {
+    if is_unsafe_asset_ref(raw) {
+        return Err("asset_path_traversal");
+    }
     let mut parts = Vec::new();
     let path = Path::new(raw.trim());
     for component in path.components() {
@@ -375,4 +379,54 @@ fn is_symbolic_asset_token(value: &str) -> bool {
         value.to_ascii_lowercase().as_str(),
         "black" | "white" | "gray" | "grey" | "red" | "green" | "blue"
     )
+}
+
+/// Make copied resources available to the editor's asset browser immediately.
+pub(super) fn register_imported_assets(
+    root: &Path,
+    events: &[EventRaw],
+    manifest: &mut crate::manifest::ProjectManifest,
+) {
+    use crate::manifest::{register_asset_path, AssetImportKind};
+    let canonical_root = match root.canonicalize() {
+        Ok(root) => root,
+        Err(_) => return,
+    };
+    let mut register = |path: &str, kind| {
+        // Failed copies and symbolic aliases must not become broken browser cards.
+        if let Ok(source) = root.join(path).canonicalize() {
+            if source.is_file() && source.starts_with(&canonical_root) {
+                if let Ok(relative) = source.strip_prefix(&canonical_root) {
+                    register_asset_path(manifest, relative.to_path_buf(), kind, relative);
+                }
+            }
+        }
+    };
+    for event in events {
+        let (background, music, characters) = match event {
+            EventRaw::Scene(scene) => {
+                (&scene.background, &scene.music, scene.characters.as_slice())
+            }
+            EventRaw::Patch(patch) => (&patch.background, &patch.music, patch.add.as_slice()),
+            EventRaw::AudioAction(action) => {
+                if let Some(path) = &action.asset {
+                    register(path, AssetImportKind::Audio);
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        if let Some(path) = background {
+            register(path, AssetImportKind::Background);
+        }
+        if let Some(path) = music {
+            register(path, AssetImportKind::Audio);
+        }
+        for character in characters {
+            register(&character.name, AssetImportKind::Character);
+            if let Some(path) = &character.expression {
+                register(path, AssetImportKind::Character);
+            }
+        }
+    }
 }

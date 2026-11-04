@@ -1,3 +1,4 @@
+use super::diagnostics::normalize_trace_part as normalize_diagnostic_part;
 use super::{DiagnosticTarget, EvidenceTrace, FieldPath, SemanticValue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +68,7 @@ pub enum LintCode {
     AudioAssetMissing,
     AudioAssetEmpty,
     AssetReferenceMissing,
+    AssetAccessError,
     SceneBackgroundEmpty,
     UnsafeAssetPath,
     InvalidAudioChannel,
@@ -117,6 +119,7 @@ impl LintCode {
         Self::AudioAssetMissing,
         Self::AudioAssetEmpty,
         Self::AssetReferenceMissing,
+        Self::AssetAccessError,
         Self::SceneBackgroundEmpty,
         Self::UnsafeAssetPath,
         Self::InvalidAudioChannel,
@@ -167,6 +170,7 @@ impl LintCode {
             LintCode::AudioAssetMissing => "VAL_AUDIO_MISSING",
             LintCode::AudioAssetEmpty => "VAL_AUDIO_EMPTY",
             LintCode::AssetReferenceMissing => "VAL_ASSET_NOT_FOUND",
+            LintCode::AssetAccessError => "VAL_ASSET_ACCESS_ERROR",
             LintCode::SceneBackgroundEmpty => "VAL_SCENE_BG_EMPTY",
             LintCode::UnsafeAssetPath => "VAL_ASSET_UNSAFE_PATH",
             LintCode::InvalidAudioChannel => "VAL_AUDIO_CHANNEL_INVALID",
@@ -389,17 +393,4 @@ impl LintIssue {
         ));
         self
     }
-}
-
-fn normalize_diagnostic_part(value: &str) -> String {
-    let out = value
-        .trim()
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-        .collect::<String>();
-    let mut compact = out;
-    while compact.contains("__") {
-        compact = compact.replace("__", "_");
-    }
-    compact.trim_matches('_').to_string()
 }

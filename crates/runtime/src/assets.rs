@@ -4,11 +4,20 @@ use std::sync::Arc;
 /// Asset store trait for runtime resource loading.
 pub trait AssetStore {
     fn load_bytes(&self, id: &str) -> Result<Vec<u8>, String>;
+
+    /// Reads the resource again, bypassing any cached bytes when supported.
+    fn reload_bytes(&self, id: &str) -> Result<Vec<u8>, String> {
+        self.load_bytes(id)
+    }
 }
 
 impl<T: AssetStore + ?Sized> AssetStore for Arc<T> {
     fn load_bytes(&self, id: &str) -> Result<Vec<u8>, String> {
         (**self).load_bytes(id)
+    }
+
+    fn reload_bytes(&self, id: &str) -> Result<Vec<u8>, String> {
+        (**self).reload_bytes(id)
     }
 }
 
@@ -37,5 +46,9 @@ impl AssetStore for MemoryAssetStore {
 impl AssetStore for vnengine_assets::AssetStore {
     fn load_bytes(&self, id: &str) -> Result<Vec<u8>, String> {
         vnengine_assets::AssetStore::load_bytes(self, id).map_err(|e| e.to_string())
+    }
+
+    fn reload_bytes(&self, id: &str) -> Result<Vec<u8>, String> {
+        vnengine_assets::AssetStore::reload_bytes(self, id).map_err(|e| e.to_string())
     }
 }

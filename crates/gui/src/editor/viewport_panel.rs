@@ -31,7 +31,7 @@ impl<'a> ViewportPanel<'a> {
         painter.rect_stroke(
             viewport_rect,
             5.0,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(110)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(110)),
         );
 
         if self.scene.is_empty() {
@@ -151,15 +151,15 @@ fn draw_image_glyph(
     painter.rect_stroke(
         rect,
         4.0,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(215)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(215)),
     );
     painter.line_segment(
         [rect.left_top(), rect.right_bottom()],
-        egui::Stroke::new(1.0, egui::Color32::from_gray(230)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(230)),
     );
     painter.line_segment(
         [rect.right_top(), rect.left_bottom()],
-        egui::Stroke::new(1.0, egui::Color32::from_gray(230)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(230)),
     );
     painter.text(
         rect.center_bottom() - egui::vec2(0.0, 8.0),
@@ -182,7 +182,7 @@ fn draw_character_glyph(
     painter.rect_stroke(
         rect,
         6.0,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(220)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(220)),
     );
 
     let head_r = (rect.width().min(rect.height()) * 0.16).max(6.0);
@@ -230,7 +230,7 @@ fn draw_video_glyph(painter: &egui::Painter, rect: egui::Rect, alpha: u8, label:
     painter.rect_stroke(
         rect,
         4.0,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(200)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(200)),
     );
 
     let triangle = vec![
@@ -270,7 +270,7 @@ fn draw_audio_glyph(
     painter.rect_stroke(
         tag,
         5.0,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(195)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(195)),
     );
 
     let meter = egui::Rect::from_min_size(

@@ -2,15 +2,15 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use crate::authoring::load_runtime_projection_for_bundle;
 use crate::error::VnResult;
-use crate::load_runtime_script_from_entry;
-use crate::manifest::ProjectManifest;
+use crate::script::{ScriptCompiled, ScriptRaw};
 
 use super::assets::{detect_asset_path_collisions, AssetPathCollision};
 use super::capabilities::{build_capability_report, ExportCapabilityReport};
 use super::helpers::{
-    canonicalize_within_root, ensure_regular_file, invalid_bundle, normalize_path_display,
-    planned_output_root, sanitize_relative_path, to_hex,
+    canonicalize_within_root, invalid_bundle, normalize_path_display, planned_output_root,
+    sanitize_relative_path, to_hex,
 };
 use super::materialize::{has_extension, runtime_artifact_matches_target};
 use super::{
@@ -18,16 +18,35 @@ use super::{
 };
 
 pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
+    Ok(prepare_plan(spec)?.plan)
+}
+
+pub(super) struct PlanSnapshot {
+    pub(super) plan: ExportPlan,
+    pub(super) project_root: PathBuf,
+    pub(super) output_root: PathBuf,
+    pub(super) script_source_path: PathBuf,
+    pub(super) manifest: crate::ProjectManifest,
+    pub(super) script: ScriptRaw,
+    pub(super) compiled: Option<ScriptCompiled>,
+    pub(super) script_json: String,
+    pub(super) runtime_artifact_path: Option<PathBuf>,
+}
+
+pub(super) fn prepare_plan(spec: &ExportBundleSpec) -> VnResult<PlanSnapshot> {
     let project_root = spec
         .project_root
         .canonicalize()
         .map_err(|e| invalid_bundle(format!("canonicalize project_root: {e}")))?;
     let output_root = planned_output_root(&spec.output_root)?;
+    if project_root.starts_with(&output_root) {
+        return Err(invalid_bundle(
+            "output_root would replace the source project; choose a separate export folder",
+        ));
+    }
 
-    let manifest_path = project_root.join("project.vnm");
-    ensure_regular_file(&manifest_path, "manifest")?;
-    let manifest = ProjectManifest::load(&manifest_path)
-        .map_err(|e| invalid_bundle(format!("load manifest '{}': {e}", manifest_path.display())))?;
+    let manifest =
+        super::helpers::load_export_manifest(&project_root, spec.entry_script.as_deref())?;
 
     let entry_script = spec
         .entry_script
@@ -36,12 +55,18 @@ pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
     let entry_script = sanitize_relative_path(&entry_script, "entry_script")?;
     let script_source_path =
         canonicalize_within_root(&project_root, &entry_script, "entry_script")?;
-    let script = load_runtime_script_from_entry(&script_source_path).map_err(|e| {
-        invalid_bundle(format!(
-            "load entry script '{}': {e}",
-            entry_script.display()
-        ))
-    })?;
+    if script_source_path.starts_with(&output_root) {
+        return Err(invalid_bundle(
+            "output_root contains the entry script; choose a separate export folder",
+        ));
+    }
+    let (script, compiled) =
+        load_runtime_projection_for_bundle(&script_source_path).map_err(|e| {
+            invalid_bundle(format!(
+                "load entry script '{}': {e}",
+                entry_script.display()
+            ))
+        })?;
     let script_json = script
         .to_json()
         .map_err(|e| invalid_bundle(format!("serialize runtime script: {e}")))?;
@@ -51,7 +76,7 @@ pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
     let capabilities = build_capability_report(&script, spec.runtime_artifact.is_some());
 
     let mut diagnostics = capability_diagnostics(&capabilities, spec.target_platform);
-    for collision in detect_asset_path_collisions(&project_root, &script)? {
+    for collision in detect_asset_path_collisions(&project_root, &script, Some(&output_root))? {
         let message = collision.message();
         let (code, probable_cause, suggested_action, consequence, asset) = match &collision {
             AssetPathCollision::Case { asset, existing } => (
@@ -94,11 +119,17 @@ pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
         }));
     }
     let runtime_artifact_path = match spec.runtime_artifact.as_deref() {
-        Some(path) => match resolve_runtime_artifact_for_plan(path, &project_root) {
-            Ok(path) => Some(path),
-            Err(err) => {
-                let file = normalize_path_display(path);
-                diagnostics.push(export_diagnostic(ExportDiagnosticInput {
+        Some(path) => {
+            match resolve_runtime_artifact_for_plan(path, &project_root) {
+                Ok(path) => {
+                    if path.starts_with(&output_root) {
+                        return Err(invalid_bundle("output_root contains the source runtime; choose a separate export folder"));
+                    }
+                    Some(path)
+                }
+                Err(err) => {
+                    let file = normalize_path_display(path);
+                    diagnostics.push(export_diagnostic(ExportDiagnosticInput {
                     code: "export.runtime_artifact.unreadable",
                     severity: "error",
                     phase: "plan",
@@ -113,9 +144,10 @@ pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
                     node: None,
                     field: Some("runtime_artifact"),
                 }));
-                None
+                    None
+                }
             }
-        },
+        }
         None => {
             let message = format!(
                 "{} package is missing runtime_artifact, so '{}' cannot be materialized.",
@@ -234,7 +266,7 @@ pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
         }));
     }
 
-    Ok(ExportPlan {
+    let plan = ExportPlan {
         schema: "vnengine.export_plan.v1".to_string(),
         target_platform: spec.target_platform.as_str().to_string(),
         output_layout_version: spec.output_layout_version,
@@ -259,6 +291,17 @@ pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
         diagnostics,
         integrity: spec.integrity.as_str().to_string(),
         capabilities,
+    };
+    Ok(PlanSnapshot {
+        plan,
+        project_root,
+        output_root,
+        script_source_path,
+        manifest,
+        script,
+        compiled,
+        script_json,
+        runtime_artifact_path,
     })
 }
 

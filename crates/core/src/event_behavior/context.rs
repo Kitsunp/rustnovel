@@ -191,7 +191,12 @@ pub struct ValidationCtx<'a> {
     pub(super) graph: &'a NodeGraph,
     pub(super) node_id: u32,
     pub(super) script_labels: &'a BTreeSet<String>,
-    pub(super) asset_exists: &'a dyn Fn(&str) -> bool,
+    asset_probe: AssetProbe<'a>,
+}
+
+enum AssetProbe<'a> {
+    Boolean(&'a dyn Fn(&str) -> bool),
+    Detailed(&'a dyn Fn(&str) -> Result<(), crate::authoring::validation::assets::AssetProbeError>),
 }
 
 impl<'a> ValidationCtx<'a> {
@@ -205,7 +210,26 @@ impl<'a> ValidationCtx<'a> {
             graph,
             node_id,
             script_labels,
-            asset_exists,
+            asset_probe: AssetProbe::Boolean(asset_exists),
+        }
+    }
+
+    pub(crate) fn with_asset_probe(
+        graph: &'a NodeGraph,
+        node_id: u32,
+        script_labels: &'a BTreeSet<String>,
+        asset_probe: &'a dyn Fn(
+            &str,
+        ) -> Result<
+            (),
+            crate::authoring::validation::assets::AssetProbeError,
+        >,
+    ) -> Self {
+        Self {
+            graph,
+            node_id,
+            script_labels,
+            asset_probe: AssetProbe::Detailed(asset_probe),
         }
     }
 
@@ -222,7 +246,24 @@ impl<'a> ValidationCtx<'a> {
     }
 
     pub fn asset_exists(&self, asset: &str) -> bool {
-        (self.asset_exists)(asset)
+        self.probe_asset(asset).is_ok()
+    }
+
+    pub(crate) fn probe_asset(
+        &self,
+        asset: &str,
+    ) -> Result<(), crate::authoring::validation::assets::AssetProbeError> {
+        use crate::authoring::validation::assets::AssetProbeError;
+        match self.asset_probe {
+            AssetProbe::Boolean(probe) => {
+                if probe(asset) {
+                    Ok(())
+                } else {
+                    Err(AssetProbeError::Missing)
+                }
+            }
+            AssetProbe::Detailed(probe) => probe(asset),
+        }
     }
 }
 

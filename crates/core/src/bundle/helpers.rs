@@ -1,9 +1,34 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use sha2::{Digest, Sha256};
+pub(super) use crate::hashing::{hex_digest as to_hex, sha256_hex};
 
 use crate::error::{VnError, VnResult};
+
+/// Standalone entries need no source manifest. A present manifest must still be
+/// a regular, valid file; unreadable or malformed projects never use defaults.
+pub(super) fn load_export_manifest(
+    root: &Path,
+    entry: Option<&Path>,
+) -> VnResult<crate::ProjectManifest> {
+    let path = root.join("project.vnm");
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && entry.is_some() => {
+            let mut manifest = crate::ProjectManifest::new("Visual Novel Game", "Author");
+            manifest.settings.entry_point = normalize_path_display(&sanitize_relative_path(
+                entry.expect("explicit entry checked"),
+                "entry_script",
+            )?);
+            Ok(manifest)
+        }
+        _ => {
+            ensure_regular_file(&path, "manifest")?;
+            crate::ProjectManifest::load(&path).map_err(|error| {
+                invalid_bundle(format!("load manifest '{}': {error}", path.display()))
+            })
+        }
+    }
+}
 
 pub(super) fn sanitize_relative_path(path: &Path, field_name: &str) -> VnResult<PathBuf> {
     let mut out = PathBuf::new();
@@ -101,11 +126,54 @@ pub(super) fn output_root_exists_as_directory(path: &Path) -> VnResult<bool> {
 }
 
 pub(super) fn planned_output_root(path: &Path) -> VnResult<PathBuf> {
-    if output_root_exists_as_directory(path)? {
-        path.canonicalize()
-            .map_err(|e| invalid_bundle(format!("canonicalize output_root: {e}")))
-    } else {
-        Ok(path.to_path_buf())
+    let absolute = std::path::absolute(path).map_err(|error| {
+        invalid_bundle(format!("resolve output_root '{}': {error}", path.display()))
+    })?;
+    let mut ancestor = absolute.as_path();
+    let mut missing = Vec::new();
+    loop {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) => {
+                if missing.is_empty() && !metadata.file_type().is_dir() {
+                    return Err(invalid_bundle(format!(
+                        "output_root is not a directory: '{}'",
+                        path.display()
+                    )));
+                }
+                let mut resolved = ancestor.canonicalize().map_err(|error| {
+                    invalid_bundle(format!(
+                        "canonicalize output_root ancestor '{}': {error}",
+                        ancestor.display()
+                    ))
+                })?;
+                if !output_root_exists_as_directory(&resolved)? {
+                    return Err(invalid_bundle(format!(
+                        "output_root ancestor disappeared: '{}'",
+                        resolved.display()
+                    )));
+                }
+                resolved.extend(missing.into_iter().rev());
+                return Ok(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let leaf = ancestor.file_name().ok_or_else(|| {
+                    invalid_bundle(format!(
+                        "cannot resolve missing output_root component '{}': {error}",
+                        ancestor.display()
+                    ))
+                })?;
+                missing.push(leaf);
+                ancestor = ancestor.parent().ok_or_else(|| {
+                    invalid_bundle(format!("cannot resolve output_root '{}'", path.display()))
+                })?;
+            }
+            Err(error) => {
+                return Err(invalid_bundle(format!(
+                    "inspect output_root ancestor '{}': {error}",
+                    ancestor.display()
+                )));
+            }
+        }
     }
 }
 
@@ -113,21 +181,6 @@ pub(super) fn normalize_path_display(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-pub(super) fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    to_hex(digest.as_slice())
-}
-
 pub(super) fn invalid_bundle(message: impl Into<String>) -> VnError {
     VnError::InvalidScript(format!("bundle export: {}", message.into()))
-}
-
-pub(super) fn to_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
 }

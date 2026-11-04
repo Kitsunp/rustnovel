@@ -35,6 +35,42 @@ impl NodeGraph {
         &mut self,
         orientation: GraphLayoutOrientation,
     ) -> bool {
+        let mut graph = self.authoring_graph().clone();
+        if !(GraphLayout { graph: &mut graph }).apply(orientation) {
+            return false;
+        }
+        let positions = graph.nodes().map(|(id, _, pos)| (*id, *pos)).collect();
+        self.apply_node_positions_reported(positions)
+    }
+}
+
+struct GraphLayout<'a> {
+    graph: &'a mut AuthoringGraph,
+}
+
+impl GraphLayout<'_> {
+    fn nodes(&self) -> impl Iterator<Item = (u32, StoryNode, egui::Pos2)> + '_ {
+        self.graph
+            .nodes()
+            .map(|(id, node, pos)| (*id, node.clone(), egui::pos2(pos.x, pos.y)))
+    }
+    fn connections(&self) -> impl Iterator<Item = GraphConnection> + '_ {
+        self.graph.connections().cloned()
+    }
+    fn get_node(&self, id: u32) -> Option<&StoryNode> {
+        self.graph.get_node(id)
+    }
+    fn set_node_pos(&mut self, id: u32, pos: egui::Pos2) -> bool {
+        self.graph
+            .set_node_pos(id, AuthoringPosition::new(pos.x, pos.y))
+    }
+    fn len(&self) -> usize {
+        self.graph.len()
+    }
+    fn is_empty(&self) -> bool {
+        self.graph.is_empty()
+    }
+    fn apply(&mut self, orientation: GraphLayoutOrientation) -> bool {
         if self.is_empty() {
             return false;
         }

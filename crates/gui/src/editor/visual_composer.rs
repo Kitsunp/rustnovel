@@ -3,7 +3,9 @@ use eframe::egui;
 use std::collections::HashMap;
 use std::path::Path;
 use visual_novel_engine::{
-    authoring::composer::PresentationSnapshot, runtime::Engine, EntityId, SceneState,
+    authoring::composer::{PresentationSnapshot, DEFAULT_COMPOSER_RESOLUTION},
+    runtime::Engine,
+    EntityId, SceneState,
 };
 
 use crate::editor::resource_service::EditorResourceService;
@@ -60,6 +62,10 @@ pub enum ComposerNodeMutation {
 
 pub enum VisualComposerAction {
     SelectNode(u32),
+    InspectChoice {
+        node_id: u32,
+        option_index: usize,
+    },
     CreateNode {
         node: StoryNode,
         pos: egui::Pos2,
@@ -94,6 +100,8 @@ pub enum VisualComposerAction {
     },
     PreviewModeChanged(ComposerPreviewMode),
     TestFromSelection,
+    PreviewAudio,
+    StopAudio,
     TestRestart,
     TestAdvance,
     TestChoose(usize),
@@ -271,11 +279,12 @@ pub struct VisualComposerPanel<'a> {
     image_failures: &'a mut HashMap<String, String>,
     resource_service: &'a mut EditorResourceService,
     selected_entity_id: &'a mut Option<u32>,
-    layer_overrides: &'a HashMap<String, LayerOverride>,
+    layer_overrides: &'a std::collections::BTreeMap<String, LayerOverride>,
     active_event_node_id: Option<u32>,
     selected_authoring_node_id: Option<u32>,
     selected_authoring_node: Option<&'a StoryNode>,
     presentation_snapshot: Option<&'a PresentationSnapshot>,
+    entity_object_ids: HashMap<u32, String>,
 }
 
 pub struct VisualComposerPanelParams<'a> {
@@ -291,7 +300,7 @@ pub struct VisualComposerPanelParams<'a> {
     pub image_failures: &'a mut HashMap<String, String>,
     pub resource_service: &'a mut EditorResourceService,
     pub selected_entity_id: &'a mut Option<u32>,
-    pub layer_overrides: &'a HashMap<String, LayerOverride>,
+    pub layer_overrides: &'a std::collections::BTreeMap<String, LayerOverride>,
     pub active_event_node_id: Option<u32>,
     pub selected_authoring_node_id: Option<u32>,
     pub selected_authoring_node: Option<&'a StoryNode>,
@@ -318,7 +327,32 @@ impl<'a> VisualComposerPanel<'a> {
             selected_authoring_node_id: params.selected_authoring_node_id,
             selected_authoring_node: params.selected_authoring_node,
             presentation_snapshot: params.presentation_snapshot,
+            entity_object_ids: HashMap::new(),
         }
+    }
+
+    pub fn with_authoring_graph(
+        mut self,
+        graph: &visual_novel_engine::authoring::NodeGraph,
+        owners: &HashMap<u32, u32>,
+    ) -> Self {
+        self.entity_object_ids = layers::authoring_entity_object_ids(self.scene, owners, graph);
+        self
+    }
+
+    pub(crate) fn with_authoring_layers(
+        mut self,
+        layers: &[LayeredSceneObject],
+        owners: &HashMap<u32, u32>,
+    ) -> Self {
+        self.entity_object_ids =
+            layers::authoring_entity_object_ids_from_layers(self.scene, owners, layers);
+        self
+    }
+
+    pub(crate) fn with_authoring_object_ids(mut self, ids: HashMap<u32, String>) -> Self {
+        self.entity_object_ids = ids;
+        self
     }
 
     pub fn ui(
@@ -337,7 +371,7 @@ impl<'a> VisualComposerPanel<'a> {
         self.render_metadata_row(ui, entity_owners, chrome);
         self.render_control_rows(ui, chrome, &mut action);
         ui.separator();
-        let objects = self
+        let mut objects = self
             .presentation_snapshot
             .map(|snapshot| snapshot.objects.clone())
             .unwrap_or_else(|| {
@@ -349,6 +383,17 @@ impl<'a> VisualComposerPanel<'a> {
                     self.selected_authoring_node,
                 )
             });
+        let sorted_entities = self.scene.iter_sorted().collect::<Vec<_>>();
+        for object in &mut objects {
+            if let Some(entity) = sorted_entities.get(object.object_index) {
+                if let Some(id) = self.entity_object_ids.get(&entity.id.raw()) {
+                    if object.character_name.is_some() || object.kind == StageLayerKind::Background
+                    {
+                        object.object_id = id.clone();
+                    }
+                }
+            }
+        }
         let layer_remaining = (panel_clip.bottom() - ui.cursor().min.y).max(0.0);
         let layer_list_height = composer_layer_list_height(layer_remaining);
         if layer_list_height > 0.0 {
@@ -356,6 +401,7 @@ impl<'a> VisualComposerPanel<'a> {
                 action = Some(layer_action);
             }
         }
+        self.render_selected_transform(ui, entity_owners, &mut action);
         let visible_remaining = (panel_clip.bottom() - ui.cursor().min.y).max(0.0);
         let viewport_available_height =
             composer_stage_available_height(visible_remaining, self.selected_authoring_node);
@@ -462,15 +508,18 @@ impl<'a> VisualComposerPanel<'a> {
                 self.image_failures,
                 self.resource_service,
             )
-            .with_layer_overrides(self.layer_overrides.clone());
-            let mut painter = painter.with_background_fit(*self.background_fit);
+            .with_layer_overrides(self.layer_overrides);
+            let mut painter = painter
+                .with_background_fit(*self.background_fit)
+                .with_entity_object_ids(self.entity_object_ids.clone());
             let stage_action = painter.paint_interactive(
                 ui,
                 self.scene,
                 geometry,
                 self.selected_entity_id,
                 entity_owners,
-                self.active_event_node_id,
+                self.selected_authoring_node_id
+                    .or(self.active_event_node_id),
             );
             if let Some(node_id) = stage_action.selected_node {
                 action = Some(VisualComposerAction::SelectNode(node_id));
@@ -488,15 +537,34 @@ impl<'a> VisualComposerPanel<'a> {
                     },
                 });
             }
-            overlays::render_runtime_overlay(
-                ui,
-                geometry,
-                self.engine,
-                self.selected_authoring_node,
+            if matches!(
                 *self.preview_mode,
-                self.layer_overrides,
-                &mut action,
-            );
+                ComposerPreviewMode::SelectedRoute | ComposerPreviewMode::IsolatedNode
+            ) {
+                if let (Some(node_id), Some(node)) = (
+                    self.selected_authoring_node_id,
+                    self.selected_authoring_node,
+                ) {
+                    overlays::render_authoring_overlay(
+                        ui,
+                        geometry,
+                        node_id,
+                        node,
+                        self.layer_overrides,
+                        &mut action,
+                    );
+                }
+            } else {
+                overlays::render_runtime_overlay(
+                    ui,
+                    geometry,
+                    self.engine,
+                    self.selected_authoring_node,
+                    *self.preview_mode,
+                    self.layer_overrides,
+                    &mut action,
+                );
+            }
         }
 
         if ui.cursor().min.y < panel_clip.bottom() - 12.0 {
@@ -550,7 +618,7 @@ impl<'a> VisualComposerPanel<'a> {
     }
 
     fn stage_size(&self) -> (f32, f32) {
-        let (w, h) = self.stage_resolution.unwrap_or((1280, 720));
+        let (w, h) = self.stage_resolution.unwrap_or(DEFAULT_COMPOSER_RESOLUTION);
         (w.max(1) as f32, h.max(1) as f32)
     }
 }

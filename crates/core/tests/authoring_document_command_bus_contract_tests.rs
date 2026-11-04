@@ -1,8 +1,190 @@
+use std::collections::BTreeMap;
+
 use visual_novel_engine::authoring::*;
 use visual_novel_engine::runtime::CharacterPlacementRaw;
 
 fn pos(x: f32, y: f32) -> AuthoringPosition {
     AuthoringPosition::new(x, y)
+}
+
+#[test]
+fn graph_replacements_share_document_undo_redo_and_replay() {
+    let (document, _, object_id) = scene_document();
+    let replace = |graph: NodeGraph| AuthoringDocumentCommand::ReplaceGraph {
+        graph: Box::new(graph),
+        kind: OperationKind::FieldEdited,
+        details: "Completed graph edit".to_string(),
+        field_path: Some("graph".to_string()),
+        before_value: None,
+        after_value: None,
+    };
+    let original = document.graph;
+    let mut session = AuthoringDocumentSession::new(AuthoringDocument::new(NodeGraph::new()));
+    session.apply(replace(original.clone())).unwrap();
+    for command in [AuthoringCommand::RevertLast, AuthoringCommand::RedoLast] {
+        assert!(session
+            .apply(AuthoringDocumentCommand::Graph(command))
+            .is_err());
+        assert_eq!(session.recorded_commands().len(), 1);
+        assert!(session.document().graph.has_same_content(&original));
+    }
+    session
+        .apply(AuthoringDocumentCommand::SetLayerLocked {
+            object_id: object_id.clone(),
+            locked: true,
+        })
+        .unwrap();
+    let mut edited = original.clone();
+    let added = edited.add_node(StoryNode::End, pos(100.0, 200.0));
+    session.apply(replace(edited.clone())).unwrap();
+    assert_eq!(session.read_model().node_ids().len(), 2);
+    let undone = session.apply(AuthoringDocumentCommand::UndoLast).unwrap();
+    assert_eq!(
+        undone.operation.operation_kind_v2,
+        Some(OperationKind::Undo)
+    );
+    assert!(session.document().graph.has_same_content(&original));
+    assert!(session.document().composer_layer_overrides[&object_id].locked);
+    assert!(session
+        .read_model()
+        .node_ids()
+        .iter()
+        .all(|id| *id != added));
+    session.apply(AuthoringDocumentCommand::RevertLast).unwrap();
+    assert!(session.document().composer_layer_overrides.is_empty());
+    session.apply(AuthoringDocumentCommand::RedoLast).unwrap();
+
+    let history = session.recorded_commands().len();
+    assert!(session.apply(replace(original.clone())).is_err());
+    assert_eq!(session.recorded_commands().len(), history);
+    assert_eq!(session.redo_delta_count(), 1);
+    session.apply(AuthoringDocumentCommand::RedoLast).unwrap();
+    assert!(session.document().graph.has_same_content(&edited));
+
+    let replayed = AuthoringDocumentSession::replay(session.recorded_commands()).unwrap();
+    assert!(replayed.document().graph.has_same_content(&edited));
+    assert_eq!(
+        replayed.document().composer_layer_overrides,
+        session.document().composer_layer_overrides
+    );
+    session.apply(AuthoringDocumentCommand::RevertLast).unwrap();
+    let mut divergent = original;
+    divergent.add_node(StoryNode::End, pos(300.0, 400.0));
+    session.apply(replace(divergent)).unwrap();
+    assert!(session.apply(AuthoringDocumentCommand::RedoLast).is_err());
+}
+
+#[test]
+fn moving_nodes_is_atomic_and_replays_as_one_layout_edit() {
+    let (mut document, scene, _) = scene_document();
+    let start = document.graph.add_node(StoryNode::Start, pos(0.0, -100.0));
+    let end = document.graph.add_node(StoryNode::End, pos(0.0, 100.0));
+    document.graph.connect(start, scene);
+    document.graph.connect(scene, end);
+    let original = document.graph;
+    let mut session = AuthoringDocumentSession::new(AuthoringDocument::new(NodeGraph::new()));
+    session
+        .apply(AuthoringDocumentCommand::ReplaceGraph {
+            graph: Box::new(original.clone()),
+            kind: OperationKind::FieldEdited,
+            details: "Initialize scene".to_string(),
+            field_path: None,
+            before_value: None,
+            after_value: None,
+        })
+        .unwrap();
+    session.clear_dirty_flags();
+
+    for invalid in [
+        BTreeMap::from([(scene, pos(10.0, 20.0)), (u32::MAX, pos(1.0, 2.0))]),
+        BTreeMap::from([(scene, pos(10.0, 20.0)), (end, pos(f32::NAN, 2.0))]),
+    ] {
+        assert!(session
+            .apply(AuthoringDocumentCommand::MoveNodes { positions: invalid })
+            .is_err());
+        assert!(session.document().graph.has_same_content(&original));
+        assert_eq!(session.recorded_commands().len(), 1);
+        assert!(session.dirty_flags().is_clean());
+    }
+
+    let positions = BTreeMap::from([(scene, pos(100.0, 120.0)), (end, pos(110.0, 220.0))]);
+    let encoded = serde_json::to_string(&AuthoringDocumentCommand::MoveNodes {
+        positions: positions.clone(),
+    })
+    .unwrap();
+    let moved = session
+        .apply(serde_json::from_str(&encoded).unwrap())
+        .unwrap();
+    assert_eq!(
+        moved.operation.operation_kind_v2,
+        Some(OperationKind::NodeMoved)
+    );
+    assert_eq!(session.undo_delta_count(), 2);
+    assert!(matches!(
+        &moved.delta,
+        AuthoringDocumentDelta::NodesMoved { before, .. } if before.len() == 2
+    ));
+    assert!(matches!(
+        &session.recorded_commands()[1],
+        AuthoringDocumentCommand::MoveNodes { positions: recorded } if recorded == &positions
+    ));
+    assert_ne!(
+        moved.before_fingerprint.layout_sha256,
+        moved.after_fingerprint.layout_sha256
+    );
+    assert_eq!(
+        moved.before_fingerprint.story_semantic_sha256,
+        moved.after_fingerprint.story_semantic_sha256
+    );
+    assert_eq!(
+        session.dirty_flags(),
+        AuthoringDirtyFlags {
+            layout_dirty: true,
+            document_dirty: true,
+            ..AuthoringDirtyFlags::default()
+        }
+    );
+
+    session.apply(AuthoringDocumentCommand::UndoLast).unwrap();
+    assert!(session.document().graph.has_same_content(&original));
+    assert!(session
+        .apply(AuthoringDocumentCommand::MoveNodes {
+            positions: BTreeMap::from([(scene, original.get_node_pos(scene).unwrap())]),
+        })
+        .is_err());
+    assert_eq!(session.redo_delta_count(), 1);
+    session.apply(AuthoringDocumentCommand::RedoLast).unwrap();
+    for (id, expected) in &positions {
+        assert_eq!(session.document().graph.get_node_pos(*id), Some(*expected));
+    }
+
+    session
+        .apply(AuthoringDocumentCommand::MoveNodes {
+            positions: BTreeMap::from([(scene, pos(2_000_000.0, 0.0))]),
+        })
+        .unwrap();
+    let has_invalid_position = |session: &AuthoringDocumentSession| {
+        session
+            .read_model()
+            .diagnostics_for_node(scene)
+            .iter()
+            .any(|issue| issue.code == LintCode::InvalidLayoutPosition)
+    };
+    assert!(has_invalid_position(&session));
+    session.apply(AuthoringDocumentCommand::UndoLast).unwrap();
+    assert!(!has_invalid_position(&session));
+
+    let replayed = AuthoringDocumentSession::replay(session.recorded_commands()).unwrap();
+    assert!(replayed
+        .document()
+        .graph
+        .has_same_content(&session.document().graph));
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("moved.vnauthoring");
+    save_authoring_document(&path, session.document()).unwrap();
+    let reopened = load_authoring_entry(&path).unwrap();
+    assert!(reopened.graph.has_same_content(&session.document().graph));
+    assert_eq!(reopened.operation_log, session.document().operation_log);
 }
 
 fn scene_document() -> (AuthoringDocument, u32, String) {
@@ -212,6 +394,14 @@ fn document_command_bus_graph_command_delegates_to_authoring_bus() {
         },
         pos(0.0, 0.0),
     );
+    let command = AuthoringCommand::EditDialogue {
+        node_id: dialogue,
+        speaker: "Ava".to_string(),
+        text: "After".to_string(),
+    };
+    let core_outcome = AuthoringCommandBus::new(graph.clone())
+        .apply(command.clone())
+        .unwrap();
     let mut bus = AuthoringDocumentCommandBus::new(AuthoringDocument::new(graph));
     let before_script = bus
         .document()
@@ -221,14 +411,25 @@ fn document_command_bus_graph_command_delegates_to_authoring_bus() {
         .expect("before script json");
 
     let outcome = bus
-        .apply(AuthoringDocumentCommand::Graph(
-            AuthoringCommand::EditDialogue {
-                node_id: dialogue,
-                speaker: "Ava".to_string(),
-                text: "After".to_string(),
-            },
-        ))
+        .apply(AuthoringDocumentCommand::Graph(command))
         .expect("edit dialogue through document bus");
+
+    assert_eq!(
+        outcome.operation.field_paths,
+        core_outcome.operation.field_paths
+    );
+    assert_eq!(
+        outcome.operation.affected_targets,
+        core_outcome.operation.affected_targets
+    );
+    assert_eq!(
+        outcome.operation.before_value,
+        core_outcome.operation.before_value
+    );
+    assert_eq!(
+        outcome.operation.after_value,
+        core_outcome.operation.after_value
+    );
 
     let AuthoringDocumentDelta::Graph(delta) = outcome.delta else {
         panic!("expected graph delta");
@@ -284,6 +485,12 @@ fn document_command_bus_replay_headless() {
 fn document_command_bus_rejects_noop_without_fake_log() {
     let (document, scene_id, object_id) = scene_document();
     let mut bus = AuthoringDocumentCommandBus::new(document);
+
+    bus.apply(AuthoringDocumentCommand::SetBackgroundFitOverride {
+        node_id: u32::MAX,
+        fit: composer::BackgroundFit::Contain,
+    })
+    .expect_err("background fit must not create metadata for a missing node");
 
     bus.apply(AuthoringDocumentCommand::SetLayerVisible {
         object_id,
@@ -390,6 +597,43 @@ fn document_session_layout_delta_updates_read_model_and_dirty_flags() {
 
     session.clear_dirty_flags();
     assert!(session.dirty_flags().is_clean());
+    let reset = session
+        .apply(AuthoringDocumentCommand::ResetComposerOverrides)
+        .unwrap();
+    assert!(session.document().composer_layer_overrides.is_empty());
+    assert!(
+        session
+            .read_model()
+            .composer_layer(&object_id)
+            .unwrap()
+            .visible
+    );
+    assert_eq!(session.dirty_flags(), flags);
+    assert_eq!(
+        reset.before_fingerprint.story_semantic_sha256,
+        reset.after_fingerprint.story_semantic_sha256
+    );
+    let count = session.recorded_commands().len();
+    assert!(session
+        .apply(AuthoringDocumentCommand::ResetComposerOverrides)
+        .is_err());
+    assert_eq!(session.recorded_commands().len(), count);
+    session.apply(AuthoringDocumentCommand::UndoLast).unwrap();
+    assert!(
+        !session
+            .read_model()
+            .composer_layer(&object_id)
+            .unwrap()
+            .visible
+    );
+    session.apply(AuthoringDocumentCommand::RedoLast).unwrap();
+    assert!(
+        session
+            .read_model()
+            .composer_layer(&object_id)
+            .unwrap()
+            .visible
+    );
 }
 
 #[test]

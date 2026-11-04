@@ -21,7 +21,7 @@ class Engine:
         self._last_audio: Any = []
 
     @classmethod
-    def from_script(cls, script: Union[Script, Mapping[str, Any], str]) -> "Engine":
+    def from_script(cls, script: Union[Script, Mapping[str, Any], str]) -> Engine:
         """Create an engine from a Script object, dict, or JSON string."""
 
         if isinstance(script, Script):
@@ -67,7 +67,11 @@ class Engine:
         return event
 
     def register_handler(self, callback: Any) -> None:
-        """Register a native ext-call callback, if exposed by the binding."""
+        """Register an ext-call callback.
+
+        Callbacks may inspect the engine and enqueue audio. Advancing execution
+        from a callback raises RuntimeError.
+        """
 
         call_native_method(
             self._engine, "register_handler", "callback bindings", callback

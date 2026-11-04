@@ -70,7 +70,7 @@ pub fn validate_authoring_node(ctx: &ValidationCtx<'_>, node: &StoryNode) -> Vec
                     );
                 }
             }
-            let asset_exists = |asset: &str| ctx.asset_exists(asset);
+            let asset_exists = |asset: &str| ctx.probe_asset(asset);
             validate_scene(
                 id,
                 background,
@@ -81,7 +81,7 @@ pub fn validate_authoring_node(ctx: &ValidationCtx<'_>, node: &StoryNode) -> Vec
             );
         }
         StoryNode::ScenePatch(patch) => {
-            let asset_exists = |asset: &str| ctx.asset_exists(asset);
+            let asset_exists = |asset: &str| ctx.probe_asset(asset);
             validate_scene_patch(id, patch, &asset_exists, &mut issues);
         }
         StoryNode::Jump { target } if !has_exportable_connected_target(ctx.graph(), id) => {
@@ -135,7 +135,7 @@ pub fn validate_authoring_node(ctx: &ValidationCtx<'_>, node: &StoryNode) -> Vec
             fade_duration_ms,
             ..
         } => {
-            let asset_exists = |asset: &str| ctx.asset_exists(asset);
+            let asset_exists = |asset: &str| ctx.probe_asset(asset);
             validate_audio(
                 AudioValidation {
                     id,
