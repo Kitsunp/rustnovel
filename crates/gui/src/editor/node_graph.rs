@@ -6,7 +6,7 @@
 
 use eframe::egui;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 pub use visual_novel_engine::authoring::{GraphConnection, SceneProfile};
 use visual_novel_engine::{
     authoring::{
@@ -251,7 +251,7 @@ impl NodeGraph {
     ) -> bool {
         let position = AuthoringPosition::new(pos.x, pos.y);
         let changed = if push_undo_snapshot {
-            self.edit_graph("Moved node", |graph| graph.set_node_pos(id, position))
+            self.apply_node_positions_reported(BTreeMap::from([(id, position)]))
         } else if self.get_node_pos(id).is_some_and(|before| before != pos) {
             self.view.drag_positions.insert(id, position);
             self.mark_modified();
@@ -271,17 +271,50 @@ impl NodeGraph {
     }
 
     pub fn commit_drag_positions(&mut self) -> bool {
-        let positions = std::mem::take(&mut self.view.drag_positions);
-        if positions.is_empty() {
-            return false;
+        match self.try_commit_drag_positions() {
+            Ok(changed) => changed,
+            Err(error) => {
+                tracing::error!("Could not commit dragged nodes: {error}");
+                false
+            }
         }
-        self.edit_graph("Move nodes", |graph| {
-            positions
-                .into_iter()
-                .fold(false, |changed, (id, position)| {
-                    graph.set_node_pos(id, position) || changed
-                })
-        })
+    }
+
+    pub fn try_commit_drag_positions(&mut self) -> Result<bool, String> {
+        let positions = self.view.drag_positions.clone();
+        let changed = self.apply_node_positions(positions)?;
+        self.view.drag_positions.clear();
+        Ok(changed)
+    }
+
+    fn apply_node_positions_reported(
+        &mut self,
+        positions: BTreeMap<u32, AuthoringPosition>,
+    ) -> bool {
+        match self.apply_node_positions(positions) {
+            Ok(changed) => changed,
+            Err(error) => {
+                tracing::error!("Could not move nodes: {error}");
+                false
+            }
+        }
+    }
+
+    fn apply_node_positions(
+        &mut self,
+        positions: BTreeMap<u32, AuthoringPosition>,
+    ) -> Result<bool, String> {
+        if positions.is_empty()
+            || positions
+                .iter()
+                .all(|(id, pos)| self.authoring_graph().get_node_pos(*id) == Some(*pos))
+        {
+            return Ok(false);
+        }
+        self.authoring_session
+            .apply(AuthoringDocumentCommand::MoveNodes { positions })?;
+        self.mark_modified();
+        Ok(true)
     }
 
     pub fn translate_node(&mut self, id: u32, delta: egui::Vec2) -> bool {
@@ -324,15 +357,34 @@ impl NodeGraph {
         } else {
             vec![anchor_id]
         };
-        ids.into_iter()
-            .filter(|node_id| {
-                if drag_preview {
-                    self.translate_node_for_drag(*node_id, delta)
-                } else {
-                    self.translate_node(*node_id, delta)
-                }
+        if drag_preview {
+            return ids
+                .into_iter()
+                .filter(|node_id| self.translate_node_for_drag(*node_id, delta))
+                .count();
+        }
+        let positions: BTreeMap<_, _> = ids
+            .into_iter()
+            .filter_map(|id| {
+                self.get_node_pos(id).map(|pos| {
+                    let moved = pos + delta;
+                    (id, AuthoringPosition::new(moved.x, moved.y))
+                })
             })
-            .count()
+            .filter(|(id, pos)| self.authoring_graph().get_node_pos(*id) != Some(*pos))
+            .collect();
+        let count = positions.len();
+        if self.apply_node_positions_reported(positions) {
+            self.queue_operation_hint(
+                "node_moved",
+                "Moved selected nodes",
+                Some("graph.nodes".into()),
+                true,
+            );
+            count
+        } else {
+            0
+        }
     }
 
     /// Returns an iterator over all nodes as GUI-positioned snapshots.
@@ -361,6 +413,33 @@ impl NodeGraph {
 
     pub fn authoring_graph(&self) -> &AuthoringGraph {
         &self.authoring_session.document().graph
+    }
+
+    pub(super) fn history_available(
+        &self,
+        command: &AuthoringDocumentCommand,
+    ) -> Result<bool, String> {
+        match command {
+            AuthoringDocumentCommand::UndoLast | AuthoringDocumentCommand::RevertLast => {
+                Ok(self.authoring_session.undo_delta_count() > 0)
+            }
+            AuthoringDocumentCommand::RedoLast => Ok(self.authoring_session.redo_delta_count() > 0),
+            _ => Err("document history command required".to_string()),
+        }
+    }
+
+    /// Applies a document history command and reconciles the graph view.
+    pub(super) fn apply_document_history(
+        &mut self,
+        command: AuthoringDocumentCommand,
+    ) -> Result<Option<visual_novel_engine::authoring::AuthoringDocumentCommandOutcome>, String>
+    {
+        if !self.history_available(&command)? {
+            return Ok(None);
+        }
+        let outcome = self.authoring_session.apply(command)?;
+        self.reconcile_view_after_document_change();
+        Ok(Some(outcome))
     }
 
     pub fn replace_authoring_graph(&mut self, graph: AuthoringGraph) {
@@ -404,4 +483,29 @@ impl NodeGraph {
 
 fn default_zoom() -> f32 {
     ZOOM_DEFAULT
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+
+    #[test]
+    fn history_rejects_other_commands_and_keeps_empty_history_a_noop() {
+        let mut graph = NodeGraph::new();
+        assert!(graph
+            .apply_document_history(AuthoringDocumentCommand::UndoLast)
+            .unwrap()
+            .is_none());
+        assert!(graph
+            .apply_document_history(AuthoringDocumentCommand::RedoLast)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            graph
+                .apply_document_history(AuthoringDocumentCommand::ResetComposerOverrides)
+                .unwrap_err(),
+            "document history command required"
+        );
+        assert!(graph.is_empty());
+    }
 }

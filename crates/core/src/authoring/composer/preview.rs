@@ -4,9 +4,9 @@ use crate::event::EventCompiled;
 use crate::localization::LocalizationCatalog;
 use crate::resource::ResourceLimiter;
 use crate::runtime::Engine;
-use crate::security::SecurityPolicy;
+use crate::script::{ScriptCompiled, ScriptRaw};
 
-use super::super::NodeGraph;
+use super::super::{NodeGraph, PreparedRuntimeEntry};
 use super::{
     build_presentation_snapshot, compose_scene_snapshot, ComposerSnapshot, PresentationSnapshot,
 };
@@ -19,12 +19,8 @@ pub struct ComposerPreviewSession {
 
 impl ComposerPreviewSession {
     pub fn start_from_node(graph: &NodeGraph, node_id: u32) -> VnResult<Self> {
-        let script = graph.to_script_strict()?;
-        let mut engine = Engine::new(
-            script,
-            SecurityPolicy::default(),
-            ResourceLimiter::default(),
-        )?;
+        let (script, compiled) = super::super::script_sync::strict_projection(graph)?;
+        let mut engine = preview_engine_from_projection(script, compiled)?;
         let pending_audio = jump_preview_engine(&mut engine, &format!("node_{node_id}"))?;
         Ok(Self {
             engine,
@@ -84,6 +80,12 @@ impl ComposerPreviewSession {
     }
 }
 
+fn preview_engine_from_projection(script: ScriptRaw, compiled: ScriptCompiled) -> VnResult<Engine> {
+    let policy = super::super::PREVIEW_SECURITY_POLICY;
+    let limits = ResourceLimiter::default();
+    PreparedRuntimeEntry::from_projection(script, compiled).into_engine(policy, limits)
+}
+
 /// Returns None when the preview is waiting for a choice; otherwise returns the
 /// audio produced by the same runtime transition used by all preview clients.
 pub fn advance_preview_engine(
@@ -111,4 +113,33 @@ pub fn jump_preview_engine(engine: &mut Engine, label: &str) -> VnResult<Vec<Aud
     engine.jump_to_label(label)?;
     engine.clear_session_history();
     Ok(engine.take_audio_commands())
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+    use crate::event::{DialogueRaw, EventRaw};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn validates_raw_before_compiled_and_rejects_invalid_compiled() {
+        let mut raw = ScriptRaw::new(
+            vec![EventRaw::Dialogue(DialogueRaw {
+                speaker: String::new(),
+                text: "hello".into(),
+            })],
+            BTreeMap::from([("start".to_string(), 0)]),
+        );
+        let mut compiled = raw.compile().unwrap();
+        compiled.start_ip = u32::MAX;
+        let error = preview_engine_from_projection(raw.clone(), compiled.clone()).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("compiled start_ip outside events"));
+        if let EventRaw::Dialogue(dialogue) = &mut raw.events[0] {
+            dialogue.text = "x".repeat(ResourceLimiter::default().max_text_length + 1);
+        }
+        let error = preview_engine_from_projection(raw, compiled).unwrap_err();
+        assert!(error.to_string().contains("dialogue text"));
+    }
 }

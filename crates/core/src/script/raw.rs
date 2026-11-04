@@ -20,7 +20,7 @@ struct ScriptEnvelope<Events = Vec<EventRaw>, Labels = BTreeMap<String, usize>> 
 }
 
 /// JSON-facing script format with label names and raw string data.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, JsonSchema)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ScriptRaw {
     pub events: Vec<EventRaw>,

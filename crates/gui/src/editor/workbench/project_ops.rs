@@ -15,10 +15,11 @@ impl EditorWorkbench {
         let loaded = std::path::absolute(path)
             .map_err(crate::editor::errors::EditorError::IoError)
             .and_then(|path| {
-                crate::editor::project_io::load_project(path.clone()).map(|project| (path, project))
+                crate::editor::project_io::load_project_with_version(path.clone())
+                    .map(|(project, version)| (path, project, version))
             });
         match loaded {
-            Ok((path, loaded_project)) => {
+            Ok((path, loaded_project, entry_version)) => {
                 let migrated_manifest = loaded_project
                     .manifest_migration_report
                     .as_ref()
@@ -35,7 +36,12 @@ impl EditorWorkbench {
                 self.player_locale = loaded_project.manifest.settings.default_language.clone();
                 self.manifest = Some(loaded_project.manifest);
                 if let Some((script_path, loaded_script)) = loaded_project.entry_point_script {
-                    self.apply_loaded_script(loaded_script, script_path, show_toasts);
+                    self.apply_loaded_script(
+                        loaded_script,
+                        script_path,
+                        entry_version,
+                        show_toasts,
+                    );
                     if show_toasts {
                         if let Some(steps) = migrated_manifest {
                             self.toast = Some(crate::editor::node_types::ToastState::warning(
@@ -76,10 +82,11 @@ impl EditorWorkbench {
         let loaded = std::path::absolute(path)
             .map_err(crate::editor::errors::EditorError::IoError)
             .and_then(|path| {
-                crate::editor::project_io::load_script(path.clone()).map(|script| (path, script))
+                crate::editor::project_io::load_script_with_version(&path)
+                    .map(|(script, version)| (path, script, version))
             });
         match loaded {
-            Ok((path, loaded_script)) => {
+            Ok((path, loaded_script, version)) => {
                 self.project_root = path.parent().map(std::path::Path::to_path_buf);
                 self.manifest_path = None;
                 self.manifest = None;
@@ -90,7 +97,7 @@ impl EditorWorkbench {
                     self.player_locale = self.localization_catalog.default_locale.clone();
                     locale_warnings = warnings;
                 }
-                self.apply_loaded_script(loaded_script, path, true);
+                self.apply_loaded_script(loaded_script, path, Some(version), true);
                 if !locale_warnings.is_empty() {
                     self.toast = Some(crate::editor::node_types::ToastState::warning(format!(
                         "Locale discovery skipped {} file(s): {}",
@@ -113,10 +120,12 @@ impl EditorWorkbench {
         &mut self,
         loaded_script: crate::editor::project_io::LoadedScript,
         path: std::path::PathBuf,
+        source_version: Option<[u8; 32]>,
         show_toast: bool,
     ) {
         self.node_graph = loaded_script.graph;
-        self.initialize_loaded_document(Some(path));
+        self.initialize_loaded_document(Some(path.clone()));
+        self.saved_document_version = source_version.map(|version| (path, version));
 
         let msg = if loaded_script.was_imported {
             "Imported script"
@@ -168,12 +177,14 @@ impl EditorWorkbench {
         self.composer_image_failures.clear();
         self.resource_service.clear();
         self.clear_runtime_preview();
+        self.reset_document_timeline();
         self.current_script = None;
         self.compilation_cache.invalidate();
         self.validation_issues.clear();
         self.last_fix_command_index = None;
+        self.saved_script_snapshot = save_path.as_ref().map(|_| self.node_graph.to_script());
+        self.saved_document_version = None;
         self.pending_save_path = save_path;
-        self.saved_script_snapshot = Some(self.node_graph.to_script());
     }
 
     fn load_localization_catalog(
@@ -383,10 +394,16 @@ impl EditorWorkbench {
 
     pub(super) fn save_document(&mut self, path: &std::path::Path) -> Result<(), String> {
         let path = std::path::absolute(path).map_err(|error| error.to_string())?;
-        self.node_graph.commit_drag_positions();
+        self.node_graph
+            .try_commit_drag_positions()
+            .map_err(|error| format!("Could not commit dragged nodes: {error}"))?;
         self.record_pending_editor_operation();
-        crate::editor::project_io::save_authoring_document(&path, &self.node_graph)
-            .map_err(|error| error.to_string())?;
+        let version = crate::editor::project_io::save_authoring_document_with_version(
+            &path,
+            &self.node_graph,
+        )
+        .map_err(|error| error.to_string())?;
+        self.saved_document_version = Some((path.clone(), version));
         self.pending_save_path = Some(path);
         self.saved_script_snapshot = Some(self.node_graph.to_script());
         self.node_graph.clear_modified();

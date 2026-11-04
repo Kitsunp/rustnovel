@@ -151,6 +151,21 @@ impl PyNodeGraph {
             .map(|position| (position.x, position.y))
     }
 
+    fn move_nodes(
+        &mut self,
+        positions: std::collections::BTreeMap<u32, (f32, f32)>,
+    ) -> PyResult<()> {
+        let positions = positions
+            .into_iter()
+            .map(|(node_id, (x, y))| (node_id, AuthoringPosition::new(x, y)))
+            .collect();
+        self.apply_document_command(
+            visual_novel_engine::authoring::AuthoringDocumentCommand::MoveNodes { positions },
+        )
+        .map_err(|error| py_command_error("move_nodes failed", error))?;
+        Ok(())
+    }
+
     fn nodes(&self) -> Vec<(u32, PyStoryNode, f32, f32)> {
         self.inner()
             .nodes()

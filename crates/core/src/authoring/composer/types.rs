@@ -122,6 +122,9 @@ pub struct ComposerSnapshot {
     pub stage_height: u32,
     pub objects: Vec<LayeredSceneObject>,
     pub overlays: Vec<ComposerOverlay>,
+    /// Cause of a failed runtime route when showing authoring data instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_error: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -158,6 +161,8 @@ pub struct PresentationSnapshot {
     pub objects: Vec<LayeredSceneObject>,
     pub overlays: Vec<ComposerOverlay>,
     pub provenance: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_error: Option<String>,
 }
 
 pub fn list_stage_layers() -> Vec<StageLayerKind> {

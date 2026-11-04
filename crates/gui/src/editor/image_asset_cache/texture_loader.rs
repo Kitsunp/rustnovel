@@ -57,7 +57,7 @@ impl<'a> ImageTextureCache<'a> {
         root: &Path,
         path: &str,
         view: ImageView,
-    ) -> Option<egui::TextureId> {
+    ) -> Result<egui::TextureId, String> {
         let path = normalize_asset_path(path);
         let request_key = view.key(root, &path);
         prune_image_cache_versions(self.cache, &request_key);
@@ -65,11 +65,11 @@ impl<'a> ImageTextureCache<'a> {
         if let Some(texture) = self.cache.get(&request_key) {
             self.resources
                 .record_texture_use(texture.id(), ctx.frame_nr());
-            return Some(texture.id());
+            return Ok(texture.id());
         }
         if let Some(failure) = self.failures.get(&request_key) {
             if !should_retry_missing_image_failure(failure, root, &path) {
-                return None;
+                return Err(failure.clone());
             }
             self.failures.remove(&request_key);
         }
@@ -84,12 +84,9 @@ impl<'a> ImageTextureCache<'a> {
         let resolved = match resolved {
             Ok(resolved) => normalize_asset_path(&resolved),
             Err(error) => {
-                record_asset_failure(
-                    self.failures,
-                    request_key,
-                    image_failure_message(&path, &error),
-                );
-                return None;
+                let message = image_failure_message(&path, &error);
+                record_asset_failure(self.failures, request_key, message.clone());
+                return Err(message);
             }
         };
         let key = view.key(root, &resolved);
@@ -98,8 +95,9 @@ impl<'a> ImageTextureCache<'a> {
         let texture = if let Some(texture) = self.cache.get(&key) {
             texture.clone()
         } else {
-            if self.failures.contains_key(&key) {
-                return None;
+            if let Some(error) = self.failures.get(&key).cloned() {
+                record_asset_failure(self.failures, request_key, error.clone());
+                return Err(error);
             }
             let image = match self
                 .resources
@@ -107,12 +105,10 @@ impl<'a> ImageTextureCache<'a> {
             {
                 Ok(image) => image,
                 Err(error) => {
-                    record_asset_failure(
-                        self.failures,
-                        key,
-                        format!("image '{resolved}' load failed: {error}"),
-                    );
-                    return None;
+                    let message = format!("image '{resolved}' load failed: {error}");
+                    record_asset_failure(self.failures, key, message.clone());
+                    record_asset_failure(self.failures, request_key, message.clone());
+                    return Err(message);
                 }
             };
             let (size, pixels) = view.quality().scaled_image(image.size, &image.pixels);
@@ -132,6 +128,6 @@ impl<'a> ImageTextureCache<'a> {
             self.cache.insert(request_key, texture.clone());
         }
         self.cache.insert(key, texture);
-        Some(id)
+        Ok(id)
     }
 }

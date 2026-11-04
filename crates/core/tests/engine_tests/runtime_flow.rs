@@ -146,6 +146,7 @@ fn engine_state_round_trip() {
         Err(visual_novel_engine::VnError::EndOfScript)
     ));
     let script_id = visual_novel_engine::compute_script_id(&engine.script().to_binary().unwrap());
+    assert_eq!(engine.script_id().unwrap(), script_id);
     let save = visual_novel_engine::SaveData::new(script_id, engine.state().clone());
     let mut other_script = save.clone();
     other_script.script_id[0] ^= 1;
@@ -160,6 +161,7 @@ fn engine_state_round_trip() {
     assert!(engine.load_save_data(invalid).is_err());
     assert_eq!(serde_json::to_value(engine.state()).unwrap(), before_error);
     engine.load_save_data(save).unwrap();
+    assert_eq!(engine.script_id().unwrap(), script_id);
     assert_eq!(serde_json::to_value(engine.state()).unwrap(), before_error);
 }
 

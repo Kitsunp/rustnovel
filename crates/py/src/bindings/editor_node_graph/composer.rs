@@ -5,8 +5,8 @@ use visual_novel_engine::authoring::composer::{
 use visual_novel_engine::authoring::{AuthoringCommand, AuthoringDocumentCommand};
 
 use super::super::api_v2::{
-    stage_layer_names, PyComposerPreviewSession, PyComposerSnapshot, PyLayeredSceneObject,
-    PyOperationLogEntry, PyVerificationRun,
+    composer_resolution, stage_layer_names, PyComposerPreviewSession, PyComposerSnapshot,
+    PyLayeredSceneObject, PyOperationLogEntry, PyVerificationRun,
 };
 use super::{py_command_error, PyNodeGraph};
 
@@ -45,7 +45,7 @@ impl PyNodeGraph {
                 }
             }
         }
-        let resolution = stage_width.zip(stage_height);
+        let resolution = composer_resolution(stage_width, stage_height);
         let mut snapshot = build_composer_snapshot(
             self.inner(),
             selected_node_id,

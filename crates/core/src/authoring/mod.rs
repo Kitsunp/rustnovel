@@ -11,6 +11,7 @@ mod diagnostics;
 mod document;
 mod document_command_bus;
 mod entry;
+pub(crate) use entry::load_runtime_projection_for_bundle;
 mod graph;
 mod lint;
 mod operation_log;
@@ -21,6 +22,12 @@ mod script_sync;
 mod types;
 pub(crate) mod validation;
 mod validation_report;
+
+// Draft dialogues may omit a speaker; authoring reports that as a warning.
+// Preview clients share this exception without relaxing the player policy.
+const PREVIEW_SECURITY_POLICY: crate::security::SecurityPolicy = crate::security::SecurityPolicy {
+    allow_empty_speaker: true,
+};
 
 pub use command_bus::{
     AuthoringCommand, AuthoringCommandBus, AuthoringCommandOutcome, AuthoringDelta,
@@ -44,8 +51,11 @@ pub use document_command_bus::{
 };
 pub use entry::{
     export_runtime_script_from_authoring, load_authoring_document_or_script, load_authoring_entry,
-    load_runtime_script_from_entry, parse_authoring_document_or_script, parse_authoring_entry,
-    parse_runtime_script_from_entry, save_authoring_document,
+    load_prepared_runtime_entry, load_runtime_input_from_entry, load_runtime_script_from_entry,
+    parse_authoring_document_or_script, parse_authoring_entry, parse_authoring_entry_with_format,
+    parse_runtime_script_from_entry, read_prepared_runtime_entry, read_runtime_input_from_entry,
+    save_authoring_document, save_authoring_document_with_version, AuthoringEntryFormat,
+    PreparedRuntimeEntry,
 };
 pub use graph::{
     CharacterPoseBinding, DecisionHub, FragmentPort, GraphConnection, GraphFragment,

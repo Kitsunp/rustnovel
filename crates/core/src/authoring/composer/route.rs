@@ -1,8 +1,24 @@
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::{event::EventCompiled, runtime::Engine};
+use crate::{
+    error::{VnError, VnResult},
+    event::EventCompiled,
+    runtime::Engine,
+};
 
 use super::super::{NodeGraph, StoryNode};
+
+const MAX_PREVIEW_EVENTS: usize = 4096;
+
+fn record_preview_event(visited: &mut Vec<u32>, ip: u32) -> VnResult<()> {
+    if visited.len() == MAX_PREVIEW_EVENTS {
+        return Err(VnError::resource_limit(format!(
+            "Composer route exceeded {MAX_PREVIEW_EVENTS} events at ip {ip}"
+        )));
+    }
+    visited.push(ip);
+    Ok(())
+}
 
 /// Reconstructs an authoring route without executing external calls or requiring
 /// the author to play through choices. Returns only the events actually visited.
@@ -10,14 +26,16 @@ pub fn preview_scene_route(
     engine: &Engine,
     graph: &NodeGraph,
     selected_node_id: Option<u32>,
-) -> (Engine, Vec<u32>) {
+) -> VnResult<(Engine, Vec<u32>)> {
     let Some(target) = selected_node_id else {
         let mut preview = engine.clone();
         let mut visited = Vec::new();
-        for _ in 0..4096 {
+        loop {
             let ip = preview.state().position;
-            let Ok(event) = preview.current_event() else {
-                break;
+            let event = match preview.current_event_ref() {
+                Ok(event) => event,
+                Err(VnError::EndOfScript) => break,
+                Err(error) => return Err(error),
             };
             if matches!(
                 event,
@@ -32,12 +50,13 @@ pub fn preview_scene_route(
                     | EventCompiled::SetCharacterPosition(_)
                     | EventCompiled::Dialogue(_)
             );
-            visited.push(ip);
-            if preview.step().is_err() || preview.state().position == ip || visual_event {
+            record_preview_event(&mut visited, ip)?;
+            preview.step()?;
+            if preview.state().position == ip || visual_event {
                 break;
             }
         }
-        return (preview, visited);
+        return Ok((preview, visited));
     };
     let start = graph
         .nodes()
@@ -71,28 +90,18 @@ pub fn preview_scene_route(
         cursor = *parent;
     }
     route.reverse();
-    let mut preview = Engine::from_compiled(
-        engine.script().clone(),
-        engine.policy().clone(),
-        engine.limits(),
-    )
-    .unwrap_or_else(|_| engine.clone());
+    let mut preview = engine.fresh_session();
     let mut visited = Vec::new();
+    let script_order = graph.script_order_node_ids();
     for node_id in route {
-        if graph.event_ip_for_node(node_id).is_none() {
+        if graph.get_node(node_id).is_none_or(StoryNode::is_marker) {
             continue;
         }
-        if preview.jump_to_label(&format!("node_{node_id}")).is_err() {
-            continue;
-        }
-        while graph.node_for_event_ip(preview.state().position) == Some(node_id)
-            && visited.len() < 4096
-        {
+        preview.jump_to_label(&format!("node_{node_id}"))?;
+        while script_order.get(preview.state().position as usize) == Some(&node_id) {
             let ip = preview.state().position;
-            let Ok(event) = preview.current_event() else {
-                break;
-            };
-            visited.push(ip);
+            let event = preview.current_event_ref()?;
+            record_preview_event(&mut visited, ip)?;
             // These events need user or host input; inspection follows graph edges instead.
             if matches!(
                 event,
@@ -102,10 +111,11 @@ pub fn preview_scene_route(
             ) {
                 break;
             }
-            if preview.step().is_err() || preview.state().position == ip {
+            preview.step()?;
+            if preview.state().position == ip {
                 break;
             }
         }
     }
-    (preview, visited)
+    Ok((preview, visited))
 }

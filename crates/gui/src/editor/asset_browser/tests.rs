@@ -181,7 +181,7 @@ fn clipped_cards_skip_uploads_and_visible_cache_hits_protect_the_texture() {
     for missing in 0..600 {
         assert!(panel
             .thumbnail_texture(&ctx, &format!("missing-{missing}.png"))
-            .is_none());
+            .is_err());
     }
     for missing in 0..600 {
         assert!(panel
@@ -189,4 +189,112 @@ fn clipped_cards_skip_uploads_and_visible_cache_hits_protect_the_texture() {
             .is_none());
     }
     assert!(failures.len() <= crate::editor::image_asset_cache::MAX_ASSET_CACHE_ENTRIES);
+}
+
+#[test]
+fn asset_failures_are_visible_and_clear_after_recovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = ProjectManifest::new("Test", "Author");
+    let ctx = egui::Context::default();
+    let mut cache = HashMap::new();
+    let mut failures = HashMap::new();
+    let mut resources = EditorResourceService::new();
+
+    let output = ctx.run(Default::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let mut panel = AssetBrowserPanel::new(
+                &manifest,
+                Some(dir.path()),
+                &mut cache,
+                &mut failures,
+                &mut resources,
+            );
+            panel.render_image_asset_card(ui, "bg", "missing", Path::new("missing.png"));
+            panel.render_audio_position(ui, "missing.ogg");
+        });
+    });
+    let texts: Vec<_> = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::epaint::Shape::Text(text) => Some(text.galley.text()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        texts.contains(&"!"),
+        "missing image must have a visible warning"
+    );
+    assert!(texts
+        .iter()
+        .any(|text| text.contains("audio 'missing.ogg' metadata unavailable:")));
+    assert!(AssetBrowserPanel::new(
+        &manifest,
+        Some(dir.path()),
+        &mut cache,
+        &mut failures,
+        &mut resources
+    )
+    .thumbnail_texture(&ctx, "missing.png")
+    .unwrap_err()
+    .contains("missing.png"));
+
+    std::fs::write(dir.path().join("missing.png"), b"not a valid image").unwrap();
+    let _ = ctx.run(Default::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            AssetBrowserPanel::new(
+                &manifest,
+                Some(dir.path()),
+                &mut cache,
+                &mut failures,
+                &mut resources,
+            )
+            .render_image_asset_card(ui, "bg", "missing", Path::new("missing.png"));
+        });
+    });
+    assert!(AssetBrowserPanel::new(
+        &manifest,
+        Some(dir.path()),
+        &mut cache,
+        &mut failures,
+        &mut resources
+    )
+    .thumbnail_texture(&ctx, "missing.png")
+    .unwrap_err()
+    .contains("load failed:"));
+
+    image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]))
+        .save(dir.path().join("missing.png"))
+        .unwrap();
+    std::fs::write(
+        dir.path().join("missing.ogg"),
+        include_bytes!("../../../../runtime/tests/fixtures/tone.ogg"),
+    )
+    .unwrap();
+    let output = ctx.run(Default::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let mut panel = AssetBrowserPanel::new(
+                &manifest,
+                Some(dir.path()),
+                &mut cache,
+                &mut failures,
+                &mut resources,
+            );
+            panel.render_image_asset_card(ui, "bg", "missing", Path::new("missing.png"));
+            panel.render_audio_position(ui, "missing.ogg");
+        });
+    });
+    assert!(AssetBrowserPanel::new(
+        &manifest,
+        Some(dir.path()),
+        &mut cache,
+        &mut failures,
+        &mut resources
+    )
+    .thumbnail_texture(&ctx, "missing.png")
+    .unwrap()
+    .is_some());
+    assert!(!failures.contains_key(&audio_failure_key(dir.path(), "missing.ogg")));
+    assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::epaint::Shape::Text(text) if text.galley.text().contains("metadata unavailable:"))));
 }

@@ -285,7 +285,7 @@ fn authoring_validate_command_reports_graph_errors_before_failing() {
         !output.status.success(),
         "authoring errors should make command fail"
     );
-    let report = fs::read_to_string(output_path).expect("report json");
+    let report = fs::read_to_string(&output_path).expect("report json");
     assert!(
         report.contains("VAL_CHARACTER_NAME_EMPTY"),
         "report={report}"
@@ -301,6 +301,45 @@ fn authoring_validate_command_reports_graph_errors_before_failing() {
         report.contains("docs/diagnostics/authoring.md#val-character-name-empty"),
         "report={report}"
     );
+    let expected: serde_json::Value = serde_json::from_str(&report).unwrap();
+    fs::remove_file(&output_path).unwrap();
+    for command in [&["authoring-validate"][..], &["authoring", "validate"][..]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+            .arg("--json")
+            .args(command)
+            .arg(&script_path)
+            .output()
+            .expect("run authoring validation in JSON mode");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stderr.is_empty());
+        let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(envelope["ok"], false);
+        assert_eq!(envelope["code"], "error");
+        assert!(envelope["error"]
+            .as_str()
+            .unwrap()
+            .contains("authoring validation failed"));
+        assert_eq!(envelope["data"]["issues"], expected["issues"]);
+        assert_eq!(envelope["data"]["error_count"], expected["error_count"]);
+        assert!(
+            !output_path.exists(),
+            "JSON output must not need a report file"
+        );
+        let written = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+            .arg("--json")
+            .args(command)
+            .arg(&script_path)
+            .arg("--output")
+            .arg(&output_path)
+            .output()
+            .unwrap();
+        assert_eq!(written.status.code(), Some(1));
+        let written_envelope: serde_json::Value = serde_json::from_slice(&written.stdout).unwrap();
+        let written_report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&output_path).unwrap()).unwrap();
+        assert_eq!(written_envelope["data"], written_report);
+        fs::remove_file(&output_path).unwrap();
+    }
 }
 
 #[test]
@@ -337,6 +376,15 @@ fn compile_and_trace_accept_authoring_document() {
     let (_tmp, path) = write_authoring_document();
     let compiled_path = path.with_extension("vnc");
     let trace_path = path.with_file_name("trace.yml");
+    let mut document = AuthoringDocument::from_json(&fs::read_to_string(&path).unwrap()).unwrap();
+    document.operation_log.push(
+        visual_novel_engine::authoring::OperationLogEntry::new_typed(
+            visual_novel_engine::authoring::OperationKind::FieldEdited,
+            visual_novel_engine::authoring::OperationStatus::Applied,
+            "x".repeat(visual_novel_engine::ResourceLimiter::default().max_script_bytes + 1),
+        ),
+    );
+    fs::write(&path, document.to_json().unwrap()).unwrap();
 
     let compile = Command::new(env!("CARGO_BIN_EXE_vnengine"))
         .arg("compile")
@@ -352,25 +400,51 @@ fn compile_and_trace_accept_authoring_document() {
         String::from_utf8_lossy(&compile.stderr)
     );
     assert!(compiled_path.is_file());
+    visual_novel_engine::runtime::RuntimeScriptInput::load(
+        &compiled_path,
+        visual_novel_engine::ResourceLimiter::default(),
+    )
+    .expect("load CLI compiled output")
+    .into_engine(
+        visual_novel_engine::SecurityPolicy::default(),
+        visual_novel_engine::ResourceLimiter::default(),
+    )
+    .expect("execute CLI compiled output through the shared runtime loader");
 
-    let trace = Command::new(env!("CARGO_BIN_EXE_vnengine"))
-        .arg("trace")
-        .arg(path.as_os_str())
-        .arg("--format")
-        .arg("yaml")
-        .arg("--output")
-        .arg(trace_path.as_os_str())
-        .output()
-        .expect("run trace");
-    assert!(
-        trace.status.success(),
-        "stdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&trace.stdout),
-        String::from_utf8_lossy(&trace.stderr)
-    );
-    assert!(fs::read_to_string(trace_path)
-        .expect("trace")
-        .contains("trace_format_version"));
+    let mut expected_trace = None;
+    for input in [&path, &compiled_path] {
+        let validate = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+            .arg("validate")
+            .arg(input)
+            .output()
+            .unwrap();
+        assert!(
+            validate.status.success(),
+            "{}",
+            String::from_utf8_lossy(&validate.stderr)
+        );
+        let trace = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+            .arg("trace")
+            .arg(input)
+            .arg("--format")
+            .arg("yaml")
+            .arg("--output")
+            .arg(&trace_path)
+            .output()
+            .expect("run trace");
+        assert!(
+            trace.status.success(),
+            "stdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&trace.stdout),
+            String::from_utf8_lossy(&trace.stderr)
+        );
+        let trace = fs::read_to_string(&trace_path).expect("trace");
+        assert!(trace.contains("trace_format_version"));
+        if let Some(expected) = &expected_trace {
+            assert_eq!(&trace, expected);
+        }
+        expected_trace = Some(trace);
+    }
 }
 
 #[test]
@@ -403,6 +477,54 @@ fn compile_json_reports_actual_bytes_written() {
         .len();
     assert!(actual_len > 0, "compiled output should not be empty");
     assert_eq!(bytes_written, actual_len);
+
+    let before = fs::read(&compiled_path).unwrap();
+    let invalid = path.with_file_name("invalid-runtime.json");
+    fs::write(
+        &invalid,
+        ScriptRaw::new(
+            vec![EventRaw::Dialogue(DialogueRaw {
+                speaker: String::new(),
+                text: "An incomplete draft".to_string(),
+            })],
+            BTreeMap::from([("start".to_string(), 0)]),
+        )
+        .to_json()
+        .unwrap(),
+    )
+    .unwrap();
+    let invalid_binary = invalid.with_extension("vnc");
+    fs::write(
+        &invalid_binary,
+        ScriptRaw::from_json(&fs::read_to_string(&invalid).unwrap())
+            .unwrap()
+            .compile()
+            .unwrap()
+            .to_binary()
+            .unwrap(),
+    )
+    .unwrap();
+    for input in [&invalid, &invalid_binary] {
+        for command in ["validate", "compile"] {
+            let mut run = Command::new(env!("CARGO_BIN_EXE_vnengine"));
+            run.arg("--json").arg(command).arg(input);
+            if command == "compile" {
+                run.arg("--output").arg(&compiled_path);
+            }
+            let output = run.output().unwrap();
+            assert!(
+                !output.status.success(),
+                "{command} accepted an invalid script"
+            );
+            let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(envelope["ok"], false);
+            assert!(envelope["error"]
+                .as_str()
+                .unwrap()
+                .contains("speaker cannot be empty"));
+            assert_eq!(fs::read(&compiled_path).unwrap(), before);
+        }
+    }
 }
 
 #[test]
@@ -675,6 +797,39 @@ fn cli_global_json_route_theme_and_layout_contracts() {
     let layout_json: serde_json::Value =
         serde_json::from_slice(&layout.stdout).expect("layout envelope");
     assert_eq!(layout_json["data"]["breakpoint"], "normal");
+
+    let mut display: serde_json::Value =
+        serde_json::from_slice(&fs::read(&display_path).unwrap()).unwrap();
+    display["safe_area"] = serde_json::json!({"left":30.0,"right":50.0,"top":20.0,"bottom":40.0});
+    fs::write(&display_path, serde_json::to_vec(&display).unwrap()).unwrap();
+    let stage_path = script_path.with_file_name("stage.json");
+    for (mode, expected) in [
+        (
+            "respect",
+            serde_json::json!({"x":30.0,"y":20.0,"width":720.0,"height":540.0}),
+        ),
+        (
+            "ignore",
+            serde_json::json!({"x":0.0,"y":0.0,"width":800.0,"height":600.0}),
+        ),
+    ] {
+        let stage = serde_json::json!({"design_size":[800.0,600.0],"policy":"stretch","safe_area_mode":mode});
+        fs::write(&stage_path, serde_json::to_vec(&stage).unwrap()).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+            .args(["--json", "layout", "resolve", "--display"])
+            .arg(&display_path)
+            .arg("--stage")
+            .arg(&stage_path)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(envelope["data"]["stage_rect"], expected, "{mode}");
+        assert_eq!(
+            envelope["data"]["display"]["safe_area"],
+            display["safe_area"]
+        );
+    }
 }
 
 #[test]
@@ -703,6 +858,149 @@ fn read_model_reports_save_parse_failure_when_script_fallback_also_fails() {
         error.contains("load script or save") && error.contains("save attempt failed"),
         "read-model must report the failed save parse before the script fallback: {error}"
     );
+
+    let raw = ScriptRaw::new(
+        vec![EventRaw::Dialogue(DialogueRaw {
+            speaker: "Narrator".to_string(),
+            text: "Read this".to_string(),
+        })],
+        BTreeMap::from([("start".to_string(), 0)]),
+    );
+    let mut engine = visual_novel_engine::runtime::Engine::new(
+        raw,
+        visual_novel_engine::SecurityPolicy::default(),
+        visual_novel_engine::ResourceLimiter::default(),
+    )
+    .unwrap();
+    engine.step().unwrap();
+    let save = visual_novel_engine::SaveData::new(
+        visual_novel_engine::compute_script_id(&engine.script().to_binary().unwrap()),
+        engine.state().clone(),
+    );
+    let authenticated = save
+        .to_authenticated_binary(visual_novel_engine::AUTH_SAVE_KEY)
+        .unwrap();
+    let mut tampered = authenticated.clone();
+    *tampered.last_mut().unwrap() ^= 1;
+    for (name, bytes, failure) in [
+        ("valid", authenticated, None),
+        ("tampered", tampered, Some("authentication failed")),
+        (
+            "truncated",
+            visual_novel_engine::AUTH_SAVE_MAGIC.to_vec(),
+            Some("too small"),
+        ),
+        (
+            "wrong-key",
+            save.to_authenticated_binary(b"other key").unwrap(),
+            Some("authentication failed"),
+        ),
+    ] {
+        let path = tmp.path().join(format!("{name}.save"));
+        fs::write(&path, bytes).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+            .args(["--json", "read-model"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        if let Some(failure) = failure {
+            assert_eq!(output.status.code(), Some(2));
+            assert_eq!(envelope["ok"], false);
+            let message = envelope["error"].as_str().unwrap();
+            assert!(message.contains(failure), "{message}");
+            assert!(
+                !message.contains("save attempt failed"),
+                "authenticated saves must not fall back to a script parser: {message}"
+            );
+        } else {
+            assert!(output.status.success());
+            assert_eq!(envelope["data"]["source"], "save");
+            assert!(envelope["data"].get("simulation").is_none());
+            assert_eq!(
+                envelope["data"]["read_model"],
+                serde_json::to_value(&save.state.read_model).unwrap()
+            );
+            assert_eq!(
+                envelope["data"]["route_progress"],
+                serde_json::to_value(&save.state.route_progress).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+fn read_model_reports_simulation_limits_and_choice_policy() {
+    let temp = TempDir::new().unwrap();
+    let stories = [
+        (
+            "loop",
+            serde_json::json!({
+                "events": [{"type":"dialogue","speaker":"A","text":"Loop"}, {"type":"jump","target":"start"}],
+                "labels": {"start":0}
+            }),
+        ),
+        (
+            "branch",
+            serde_json::json!({
+                "events": [
+                    {"type":"choice","prompt":"Choose","options":[{"text":"Left","target":"left"},{"text":"Right","target":"right"}]},
+                    {"type":"dialogue","speaker":"A","text":"Left branch"},
+                    {"type":"jump","target":"end"},
+                    {"type":"dialogue","speaker":"B","text":"Right branch"}
+                ],
+                "labels": {"start":0,"left":1,"right":3,"end":4}
+            }),
+        ),
+        (
+            "external",
+            serde_json::json!({
+                "events": [{"type":"ext_call","command":"host","args":[]}],
+                "labels": {"start":0}
+            }),
+        ),
+    ];
+    for (name, mut story) in stories {
+        story["script_schema_version"] = SCRIPT_SCHEMA_VERSION.into();
+        let path = temp.path().join(format!("{name}.json"));
+        fs::write(&path, serde_json::to_vec(&story).unwrap()).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_vnengine"))
+            .args(["--json", "read-model"])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(output.stderr.is_empty());
+        let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        if name == "external" {
+            assert_eq!(output.status.code(), Some(2));
+            assert!(envelope["error"]
+                .as_str()
+                .unwrap()
+                .contains("external call pending"));
+            continue;
+        }
+        assert!(output.status.success(), "{envelope}");
+        let simulation = &envelope["data"]["simulation"];
+        assert_eq!(simulation["choice_policy"], "first");
+        if name == "loop" {
+            assert_eq!(simulation["partial"], true);
+            assert_eq!(simulation["stop_reason"], "step_limit");
+            assert_eq!(simulation["executed_steps"], 40);
+            assert_eq!(simulation["max_steps"], 40);
+        } else {
+            assert_eq!(simulation["partial"], false);
+            assert_eq!(simulation["stop_reason"], "finished");
+            assert_eq!(simulation["executed_steps"], 3);
+            assert_eq!(
+                envelope["data"]["route_progress"]["selected_choices"][0]["option_index"],
+                0
+            );
+            assert_eq!(
+                envelope["data"]["read_model"]["visited_dialogue_ips"],
+                serde_json::json!([1])
+            );
+        }
+    }
 }
 
 #[test]

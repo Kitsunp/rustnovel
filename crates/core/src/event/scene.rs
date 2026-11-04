@@ -174,6 +174,7 @@ pub struct SetCharacterPositionRaw {
     pub name: String,
     pub x: i32,
     pub y: i32,
+    /// Omission preserves the existing character scale; use 1.0 to reset it.
     pub scale: Option<f32>,
 }
 

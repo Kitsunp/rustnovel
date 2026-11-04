@@ -20,12 +20,8 @@ use crate::execution_contract::FidelityClass;
 use crate::graph::StoryGraph;
 use crate::resource::ResourceLimiter;
 use crate::script::{ScriptCompiled, ScriptRaw};
-use crate::security::SecurityPolicy;
 
-use super::{
-    validate_authoring_graph_no_io, validate_authoring_graph_with_project_root, LintCode,
-    LintIssue, LintSeverity, NodeGraph, ValidationPhase,
-};
+use super::{LintCode, LintIssue, LintSeverity, NodeGraph, ValidationPhase};
 
 const REPRO_DEFAULT_RADIUS: usize = 12;
 const DRY_RUN_MAX_STEPS: usize = 2048;
@@ -185,13 +181,9 @@ pub fn compile_authoring_graph(
         ok: true,
         detail: "Graph converted to ScriptRaw".to_string(),
     });
-    let mut script = graph.to_script_lossy_for_diagnostics();
+    let script = graph.to_script_lossy_for_diagnostics();
 
-    let mut issues = if let Some(root) = project_root {
-        validate_authoring_graph_with_project_root(graph, root)
-    } else {
-        validate_authoring_graph_no_io(graph)
-    };
+    let mut issues = super::validation::validate_with_script(graph, project_root, &script);
     phase_trace.push(PhaseTrace {
         phase: CompilationPhase::GraphValidation,
         ok: !issues
@@ -201,14 +193,14 @@ pub fn compile_authoring_graph(
     });
 
     let mut dry_run_report = None;
-    let strict_script = match graph.to_script_strict() {
-        Ok(script) => {
+    let compiled_result = match super::script_sync::compile_strict_projection(graph, &script) {
+        Ok(compiled) => {
             phase_trace.push(PhaseTrace {
                 phase: CompilationPhase::ScriptCompile,
                 ok: true,
                 detail: "Strict authoring export succeeded".to_string(),
             });
-            script
+            Ok(compiled)
         }
         Err(err) => {
             let message = format!("Strict authoring export failed: {err}");
@@ -228,7 +220,7 @@ pub fn compile_authoring_graph(
                         "{message}; preview/dry-run will continue, export remains blocked until the unsupported node is replaced or handled by a target capability"
                     ),
                 ));
-                graph.to_script_lossy_for_diagnostics()
+                script.compile()
             } else {
                 phase_trace.push(PhaseTrace {
                     phase: CompilationPhase::ScriptCompile,
@@ -251,8 +243,7 @@ pub fn compile_authoring_graph(
             }
         }
     };
-    script = strict_script;
-    let engine_result = match script.compile() {
+    let engine_result = match compiled_result {
         Ok(compiled) => {
             let story_graph = StoryGraph::from_script(&compiled);
             for event_ip in story_graph.unreachable_nodes() {
@@ -280,7 +271,7 @@ pub fn compile_authoring_graph(
 
             match Engine::from_compiled(
                 compiled.clone(),
-                SecurityPolicy::default(),
+                super::PREVIEW_SECURITY_POLICY,
                 ResourceLimiter::default(),
             ) {
                 Ok(engine) => {
@@ -417,7 +408,7 @@ fn append_route_dry_run_issues(
 ) {
     match Engine::from_compiled(
         compiled.clone(),
-        SecurityPolicy::default(),
+        super::PREVIEW_SECURITY_POLICY,
         ResourceLimiter::default(),
     ) {
         Ok(route_engine) => {

@@ -86,8 +86,8 @@ impl VnApp {
     }
 
     pub(super) fn quickload(&mut self) {
-        match self.save_store.quickload() {
-            Ok(data) => self.apply_loaded_save(data, "Quick loaded"),
+        match self.save_store.quickload_with_recovery() {
+            Ok(loaded) => self.apply_loaded_slot(loaded, "Quick loaded"),
             Err(err) => self.last_error = Some(format!("Quick load failed: {err}")),
         }
     }
@@ -104,9 +104,24 @@ impl VnApp {
     }
 
     pub(super) fn load_slot(&mut self, slot_id: u16) {
-        match self.save_store.load_slot(slot_id) {
-            Ok(data) => self.apply_loaded_save(data, &format!("Loaded slot {slot_id}")),
+        match self.save_store.load_slot_with_recovery(slot_id) {
+            Ok(loaded) => self.apply_loaded_slot(loaded, &format!("Loaded slot {slot_id}")),
             Err(err) => self.last_error = Some(format!("Load slot {slot_id} failed: {err}")),
+        }
+    }
+
+    fn apply_loaded_slot(&mut self, loaded: visual_novel_engine::SaveSlotLoad, status: &str) {
+        match loaded.recovery {
+            Some(recovery) => {
+                let reason = recovery
+                    .primary_error
+                    .map_or_else(|| "missing".to_string(), |error| error.to_string());
+                self.apply_loaded_save(
+                    loaded.data,
+                    &format!("{status} from backup. Primary save: {reason}"),
+                );
+            }
+            None => self.apply_loaded_save(loaded.data, status),
         }
     }
 

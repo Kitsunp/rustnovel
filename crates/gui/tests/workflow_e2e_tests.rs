@@ -157,6 +157,26 @@ fn imported_project_can_be_edited_saved_exported_and_run_by_the_real_player() {
     let local_smoke: serde_json::Value =
         serde_json::from_slice(&fs::read(local_report).unwrap()).unwrap();
     assert_eq!(local_smoke["status"], "passed", "{local_smoke}");
+    let raw =
+        visual_novel_engine::load_runtime_script_from_entry(project.join("main.json")).unwrap();
+    let compiled = raw.compile().unwrap().to_binary().unwrap();
+    fs::write(project.join("story.vnc"), compiled).unwrap();
+    let compiled_report = tmp.path().join("compiled-player-smoke.json");
+    let compiled_player = Command::new(env!("CARGO_BIN_EXE_vn_player"))
+        .current_dir(&project)
+        .arg("story.vnc")
+        .arg("--smoke-report")
+        .arg(&compiled_report)
+        .output()
+        .unwrap();
+    assert!(
+        compiled_player.status.success(),
+        "compiled player: {}",
+        String::from_utf8_lossy(&compiled_player.stderr)
+    );
+    let compiled_smoke: serde_json::Value =
+        serde_json::from_slice(&fs::read(compiled_report).unwrap()).unwrap();
+    assert_eq!(compiled_smoke["status"], "passed", "{compiled_smoke}");
     editor.execute_save(&project.join("main.json"), "");
     assert!(!editor.node_graph.is_modified());
     let bundle = tmp.path().join("Exported game with spaces");

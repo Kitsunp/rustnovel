@@ -258,8 +258,11 @@ class NativeBindingsTests(unittest.TestCase):
 
         engine.allow_ext_call_command("minigame_start")
         engine.register_handler(failing_handler)
-        with self.assertRaisesRegex(RuntimeError, "callback failed"):
+        with self.assertRaisesRegex(RuntimeError, "callback failed") as caught:
             engine.step()
+        self.assertIsInstance(caught.exception.__cause__, ValueError)
+        self.assertEqual(str(caught.exception.__cause__), "callback failed")
+        self.assertIsNotNone(caught.exception.__cause__.__traceback__)
         self.assertEqual(engine.pending_external_call()["event_ip"], 0)
         engine.register_handler(handler)
         self.assertEqual(engine.step().event["type"], "ext_call")
@@ -472,6 +475,18 @@ class NativeBindingsTests(unittest.TestCase):
             events.pop()
             events[0]["background"] = None
             events[0]["music"] = None
+        engine = self.native.Engine(
+            self._script_json(
+                [
+                    {"type": "scene", "characters": [{"name": "Ava", "scale": 1.25}]},
+                    {"type": "set_character_position", "name": "Ava", "x": 32, "y": 48},
+                ]
+            )
+        )
+        engine.step()
+        engine.step()
+        moved = engine.visual_state()["characters"][0]
+        self.assertEqual((moved["x"], moved["y"], moved["scale"]), (32, 48, 1.25))
         for constructor, kwargs, expected in [
             (self.native.StoryNode.scene, {"characters": characters}, native_events[0]),
             (
@@ -731,6 +746,26 @@ class NativeBindingsTests(unittest.TestCase):
         resolved = layout.to_dict()
         self.assertEqual(resolved["breakpoint"], "normal")
         self.assertGreater(resolved["stage_rect"]["width"], 0)
+        display["safe_area"] = {
+            "left": 30.0,
+            "right": 50.0,
+            "top": 20.0,
+            "bottom": 40.0,
+        }
+        for mode, expected in (
+            ("respect", {"x": 30.0, "y": 20.0, "width": 720.0, "height": 540.0}),
+            ("ignore", {"x": 0.0, "y": 0.0, "width": 800.0, "height": 600.0}),
+        ):
+            stage = {
+                "design_size": [800.0, 600.0],
+                "policy": "stretch",
+                "safe_area_mode": mode,
+            }
+            resolved = self.native.resolve_layout(
+                json.dumps(display), json.dumps(stage)
+            ).to_dict()
+            self.assertEqual(resolved["stage_rect"], expected)
+            self.assertEqual(resolved["display"]["safe_area"], display["safe_area"])
 
     def test_pyi_top_level_public_api_matches_native_module(self):
         stub_path = (

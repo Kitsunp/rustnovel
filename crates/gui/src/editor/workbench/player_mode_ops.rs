@@ -2,14 +2,18 @@ use super::*;
 
 impl EditorWorkbench {
     pub(super) fn clear_runtime_preview(&mut self) {
+        self.before_rebuilding_preview_scene();
         self.engine = None;
+        self.composer_route_error = None;
         self.scene = visual_novel_engine::SceneState::default();
         self.composer_entity_owners.clear();
         self.selected_entity = None;
         self.player_audio_backend = None;
         self.player_audio_root = None;
-        self.timeline = visual_novel_engine::Timeline::new(60);
-        self.current_time = 0.0;
+        if self.timeline.track_count() == 0 {
+            self.current_time = 0.0;
+            self.timeline.seek(0);
+        }
         self.timeline_fractional_ticks = 0.0;
         self.is_playing = false;
         self.player_state = crate::editor::player_ui::PlayerSessionState::default();
@@ -79,6 +83,7 @@ impl EditorWorkbench {
             None,
             None,
         );
+        self.composer_route_error = snapshot.preview_error;
         let mut visual = visual_novel_engine::runtime::VisualState::default();
         let mut sources = Vec::new();
         let mut music = None;
@@ -100,6 +105,7 @@ impl EditorWorkbench {
                 music = Some(object);
             }
         }
+        self.before_rebuilding_preview_scene();
         self.scene = crate::editor::scene_stage::scene_from_visual_state(&visual);
         self.composer_entity_owners = self
             .scene

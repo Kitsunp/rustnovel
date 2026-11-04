@@ -229,8 +229,6 @@ impl<'a> AssetBrowserPanel<'a> {
                                         });
                                     }
 
-                                    response
-                                        .on_hover_text(format!("Drag to scene\nPath: {:?}", path));
                                     if ui.small_button("Use").clicked() {
                                         actions.push(AssetBrowserAction::AssignToSelected {
                                             kind,
@@ -277,7 +275,8 @@ impl<'a> AssetBrowserPanel<'a> {
 
         let asset_path = normalize_asset_path(&path.to_string_lossy());
         let image_rect = asset_card_image_rect(rect);
-        if let Some(texture_id) = self.thumbnail_texture(ui.ctx(), &asset_path) {
+        let result = self.thumbnail_texture(ui.ctx(), &asset_path);
+        if let Ok(Some(texture_id)) = result {
             ui.painter().image(
                 texture_id,
                 image_rect,
@@ -294,6 +293,15 @@ impl<'a> AssetBrowserPanel<'a> {
                 egui::FontId::proportional(13.0),
                 egui::Color32::from_gray(210),
             );
+            if result.is_err() {
+                ui.painter().text(
+                    image_rect.right_top() + egui::vec2(-4.0, 4.0),
+                    egui::Align2::RIGHT_TOP,
+                    "!",
+                    egui::FontId::proportional(18.0),
+                    egui::Color32::from_rgb(255, 150, 120),
+                );
+            }
         }
 
         ui.painter().text(
@@ -303,16 +311,24 @@ impl<'a> AssetBrowserPanel<'a> {
             egui::FontId::proportional(12.0),
             egui::Color32::from_gray(220),
         );
-        response
+        let mut tooltip = format!("Drag to scene\nPath: {:?}", path);
+        if let Err(error) = result {
+            tooltip.push_str(&format!("\n{error}"));
+        }
+        response.on_hover_text(tooltip)
     }
 
     fn thumbnail_texture(
         &mut self,
         ctx: &egui::Context,
         asset_path: &str,
-    ) -> Option<egui::TextureId> {
+    ) -> Result<Option<egui::TextureId>, String> {
+        let Some(root) = self.project_root else {
+            return Ok(None);
+        };
         ImageTextureCache::new(self.image_cache, self.image_failures, self.resource_service)
-            .texture(ctx, self.project_root?, asset_path, ImageView::Thumbnail)
+            .texture(ctx, root, asset_path, ImageView::Thumbnail)
+            .map(Some)
     }
 
     fn render_audio_position(&mut self, ui: &mut egui::Ui, asset_path: &str) -> (u64, bool) {
@@ -377,6 +393,12 @@ impl<'a> AssetBrowserPanel<'a> {
                 )
             } else {
                 ui.label("Duration --:--");
+                if let Some(error) = self.project_root.and_then(|root| {
+                    self.image_failures
+                        .get(&audio_failure_key(root, asset_path))
+                }) {
+                    ui.colored_label(egui::Color32::from_rgb(255, 150, 120), error);
+                }
                 (0, false)
             }
         })

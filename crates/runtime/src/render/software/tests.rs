@@ -14,7 +14,7 @@ fn overflowing_coordinates_do_not_touch_small_buffers() {
 }
 
 #[test]
-fn changing_scenes_releases_old_images_and_failed_image_keys() {
+fn image_cache_releases_inactive_entries_and_retries_failures_in_the_same_scene() {
     let mut assets = crate::MemoryAssetStore::default();
     let mut png = Vec::new();
     PngEncoder::new(&mut png)
@@ -28,46 +28,80 @@ fn changing_scenes_releases_old_images_and_failed_image_keys() {
     };
     let mut drawer = BuiltinSoftwareDrawer::new();
     let mut pixels = [0; 4];
-    for index in 0..100 {
-        let asset = format!("image-{index}.png");
-        assets.insert(&asset, png.clone());
-        let scene = SceneFrame {
-            commands: vec![RenderCommand::Image {
-                asset: asset.clone(),
-                rect: LayoutRect {
-                    x: 0.0,
-                    y: 0.0,
-                    width: 1280.0,
-                    height: 720.0,
-                },
-                fit: ImageFit::Stretch,
-                z: 0,
-            }],
-            ..SceneFrame::default()
-        };
+    let image_scene = |asset| SceneFrame {
+        commands: vec![RenderCommand::Image {
+            asset,
+            rect: LayoutRect {
+                x: 0.0,
+                y: 0.0,
+                width: 1280.0,
+                height: 720.0,
+            },
+            fit: ImageFit::Stretch,
+            z: 0,
+        }],
+        ..SceneFrame::default()
+    };
+    let mut draw = |drawer: &mut BuiltinSoftwareDrawer,
+                    scene_frame: &SceneFrame,
+                    assets: &dyn crate::AssetStore| {
         drawer.draw(
             &mut pixels,
             (1, 1),
             RenderFrame {
                 ui: &ui,
-                scene_frame: &scene,
-                assets: &assets,
+                scene_frame,
+                assets,
             },
         );
-        assert_eq!(pixels, [255, 0, 0, 255]);
+        pixels
+    };
+    for index in 0..100 {
+        let asset = format!("image-{index}.png");
+        assets.insert(&asset, png.clone());
+        assert_eq!(
+            draw(&mut drawer, &image_scene(asset.clone()), &assets),
+            [255, 0, 0, 255]
+        );
         assert_eq!(drawer.images.len(), 1);
         assert!(drawer.images.contains_key(&asset));
     }
-    drawer.failed_images.insert("missing.png".into());
-    drawer.draw(
-        &mut pixels,
-        (1, 1),
-        RenderFrame {
-            ui: &ui,
-            scene_frame: &SceneFrame::default(),
-            assets: &assets,
-        },
-    );
+
+    let asset = "repair.png";
+    let scene = image_scene(asset.to_owned());
+    let placeholder = draw(&mut drawer, &scene, &assets);
+    assert_ne!(placeholder, [255, 0, 0, 255]);
+    assert!(drawer
+        .image_error(asset)
+        .unwrap()
+        .contains("Could not load image"));
+
+    assets.insert(asset, b"corrupt image".to_vec());
+    let Some(CachedImage::Failed { retry_at, .. }) = drawer.images.get_mut(asset) else {
+        panic!("missing image should have a retry deadline");
+    };
+    *retry_at = Instant::now() + Duration::from_secs(3600);
+    assert_eq!(draw(&mut drawer, &scene, &assets), placeholder);
+    assert!(drawer
+        .image_error(asset)
+        .unwrap()
+        .contains("Could not load image"));
+
+    let retry_now = |drawer: &mut BuiltinSoftwareDrawer| {
+        let Some(CachedImage::Failed { retry_at, .. }) = drawer.images.get_mut(asset) else {
+            panic!("failed image should have a retry deadline");
+        };
+        *retry_at = Instant::now();
+    };
+    retry_now(&mut drawer);
+    assert_eq!(draw(&mut drawer, &scene, &assets), placeholder);
+    assert!(drawer.image_error(asset).unwrap().contains("decode error"));
+
+    assets.insert(asset, png);
+    retry_now(&mut drawer);
+    assert_eq!(draw(&mut drawer, &scene, &assets), [255, 0, 0, 255]);
+    assert!(drawer.image_error(asset).is_none());
+
+    draw(&mut drawer, &SceneFrame::default(), &assets);
     assert!(drawer.images.is_empty());
-    assert!(drawer.failed_images.is_empty());
 }

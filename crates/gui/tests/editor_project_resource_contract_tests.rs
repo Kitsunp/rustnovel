@@ -222,7 +222,7 @@ fn authoring_save_load_preserves_disconnected_draft_nodes() {
     let saved = fs::read_to_string(&path).expect("read saved document");
     assert!(saved.contains("authoring_schema_version"));
 
-    let loaded = load_script(path).expect("load authoring document");
+    let loaded = load_script(path.clone()).expect("load authoring document");
     assert_eq!(loaded.graph.len(), graph.len());
     assert_eq!(loaded.graph.get_node_pos(start), Some(egui::pos2(0.0, 0.0)));
     assert_eq!(
@@ -234,6 +234,55 @@ fn authoring_save_load_preserves_disconnected_draft_nodes() {
         Some(StoryNode::Dialogue { speaker, text })
             if speaker == "Draft" && text == "Disconnected but important"
     ));
+
+    // Legacy positional envelopes are also documents: keep their saved layout
+    // instead of applying the runtime-script automatic layout.
+    let mut document: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    document["composer_background_fit_overrides"][start.to_string()] = serde_json::json!("contain");
+    let positional = serde_json::json!([
+        document["authoring_schema_version"],
+        document["graph"],
+        document["composer_layer_overrides"],
+        document["composer_background_fit_overrides"],
+        document["operation_log"],
+        document["verification_runs"]
+    ]);
+    fs::write(&path, serde_json::to_vec(&positional).unwrap()).unwrap();
+    let loaded = load_script(path).expect("load positional authoring document");
+    assert_eq!(
+        loaded.graph.get_node_pos(draft),
+        Some(egui::pos2(240.0, 100.0))
+    );
+    assert_eq!(
+        loaded
+            .graph
+            .authoring_session
+            .document()
+            .composer_background_fit_overrides
+            .get(&start.to_string()),
+        Some(&visual_novel_engine::authoring::composer::BackgroundFit::Contain)
+    );
+}
+
+#[test]
+fn malformed_authoring_markers_do_not_fall_back_to_runtime_import() {
+    let dir = tempdir().expect("tempdir");
+    let path = dir.path().join("bad.json");
+    let script = ScriptRaw::new(
+        vec![EventRaw::Dialogue(DialogueRaw {
+            speaker: "Narrator".into(),
+            text: "Runtime-shaped input".into(),
+        })],
+        std::collections::BTreeMap::from([("start".into(), 0)]),
+    );
+    let mut value: serde_json::Value = serde_json::from_str(&script.to_json().unwrap()).unwrap();
+    value["authoring_schema_version"] = serde_json::json!("unsupported");
+    fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    let error = match load_script(path) {
+        Ok(_) => panic!("authoring markers must prevent a runtime fallback"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("legacy fallback disabled"), "{error}");
 }
 
 #[test]

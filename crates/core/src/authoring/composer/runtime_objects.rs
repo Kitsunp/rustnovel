@@ -101,12 +101,12 @@ fn presentation_owner_hints(
         .iter()
         .map(|ip| *ip as usize)
         .chain(0..runtime_end);
+    let script_order = graph.script_order_node_ids();
     for idx in event_indices {
         let Some(event) = events.get(idx) else {
             continue;
         };
-        let ip = idx as u32;
-        let owner = graph.node_for_event_ip(ip);
+        let owner = script_order.get(idx).copied();
         match event {
             EventCompiled::Scene(scene) => {
                 if !scene.characters.is_empty() {

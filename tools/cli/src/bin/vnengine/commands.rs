@@ -1,53 +1,96 @@
 use super::*;
+use std::io::{BufReader, Read};
+
+fn load_engine(path: &Path) -> Result<Engine> {
+    Ok(load_prepared_runtime_entry(path)
+        .with_context(|| format!("load script '{}'", path.display()))?
+        .into_engine(SecurityPolicy::default(), ResourceLimiter::default())?)
+}
+
+fn load_compiled_script(path: &Path) -> Result<ScriptCompiled> {
+    Ok(load_prepared_runtime_entry(path)
+        .with_context(|| format!("load script '{}'", path.display()))?
+        .into_compiled(&SecurityPolicy::default(), ResourceLimiter::default())?)
+}
 
 pub(super) fn route_tree_command(script: &Path) -> Result<Option<serde_json::Value>> {
-    let script_raw = load_runtime_script_from_entry(script).context("load script")?;
-    let engine = Engine::new(
-        script_raw,
-        SecurityPolicy::default(),
-        ResourceLimiter::default(),
-    )?;
+    let engine = load_engine(script)?;
     Ok(Some(serde_json::to_value(engine.route_tree())?))
 }
 
 pub(super) fn read_model_command(input: &Path) -> Result<Option<serde_json::Value>> {
-    let save_attempt_error = match fs::read(input) {
-        Ok(bytes) => match SaveData::from_any_binary(&bytes, AUTH_SAVE_KEY) {
-            Ok(save) => {
-                return Ok(Some(serde_json::json!({
-                    "schema": "vnengine.cli.read_model.v1",
-                    "source": "save",
-                    "read_model": save.state.read_model,
-                    "route_progress": save.state.route_progress
-                })));
-            }
-            Err(err) => Some(format!("parse save '{}': {err}", input.display())),
-        },
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-        Err(err) => Some(format!("read save '{}': {err}", input.display())),
+    let read_error = |error| {
+        visual_novel_engine::VnError::invalid_script(format!(
+            "read input '{}': {error}",
+            input.display()
+        ))
     };
+    let file = fs::File::open(input)
+        .map_err(read_error)
+        .context("load script or save")?;
+    let mut reader = BufReader::new(file);
+    let mut prefix = Vec::with_capacity(visual_novel_engine::AUTH_SAVE_MAGIC.len());
+    reader
+        .by_ref()
+        .take(visual_novel_engine::AUTH_SAVE_MAGIC.len() as u64)
+        .read_to_end(&mut prefix)
+        .map_err(read_error)?;
+    let is_save = prefix.as_slice() == visual_novel_engine::AUTH_SAVE_MAGIC;
+    let reader = prefix.as_slice().chain(reader);
+    if is_save {
+        let save = SaveData::read_authenticated(reader, AUTH_SAVE_KEY, DEFAULT_MAX_SAVE_BYTES)
+            .with_context(|| format!("parse save '{}'", input.display()))?;
+        return Ok(Some(serde_json::json!({
+            "schema": "vnengine.cli.read_model.v1",
+            "source": "save",
+            "read_model": save.state.read_model,
+            "route_progress": save.state.route_progress
+        })));
+    }
+    let mut engine = read_prepared_runtime_entry(reader)
+        .with_context(|| {
+            format!(
+                "load script or save '{}'; save attempt failed: missing authenticated save header",
+                input.display()
+            )
+        })?
+        .into_engine(SecurityPolicy::default(), ResourceLimiter::default())?;
+    let max_steps = engine
+        .script()
+        .events
+        .len()
+        .saturating_mul(4)
+        .saturating_add(32);
+    let (executed_steps, stop_reason) = simulate_read_model(&mut engine, max_steps)?;
+    Ok(Some(serde_json::json!({
+        "schema": "vnengine.cli.read_model.v1",
+        "source": "script",
+        "read_model": engine.read_model_snapshot(),
+        "route_progress": engine.route_progress_snapshot(),
+        "simulation": {
+            "partial": stop_reason != "finished",
+            "stop_reason": stop_reason,
+            "executed_steps": executed_steps,
+            "max_steps": max_steps,
+            "choice_policy": "first"
+        }
+    })))
+}
 
-    let context = match save_attempt_error {
-        Some(err) => format!("load script or save; save attempt failed: {err}"),
-        None => "load script or save".to_string(),
-    };
-    let script_raw = load_runtime_script_from_entry(input).with_context(|| context)?;
-    let max_steps = script_raw.events.len().saturating_mul(4).saturating_add(32);
-    let mut engine = Engine::new(
-        script_raw,
-        SecurityPolicy::default(),
-        ResourceLimiter::default(),
-    )?;
+fn simulate_read_model(engine: &mut Engine, max_steps: usize) -> Result<(usize, &'static str)> {
+    let mut executed_steps = 0;
     for _ in 0..max_steps {
-        let event = match engine.current_event() {
+        let event = match engine.current_event_ref() {
             Ok(event) => event,
-            Err(visual_novel_engine::VnError::EndOfScript) => break,
+            Err(visual_novel_engine::VnError::EndOfScript) => {
+                return Ok((executed_steps, "finished"))
+            }
             Err(err) => return Err(err).context("read-model current_event"),
         };
         match event {
             visual_novel_engine::runtime::EventCompiled::Choice(choice) => {
                 if choice.options.is_empty() {
-                    break;
+                    return Ok((executed_steps, "empty_choice"));
                 }
                 engine.choose(0)?;
             }
@@ -56,13 +99,13 @@ pub(super) fn read_model_command(input: &Path) -> Result<Option<serde_json::Valu
                 let (_audio, _change) = engine.step()?;
             }
         }
+        executed_steps += 1;
     }
-    Ok(Some(serde_json::json!({
-        "schema": "vnengine.cli.read_model.v1",
-        "source": "script",
-        "read_model": engine.read_model_snapshot(),
-        "route_progress": engine.route_progress_snapshot()
-    })))
+    match engine.current_event_ref() {
+        Ok(_) => Ok((executed_steps, "step_limit")),
+        Err(visual_novel_engine::VnError::EndOfScript) => Ok((executed_steps, "finished")),
+        Err(err) => Err(err).context("read-model current_event"),
+    }
 }
 
 pub(super) fn theme_validate_command(theme_path: &Path) -> Result<Option<serde_json::Value>> {
@@ -112,8 +155,13 @@ pub(super) fn layout_resolve_command(
 }
 
 pub(super) fn export_plan_command(args: ExportCliArgs) -> Result<Option<serde_json::Value>> {
+    let require_executable = args.require_executable;
     let spec = export_spec_from_args(args);
-    let plan = ExportService::new().plan_export(&spec)?;
+    let service = ExportService::new();
+    let plan = service.plan_export(&spec)?;
+    if require_executable {
+        service.validate_executable_export_plan(&plan, spec.target_platform)?;
+    }
     Ok(Some(serde_json::to_value(plan)?))
 }
 
@@ -142,12 +190,7 @@ pub(super) fn export_spec_from_args(args: ExportCliArgs) -> ExportBundleSpec {
 }
 
 pub(super) fn validate_script(path: &Path) -> Result<()> {
-    let script = load_runtime_script_from_entry(path).context("load script")?;
-    let policy = SecurityPolicy::default();
-    let limits = ResourceLimiter::default();
-    policy.validate_raw(&script, limits)?;
-    let compiled = script.compile()?;
-    policy.validate_compiled(&compiled, limits)?;
+    load_compiled_script(path)?;
     Ok(())
 }
 
@@ -179,8 +222,7 @@ pub(super) fn migrate_script_command(
 }
 
 pub(super) fn compile_script(path: &Path, output: &Path) -> Result<serde_json::Value> {
-    let script = load_runtime_script_from_entry(path).context("load script")?;
-    let compiled = script.compile()?;
+    let compiled = load_compiled_script(path)?;
     let bytes = compiled.to_binary()?;
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
@@ -211,12 +253,7 @@ pub(super) fn trace_script(
             output.display()
         );
     }
-    let script = load_runtime_script_from_entry(path).context("load script")?;
-    let mut engine = Engine::new(
-        script,
-        SecurityPolicy::default(),
-        ResourceLimiter::default(),
-    )?;
+    let mut engine = load_engine(path)?;
     let mut trace = UiTrace::new();
     let mut partial = false;
     let mut stopped_reason = None;
@@ -280,15 +317,14 @@ pub(super) fn trace_script(
 }
 
 pub(super) fn verify_save(save_path: &Path, script_path: &Path) -> Result<()> {
-    let save_bytes =
-        fs::read(save_path).with_context(|| format!("read {}", save_path.display()))?;
-    let save = SaveData::from_any_binary(&save_bytes, AUTH_SAVE_KEY)?;
+    let save_file =
+        fs::File::open(save_path).with_context(|| format!("read {}", save_path.display()))?;
+    let save = SaveData::read_authenticated(save_file, AUTH_SAVE_KEY, DEFAULT_MAX_SAVE_BYTES)
+        .with_context(|| format!("load save '{}'", save_path.display()))?;
     let script_bytes =
         fs::read(script_path).with_context(|| format!("read {}", script_path.display()))?;
     let compiled = ScriptCompiled::from_binary(&script_bytes)?;
-    let compiled_bytes = compiled.to_binary()?;
-    let script_id = compute_script_id(&compiled_bytes);
-    save.validate_script_id(&script_id)?;
+    save.validate_script_id(&compiled.script_id()?)?;
     Ok(())
 }
 
@@ -364,4 +400,27 @@ pub(super) fn run_repro_bundle(path: &Path, output: Option<&Path>, strict: bool)
         anyhow::bail!("repro oracle was not triggered");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod read_model_tests {
+    use super::*;
+
+    #[test]
+    fn final_event_at_step_limit_is_finished() {
+        let script = visual_novel_engine::runtime::ScriptRaw::from_json(
+            r#"{"script_schema_version":"1.0","events":[{"type":"dialogue","speaker":"A","text":"End"}],"labels":{"start":0}}"#,
+        )
+        .unwrap();
+        let mut engine = Engine::new(
+            script,
+            SecurityPolicy::default(),
+            ResourceLimiter::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            simulate_read_model(&mut engine, 1).unwrap(),
+            (1, "finished")
+        );
+    }
 }

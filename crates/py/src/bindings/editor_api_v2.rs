@@ -2,6 +2,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use visual_novel_engine::authoring::composer::{
     ComposerPreviewSession, ComposerSnapshot, LayeredSceneObject, StageLayerKind,
+    DEFAULT_COMPOSER_RESOLUTION,
 };
 use visual_novel_engine::authoring::{
     authoring_fingerprints_semantically_match, AuthoringValidationReport, DiagnosticTarget,
@@ -12,6 +13,16 @@ use visual_novel_engine::authoring::{
 #[path = "editor_api_v2/fragments.rs"]
 mod fragments;
 pub use fragments::{PyFragmentPort, PyGraphFragment};
+
+pub(super) fn composer_resolution(width: Option<u32>, height: Option<u32>) -> Option<(u32, u32)> {
+    match (width, height) {
+        (None, None) => None,
+        (width, height) => Some((
+            width.unwrap_or(DEFAULT_COMPOSER_RESOLUTION.0),
+            height.unwrap_or(DEFAULT_COMPOSER_RESOLUTION.1),
+        )),
+    }
+}
 
 macro_rules! json_wrapper {
     ($py_type:ident, $py_name:literal, $inner_type:ty) => {
@@ -186,6 +197,11 @@ impl PyComposerSnapshot {
     }
 
     #[getter]
+    fn preview_error(&self) -> Option<&str> {
+        self.inner.preview_error.as_deref()
+    }
+
+    #[getter]
     fn overlays_json(&self) -> Vec<String> {
         self.inner
             .overlays
@@ -252,7 +268,7 @@ impl PyComposerPreviewSession {
         stage_height: Option<u32>,
         locale: Option<&str>,
     ) -> PyComposerSnapshot {
-        let resolution = stage_width.zip(stage_height);
+        let resolution = composer_resolution(stage_width, stage_height);
         self.inner
             .snapshot(&self.graph, resolution, locale, None)
             .into()

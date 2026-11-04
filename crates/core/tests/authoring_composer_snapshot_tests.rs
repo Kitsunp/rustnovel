@@ -23,6 +23,100 @@ fn character(name: &str, image: &str) -> CharacterPlacementRaw {
 }
 
 #[test]
+fn composer_does_not_fill_blank_runtime_or_selected_route_from_other_scenes() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let line = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Narrator".into(),
+            text: "Before the scene".into(),
+        },
+        pos(0.0, 100.0),
+    );
+    let scene = graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("room.png".into()),
+            music: None,
+            characters: Vec::new(),
+        },
+        pos(0.0, 200.0),
+    );
+    let end = graph.add_node(StoryNode::End, pos(0.0, 300.0));
+    graph.connect(start, line);
+    graph.connect(line, scene);
+    graph.connect(scene, end);
+    let engine = Engine::new(
+        graph.to_script_strict().unwrap(),
+        SecurityPolicy::default(),
+        ResourceLimiter::default(),
+    )
+    .unwrap();
+    let active = composer::compose_scene_snapshot(&graph, None, None, Some(&engine), None, None);
+    assert_eq!(active.objects.len(), 1);
+    assert_eq!(active.objects[0].source_node_id, Some(line));
+    assert!(matches!(
+        active.overlays.as_slice(),
+        [composer::ComposerOverlay::Dialogue { text, .. }] if text == "Before the scene"
+    ));
+
+    let selected =
+        composer::compose_scene_snapshot(&graph, Some(scene), None, Some(&engine), None, None);
+    assert!(selected.preview_error.is_none());
+    assert!(selected.overlays.is_empty());
+    assert!(selected
+        .objects
+        .iter()
+        .any(|object| object.asset_path.as_deref() == Some("room.png")));
+}
+
+#[test]
+fn composer_preserves_strict_and_raw_security_error_precedence() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let dialogue = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: String::new(),
+            text: "x".repeat(ResourceLimiter::default().max_text_length + 1),
+        },
+        pos(0.0, 90.0),
+    );
+    let end = graph.add_node(StoryNode::End, pos(0.0, 180.0));
+    graph.connect(start, dialogue);
+    graph.connect(dialogue, end);
+    let policy = SecurityPolicy {
+        allow_empty_speaker: true,
+    };
+    let raw = graph.to_script_strict().unwrap();
+    let prior_error = Engine::new(raw, policy, ResourceLimiter::default())
+        .unwrap_err()
+        .to_string();
+    let error = composer::ComposerPreviewSession::start_from_node(&graph, dialogue)
+        .unwrap_err()
+        .to_string();
+    assert_eq!(error, prior_error);
+    assert!(error.contains("dialogue text"));
+
+    let broken = graph.add_node(
+        StoryNode::AudioAction {
+            channel: "invalid".into(),
+            action: "play".into(),
+            asset: Some("theme.ogg".into()),
+            volume: None,
+            fade_duration_ms: None,
+            loop_playback: None,
+        },
+        pos(0.0, 270.0),
+    );
+    graph.connect(end, broken);
+    let strict_error = graph.to_script_strict().unwrap_err().to_string();
+    let error = composer::ComposerPreviewSession::start_from_node(&graph, dialogue)
+        .unwrap_err()
+        .to_string();
+    assert_eq!(error, strict_error);
+}
+
+#[test]
 fn selected_route_reconstructs_the_second_branch_without_leaking_first_branch_assets() {
     let mut graph = NodeGraph::new();
     let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
@@ -72,7 +166,7 @@ fn selected_route_reconstructs_the_second_branch_without_leaking_first_branch_as
     )
     .unwrap();
     let original_position = engine.state().position;
-    let (preview, visited) = composer::preview_scene_route(&engine, &graph, Some(line));
+    let (preview, visited) = composer::preview_scene_route(&engine, &graph, Some(line)).unwrap();
     assert_eq!(
         preview.visual_state().background.as_deref(),
         Some("second.png")
@@ -93,6 +187,52 @@ fn selected_route_reconstructs_the_second_branch_without_leaking_first_branch_as
         .unwrap();
     assert_eq!(character.asset_path.as_deref(), Some("second_ava.png"));
     assert_eq!(character.source_node_id, Some(second));
+    assert!(snapshot.preview_error.is_none());
+    let presentation =
+        composer::build_presentation_snapshot(&graph, Some(line), None, Some(&engine), None, None);
+    assert_eq!(
+        presentation.visual_background.as_deref(),
+        Some("second.png")
+    );
+    assert_eq!(presentation.visual_music.as_deref(), Some("second.ogg"));
+    assert_eq!(presentation.visual_character_count, 1);
+
+    let edited_scene = graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: Some("edited.png".into()),
+            music: None,
+            characters: Vec::new(),
+        },
+        pos(400.0, 200.0),
+    );
+    graph.connect_port(choice, 1, edited_scene);
+    graph.connect(edited_scene, line);
+    let fallback = composer::build_presentation_snapshot(
+        &graph,
+        Some(edited_scene),
+        None,
+        Some(&engine),
+        None,
+        None,
+    );
+    let missing_label = format!("label 'node_{edited_scene}' not found");
+    assert!(
+        fallback
+            .preview_error
+            .as_deref()
+            .is_some_and(|error| error.contains(&missing_label)),
+        "{fallback:?}"
+    );
+    assert!(fallback.visual_background.is_none());
+    assert_eq!(
+        fallback
+            .objects
+            .iter()
+            .filter_map(|object| object.asset_path.as_deref())
+            .collect::<Vec<_>>(),
+        ["edited.png"]
+    );
 }
 
 #[test]

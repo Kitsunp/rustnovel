@@ -6,7 +6,6 @@ use sha2::Sha256;
 use uuid::Uuid;
 
 use crate::error::VnResult;
-use crate::load_runtime_script_from_entry;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -45,6 +44,13 @@ pub use spec::{
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ExportService;
+
+/// A captured export plan and its script, consumed exactly once when executed.
+pub struct PreparedExport {
+    spec: ExportBundleSpec,
+    snapshot: plan::PlanSnapshot,
+    runtime_sha256: Option<String>,
+}
 
 impl ExportService {
     pub fn new() -> Self {
@@ -107,9 +113,39 @@ impl ExportService {
     }
 
     pub fn execute_export(&self, spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
-        let plan = self.plan_export(&spec)?;
-        self.validate_export_plan(&plan)?;
-        export_bundle_atomic(spec)
+        self.prepare_export(spec)?.execute()
+    }
+
+    pub fn prepare_export(&self, spec: ExportBundleSpec) -> VnResult<PreparedExport> {
+        let snapshot = plan::prepare_plan(&spec)?;
+        let runtime_sha256 = if snapshot
+            .plan
+            .diagnostics
+            .iter()
+            .any(|issue| issue.severity == "error")
+        {
+            None
+        } else {
+            snapshot
+                .runtime_artifact_path
+                .as_ref()
+                .map(|path| {
+                    crate::atomic_io::sha256_file(path)
+                        .map(|(hash, _)| hash)
+                        .map_err(|error| {
+                            invalid_bundle(format!(
+                                "hash runtime artifact '{}': {error}",
+                                path.display()
+                            ))
+                        })
+                })
+                .transpose()?
+        };
+        Ok(PreparedExport {
+            spec,
+            snapshot,
+            runtime_sha256,
+        })
     }
 
     /// Shared release requirements for GUI, CLI and API executable exports.
@@ -138,12 +174,53 @@ impl ExportService {
     }
 }
 
+impl PreparedExport {
+    pub fn plan(&self) -> &ExportPlan {
+        &self.snapshot.plan
+    }
+
+    pub fn execute(mut self) -> VnResult<ExportBundleReport> {
+        ExportService::new().validate_export_plan(&self.snapshot.plan)?;
+        self.compile_if_needed()?;
+        export_bundle_atomic(self, false)
+    }
+
+    pub fn execute_executable(mut self) -> VnResult<ExportBundleReport> {
+        ExportService::new()
+            .validate_executable_export_plan(&self.snapshot.plan, self.spec.target_platform)?;
+        self.compile_if_needed()?;
+        export_bundle_atomic(self, true)
+    }
+
+    fn compile_if_needed(&mut self) -> VnResult<()> {
+        if self.snapshot.compiled.is_none() {
+            self.snapshot.compiled = Some(self.snapshot.script.compile().map_err(|error| {
+                invalid_bundle(format!(
+                    "compile entry script '{}': {error}",
+                    self.snapshot.plan.entry_script
+                ))
+            })?);
+        }
+        Ok(())
+    }
+}
+
 pub fn export_bundle(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
     ExportService::new().execute_export(spec)
 }
 
-fn export_bundle_atomic(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> {
-    let final_output_root = spec.output_root.clone();
+fn export_bundle_atomic(
+    mut prepared: PreparedExport,
+    require_executable: bool,
+) -> VnResult<ExportBundleReport> {
+    let requested_output_root = prepared.spec.output_root.clone();
+    let final_output_root = prepared.snapshot.output_root.clone();
+    validate_prepared_output(&prepared.snapshot, &requested_output_root)?;
+    if planned_output_root(&requested_output_root)? != final_output_root {
+        return Err(invalid_bundle(
+            "output_root changed after export preparation",
+        ));
+    }
     output_root_exists_as_directory(&final_output_root)?;
     let parent = final_output_root
         .parent()
@@ -159,13 +236,41 @@ fn export_bundle_atomic(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> 
     let staging_root = parent.join(format!(".{output_name}.staging-{nonce}"));
     let backup_root = parent.join(format!(".{output_name}.rollback-{nonce}"));
 
-    let mut staging_spec = spec;
-    staging_spec.output_root = staging_root.clone();
-    let result = export_bundle_materialized(staging_spec, &final_output_root).and_then(|report| {
-        publish_staged_bundle(&staging_root, &final_output_root, &backup_root)?;
-        Ok(report)
-    });
-    if let Err(error) = &result {
+    validate_prepared_output(&prepared.snapshot, &staging_root)?;
+    fs::create_dir(&staging_root).map_err(|error| {
+        invalid_bundle(format!(
+            "create staging directory '{}': {error}",
+            staging_root.display()
+        ))
+    })?;
+    prepared.spec.output_root = staging_root.clone();
+    let (result, cleanup_staging) =
+        match export_bundle_materialized(&prepared, &requested_output_root, require_executable) {
+            Ok(report) => {
+                let checked = validate_prepared_output(&prepared.snapshot, &requested_output_root)
+                    .and_then(|()| validate_prepared_output(&prepared.snapshot, &staging_root))
+                    .and_then(|()| {
+                        if planned_output_root(&requested_output_root)? != final_output_root {
+                            return Err(invalid_bundle(
+                                "output_root changed after export preparation",
+                            ));
+                        }
+                        Ok(())
+                    });
+                match checked {
+                    Err(error) => (Err(error), true),
+                    Ok(()) => {
+                        match publish_staged_bundle(&staging_root, &final_output_root, &backup_root)
+                        {
+                            Ok(()) => (Ok(report), false),
+                            Err(failure) => (Err(failure.error), failure.cleanup_staging),
+                        }
+                    }
+                }
+            }
+            Err(error) => (Err(error), true),
+        };
+    if let (Err(error), true) = (&result, cleanup_staging) {
         if let Err(cleanup_error) = fs::remove_dir_all(&staging_root) {
             if cleanup_error.kind() != std::io::ErrorKind::NotFound {
                 return Err(invalid_bundle(format!(
@@ -178,102 +283,168 @@ fn export_bundle_atomic(spec: ExportBundleSpec) -> VnResult<ExportBundleReport> 
     result
 }
 
-fn publish_staged_bundle(staging: &Path, final_output: &Path, backup: &Path) -> VnResult<()> {
-    if backup.exists() {
-        return Err(invalid_bundle(format!(
-            "rollback path already exists '{}'",
-            backup.display()
-        )));
+fn validate_prepared_output(snapshot: &plan::PlanSnapshot, output: &Path) -> VnResult<()> {
+    let output = planned_output_root(output)?;
+    if snapshot.project_root.starts_with(&output) {
+        return Err(invalid_bundle(
+            "output_root would replace the source project; choose a separate export folder",
+        ));
     }
-    let had_existing = final_output.exists();
+    if snapshot.script_source_path.starts_with(&output) {
+        return Err(invalid_bundle(
+            "output_root contains the entry script; choose a separate export folder",
+        ));
+    }
+    if snapshot
+        .runtime_artifact_path
+        .as_ref()
+        .is_some_and(|path| path.starts_with(&output))
+    {
+        return Err(invalid_bundle(
+            "output_root contains the source runtime; choose a separate export folder",
+        ));
+    }
+    if let Some(collision) = assets::detect_asset_path_collisions(
+        &snapshot.project_root,
+        &snapshot.script,
+        Some(&output),
+    )?
+    .pop()
+    {
+        return Err(invalid_bundle(collision.message()));
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct PublicationFailure {
+    error: crate::error::VnError,
+    cleanup_staging: bool,
+}
+
+fn publish_staged_bundle(
+    staging: &Path,
+    final_output: &Path,
+    backup: &Path,
+) -> Result<(), PublicationFailure> {
+    publish_staged_bundle_with(
+        staging,
+        final_output,
+        backup,
+        |from, to| fs::rename(from, to),
+        |path| fs::remove_dir_all(path),
+    )
+}
+
+fn publish_staged_bundle_with(
+    staging: &Path,
+    final_output: &Path,
+    backup: &Path,
+    rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
+    remove_backup: impl Fn(&Path) -> std::io::Result<()>,
+) -> Result<(), PublicationFailure> {
+    let before_publish = |message: String| PublicationFailure {
+        error: invalid_bundle(message),
+        cleanup_staging: true,
+    };
+    match fs::symlink_metadata(backup) {
+        Ok(_) => {
+            return Err(before_publish(format!(
+                "rollback path already exists '{}'",
+                backup.display()
+            )))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(before_publish(format!(
+                "inspect rollback '{}' for destination '{}': {error}",
+                backup.display(),
+                final_output.display()
+            )))
+        }
+    }
+    let had_existing =
+        output_root_exists_as_directory(final_output).map_err(|error| PublicationFailure {
+            error,
+            cleanup_staging: true,
+        })?;
     if had_existing {
-        fs::rename(final_output, backup).map_err(|e| {
-            invalid_bundle(format!(
-                "prepare rollback '{}' -> '{}': {e}",
+        rename(final_output, backup).map_err(|e| {
+            before_publish(format!(
+                "prepare rollback '{}' -> '{}': {e}; destination and rollback state are uncertain",
                 final_output.display(),
                 backup.display()
             ))
         })?;
     }
 
-    match fs::rename(staging, final_output) {
+    match rename(staging, final_output) {
         Ok(()) => {
             if had_existing {
-                fs::remove_dir_all(backup).map_err(|e| {
-                    invalid_bundle(format!("remove rollback '{}': {e}", backup.display()))
+                remove_backup(backup).map_err(|e| PublicationFailure {
+                    error: invalid_bundle(format!("bundle published at '{}'; failed to remove rollback '{}': {e}; rollback may be incomplete", final_output.display(), backup.display())),
+                    cleanup_staging: false,
                 })?;
             }
             Ok(())
         }
         Err(err) => {
             let restore_error = if had_existing {
-                fs::rename(backup, final_output).err()
+                rename(backup, final_output).err()
             } else {
                 None
             };
             if let Some(restore_error) = restore_error {
-                return Err(invalid_bundle(format!(
-                    "publish staged bundle '{}' -> '{}': {err}; rollback restore failed: {restore_error}",
+                return Err(PublicationFailure { error: invalid_bundle(format!(
+                    "publish staged bundle '{}' -> '{}': {err}; restore rollback '{}' -> '{}' failed: {restore_error}; destination state is uncertain; staging retained if present",
                     staging.display(),
+                    final_output.display(),
+                    backup.display(),
                     final_output.display()
-                )));
+                )), cleanup_staging: false });
             }
-            Err(invalid_bundle(format!(
-                "publish staged bundle '{}' -> '{}': {err}",
+            let restored = if had_existing {
+                "; previous destination restored"
+            } else {
+                "; destination state is uncertain"
+            };
+            Err(PublicationFailure { error: invalid_bundle(format!(
+                "publish staged bundle '{}' -> '{}': {err}{restored}; rollback path '{}'; staging retained if present",
                 staging.display(),
-                final_output.display()
-            )))
+                final_output.display(),
+                backup.display()
+            )), cleanup_staging: false })
         }
     }
 }
 
 fn export_bundle_materialized(
-    spec: ExportBundleSpec,
+    prepared: &PreparedExport,
     reported_output_root: &Path,
+    require_executable: bool,
 ) -> VnResult<ExportBundleReport> {
-    let plan = build_export_plan(&spec)?;
-    ExportService::new().validate_export_plan(&plan)?;
-    let project_root = spec
-        .project_root
-        .canonicalize()
-        .map_err(|e| invalid_bundle(format!("canonicalize project_root: {e}")))?;
+    let spec = &prepared.spec;
+    let snapshot = &prepared.snapshot;
+    let runtime_sha256 = &prepared.runtime_sha256;
+    let plan = &snapshot.plan;
+    let project_root = &snapshot.project_root;
 
-    fs::create_dir_all(&spec.output_root).map_err(|e| {
-        invalid_bundle(format!(
-            "create output_root '{}': {e}",
-            spec.output_root.display()
-        ))
-    })?;
     let output_root = spec
         .output_root
         .canonicalize()
         .map_err(|e| invalid_bundle(format!("canonicalize output_root: {e}")))?;
 
-    let manifest = helpers::load_export_manifest(&project_root, spec.entry_script.as_deref())?;
-
-    let entry_script = spec
-        .entry_script
-        .unwrap_or_else(|| PathBuf::from(manifest.settings.entry_point.clone()));
-    let entry_script = sanitize_relative_path(&entry_script, "entry_script")?;
-    let script_source_path =
-        canonicalize_within_root(&project_root, &entry_script, "entry_script")?;
-
-    let script = load_runtime_script_from_entry(&script_source_path).map_err(|e| {
-        invalid_bundle(format!(
-            "load entry script '{}': {e}",
-            entry_script.display()
-        ))
-    })?;
-    let compiled = script.compile().map_err(|e| {
-        invalid_bundle(format!(
-            "compile entry script '{}': {e}",
-            entry_script.display()
-        ))
-    })?;
+    let manifest = &snapshot.manifest;
+    let script_source_path = &snapshot.script_source_path;
+    let script = &snapshot.script;
+    let compiled = snapshot
+        .compiled
+        .as_ref()
+        .expect("prepared export contains compiled script");
     let compiled_bytes = compiled
         .to_binary()
         .map_err(|e| invalid_bundle(format!("serialize compiled script: {e}")))?;
-    let capability_report = build_capability_report(&script, spec.runtime_artifact.is_some());
+    let capability_report = build_capability_report(script, spec.runtime_artifact.is_some());
 
     let scripts_dir = output_root.join("scripts");
     let assets_dir = output_root.join("assets");
@@ -307,9 +478,7 @@ fn export_bundle_materialized(
             ))
         })?;
     }
-    let runtime_script_json = script
-        .to_json()
-        .map_err(|e| invalid_bundle(format!("serialize runtime script: {e}")))?;
+    let runtime_script_json = &snapshot.script_json;
     fs::write(&script_source_out, runtime_script_json.as_bytes()).map_err(|e| {
         invalid_bundle(format!(
             "write runtime script '{}' -> '{}': {e}",
@@ -343,7 +512,7 @@ fn export_bundle_materialized(
         ))
     })?;
 
-    let assets_manifest_entries = copy_referenced_assets(&project_root, &assets_dir, &script)?;
+    let assets_manifest_entries = copy_referenced_assets(project_root, &assets_dir, script)?;
     let assets_manifest_payload = serde_json::json!({
         "manifest_version": 1,
         "assets": &assets_manifest_entries,
@@ -359,10 +528,15 @@ fn export_bundle_materialized(
     })?;
 
     let runtime_artifact = copy_runtime_artifact(
-        spec.runtime_artifact.as_deref(),
-        &project_root,
+        snapshot.runtime_artifact_path.as_deref(),
+        project_root,
         &runtime_dir,
     )?;
+    if runtime_artifact.as_ref().map(|runtime| &runtime.sha256) != runtime_sha256.as_ref() {
+        return Err(invalid_bundle(
+            "runtime artifact changed after export preparation",
+        ));
+    }
     let runtime_artifact_sha256 = runtime_artifact
         .as_ref()
         .map(|runtime| runtime.sha256.clone());
@@ -371,6 +545,16 @@ fn export_bundle_materialized(
         &output_root,
         runtime_artifact.as_ref(),
     )?;
+    if executable_rel != plan.executable
+        || (require_executable
+            && executable_rel.as_deref() != Some(spec.target_platform.expected_executable_name()))
+    {
+        return Err(invalid_bundle(reporting::executable_requirement_message(
+            spec.target_platform,
+            spec.target_platform.expected_executable_name(),
+            Some(plan),
+        )));
+    }
     let runtime_artifact_rel = match (&executable_rel, &runtime_artifact) {
         (Some(executable), Some(runtime)) => {
             // The top-level executable is the runtime; do not ship its second copy.
@@ -398,7 +582,7 @@ fn export_bundle_materialized(
         schema: "vnengine.export_bundle_report.v1".to_string(),
         target_platform: spec.target_platform.as_str().to_string(),
         output_layout_version: spec.output_layout_version,
-        project_root: normalize_path_display(&project_root),
+        project_root: normalize_path_display(project_root),
         output_root: normalize_path_display(reported_output_root),
         generator_os: std::env::consts::OS.to_string(),
         script_source: normalize_path_display(
@@ -512,4 +696,99 @@ fn export_bundle_materialized(
     })?;
 
     Ok(report)
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn prepared() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("staging");
+        let destination = dir.path().join("bundle");
+        let backup = dir.path().join("rollback");
+        fs::create_dir(&staging).unwrap();
+        fs::create_dir(&destination).unwrap();
+        fs::write(staging.join("new"), b"new").unwrap();
+        fs::write(destination.join("old"), b"old").unwrap();
+        (dir, staging, destination, backup)
+    }
+
+    #[test]
+    fn published_bundle_reports_failed_backup_cleanup() {
+        let (_dir, staging, destination, backup) = prepared();
+        let failure = publish_staged_bundle_with(
+            &staging,
+            &destination,
+            &backup,
+            |from, to| fs::rename(from, to),
+            |_| Err(std::io::Error::other("cleanup denied")),
+        )
+        .unwrap_err();
+        let message = failure.error.to_string();
+        assert!(message.contains("bundle published at"), "{message}");
+        assert!(
+            message.contains(&destination.display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains(&backup.display().to_string()), "{message}");
+        assert!(
+            message.contains("cleanup denied") && message.contains("may be incomplete"),
+            "{message}"
+        );
+        assert!(!failure.cleanup_staging);
+        assert_eq!(fs::read(destination.join("new")).unwrap(), b"new");
+        assert!(backup.exists());
+        assert!(!staging.exists());
+    }
+
+    #[test]
+    fn failed_publication_reports_restore_status_and_retains_staging() {
+        for fail_restore in [false, true] {
+            let (_dir, staging, destination, backup) = prepared();
+            let calls = Cell::new(0);
+            let failure = publish_staged_bundle_with(
+                &staging,
+                &destination,
+                &backup,
+                |from, to| {
+                    let call = calls.get() + 1;
+                    calls.set(call);
+                    match call {
+                        2 => Err(std::io::Error::other("publish denied")),
+                        3 if fail_restore => Err(std::io::Error::other("restore denied")),
+                        _ => fs::rename(from, to),
+                    }
+                },
+                |path| fs::remove_dir_all(path),
+            )
+            .unwrap_err();
+            let message = failure.error.to_string();
+            assert!(message.contains("publish denied"), "{message}");
+            assert!(
+                message.contains(&destination.display().to_string()),
+                "{message}"
+            );
+            assert!(message.contains(&backup.display().to_string()), "{message}");
+            assert!(!failure.cleanup_staging);
+            assert_eq!(fs::read(staging.join("new")).unwrap(), b"new");
+            if fail_restore {
+                assert!(
+                    message.contains("restore denied")
+                        && message.contains("destination state is uncertain"),
+                    "{message}"
+                );
+                assert_eq!(fs::read(backup.join("old")).unwrap(), b"old");
+                assert!(!destination.exists());
+            } else {
+                assert!(
+                    message.contains("previous destination restored"),
+                    "{message}"
+                );
+                assert_eq!(fs::read(destination.join("old")).unwrap(), b"old");
+                assert!(!backup.exists());
+            }
+        }
+    }
 }

@@ -3,7 +3,7 @@ use crate::runtime::Engine;
 
 use super::super::NodeGraph;
 use super::{
-    compose_scene_snapshot, ComposerOverlay, ComposerSnapshot, PresentationLayout,
+    compose_snapshot_with_preview, ComposerOverlay, ComposerSnapshot, PresentationLayout,
     PresentationRect, PresentationSnapshot, PresentationTransition,
 };
 
@@ -15,7 +15,7 @@ pub fn build_presentation_snapshot(
     locale: Option<&str>,
     catalog: Option<&LocalizationCatalog>,
 ) -> PresentationSnapshot {
-    let composer = compose_scene_snapshot(
+    let (composer, preview) = compose_snapshot_with_preview(
         graph,
         selected_node_id,
         stage_resolution,
@@ -23,7 +23,7 @@ pub fn build_presentation_snapshot(
         locale,
         catalog,
     );
-    PresentationSnapshot::from_composer_snapshot(composer, engine)
+    PresentationSnapshot::from_composer_snapshot(composer, preview.as_ref())
 }
 
 impl PresentationSnapshot {
@@ -42,7 +42,9 @@ impl PresentationSnapshot {
             .iter()
             .map(|object| object.source_field_path.clone())
             .collect();
-        let visual = engine.map(|engine| engine.visual_state());
+        let visual = engine
+            .filter(|_| snapshot.preview_error.is_none())
+            .map(|engine| engine.visual_state());
 
         Self {
             schema: "vnengine.presentation_snapshot.v1".to_string(),
@@ -61,6 +63,7 @@ impl PresentationSnapshot {
             objects: snapshot.objects,
             overlays: snapshot.overlays,
             provenance,
+            preview_error: snapshot.preview_error,
         }
     }
 }

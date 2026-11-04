@@ -481,3 +481,27 @@ class GuiBindingTests(unittest.TestCase):
         self.assertEqual(hub_edges, {(0, first), (1, second)})
         nodes = {node_id: node.node_type for node_id, node, _, _ in graph.nodes()}
         self.assertEqual(nodes[hub], "Choice")
+        operations_before = len(graph.operation_log())
+        graph.move_nodes({source: (25.0, 35.0), first: (-40.0, 260.0)})
+        self.assertEqual(graph.node_position(source), (25.0, 35.0))
+        self.assertEqual(graph.node_position(first), (-40.0, 260.0))
+        self.assertEqual(len(graph.operation_log()), operations_before + 1)
+        with self.assertRaises(RuntimeError):
+            graph.move_nodes({source: (99.0, 99.0), 999999: (2.0, 3.0)})
+        with self.assertRaisesRegex(RuntimeError, "finite"):
+            graph.move_nodes({source: (float("nan"), 1.0)})
+        self.assertEqual(graph.node_position(source), (25.0, 35.0))
+        self.assertEqual(graph.node_position(first), (-40.0, 260.0))
+        self.assertEqual(len(graph.operation_log()), operations_before + 1)
+        self.assertTrue(graph.undo())
+        self.assertEqual(graph.node_position(source), (0.0, 0.0))
+        self.assertEqual(graph.node_position(first), (-120.0, 180.0))
+        self.assertTrue(graph.redo())
+        self.assertEqual(graph.node_position(source), (25.0, 35.0))
+        self.assertEqual(graph.node_position(first), (-40.0, 260.0))
+        with workspace_tempdir("move-nodes-roundtrip") as temp:
+            path = temp / "story.vnauthoring"
+            graph.save(str(path))
+            reloaded = vn.NodeGraph.load(str(path))
+            self.assertEqual(reloaded.node_position(source), (25.0, 35.0))
+            self.assertEqual(reloaded.node_position(first), (-40.0, 260.0))

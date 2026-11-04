@@ -60,7 +60,9 @@ impl PyEngine {
                         msg.clone(),
                     ));
                 let msg = result.err().map_or(msg, |error| error.to_string());
-                return Err(PyRuntimeError::new_err(msg));
+                let wrapped = PyRuntimeError::new_err(msg);
+                wrapped.set_cause(py, Some(error));
+                return Err(wrapped);
             }
             engine
                 .inner

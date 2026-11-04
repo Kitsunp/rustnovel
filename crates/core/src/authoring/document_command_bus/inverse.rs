@@ -12,6 +12,17 @@ impl AuthoringDocumentSession {
                 self.document.graph = before.as_ref().clone();
                 Ok(())
             }
+            AuthoringDocumentDelta::NodesMoved { before, .. } => {
+                for id in before.keys() {
+                    if self.document.graph.get_node_pos(*id).is_none() {
+                        return Err(format!("node {id} does not exist"));
+                    }
+                }
+                for (&id, &position) in before {
+                    self.document.graph.set_node_pos(id, position);
+                }
+                Ok(())
+            }
             AuthoringDocumentDelta::LayerVisibleChanged {
                 object_id, before, ..
             }

@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use visual_novel_engine::{
     resolve_layout,
     runtime::{
-        CharacterPlacementRaw, DialogueRaw, Engine, EventRaw, SceneFramePresenter, SceneUpdateRaw,
-        ScriptRaw, UiView,
+        CharacterPlacementRaw, DialogueRaw, Engine, EventRaw, SceneFramePresenter, ScenePatchRaw,
+        SceneUpdateRaw, ScriptRaw, UiView,
     },
     DisplayProfile, LayoutPolicy, ResourceLimiter, SecurityPolicy, StageProfile, UiTheme,
 };
@@ -63,6 +63,15 @@ fn runtime_app_exposes_scene_frame_as_primary_render_contract() {
                     scale: None,
                 }],
             }),
+            EventRaw::Patch(ScenePatchRaw {
+                background: Some("bg/after_patch.png".to_string()),
+                add: vec![CharacterPlacementRaw {
+                    name: "Iris".to_string(),
+                    expression: Some("sprites/iris.png".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
             EventRaw::Dialogue(DialogueRaw {
                 speaker: "Ava".to_string(),
                 text: "Runtime frame".to_string(),
@@ -86,6 +95,26 @@ fn runtime_app_exposes_scene_frame_as_primary_render_contract() {
 
     app.handle_action(InputAction::Advance)
         .expect("advance scene");
+    assert_eq!(
+        app.engine().visual_state().background.as_deref(),
+        Some("bg/runtime.png"),
+        "presenting the patch must leave the committed state alone"
+    );
+    assert_eq!(
+        app.scene_frame().visual.background.as_deref(),
+        Some("bg/after_patch.png")
+    );
+    assert!(
+        matches!(&app.ui().view, UiView::Scene { description }
+            if description.contains("bg/after_patch.png") && description.contains("Iris")),
+        "the UI and rendered frame must summarize the same patch: {:?}",
+        app.ui().view
+    );
+
+    app.handle_action(InputAction::Advance)
+        .expect("commit patch");
+    assert_eq!(app.scene_frame().visual, *app.engine().visual_state());
+    assert_eq!(app.scene_frame().visual.characters.len(), 2);
     assert!(app
         .scene_frame()
         .interactions
@@ -174,6 +203,9 @@ fn runtime_app_advance_past_final_event_reports_end_state_without_error() {
         &app.ui().view,
         UiView::System { message } if message == "End of script"
     ));
+    assert!(!app
+        .handle_action(InputAction::Advance)
+        .expect("advance at the end should close normally"));
 }
 
 #[test]

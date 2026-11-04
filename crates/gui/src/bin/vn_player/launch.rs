@@ -107,7 +107,7 @@ pub(super) fn default_assets_root(script_path: &Path, bundle_root: Option<&Path>
 
 pub(super) fn print_help() {
     println!(
-        "Usage: vn_player [script.json] [--assets-root DIR] [--manifest FILE] [--menu-config FILE] [--preferences-path FILE] [--require-manifest] [--title TITLE] [--trusted | --untrusted] [--smoke] [--smoke-report FILE]\n\n--smoke-report also enables smoke mode."
+        "Usage: vn_player [SCRIPT] [--assets-root DIR] [--manifest FILE] [--menu-config FILE] [--preferences-path FILE] [--require-manifest] [--title TITLE] [--trusted | --untrusted] [--smoke] [--smoke-report FILE]\n\nSCRIPT accepts runtime JSON or a compiled .vnc/.vnproject file.\n--smoke-report also enables smoke mode."
     );
 }
 

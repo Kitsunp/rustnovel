@@ -26,6 +26,20 @@ pub struct VisualState {
 }
 
 impl VisualState {
+    /// Identifies a legacy character-name image with no explicit image reference.
+    /// An explicit background or expression at the same path takes precedence.
+    pub fn is_implicit_character_image(&self, asset: &str) -> bool {
+        self.background.as_deref() != Some(asset)
+            && self
+                .characters
+                .iter()
+                .any(|character| character.expression.is_none() && character.name.as_ref() == asset)
+            && !self
+                .characters
+                .iter()
+                .any(|character| character.expression.as_deref() == Some(asset))
+    }
+
     /// Keeps the saved scene's music path in sync with explicit BGM actions.
     pub(crate) fn apply_audio_action(&mut self, action: &AudioActionCompiled) {
         crate::audio::apply_bgm_action(
@@ -121,7 +135,9 @@ impl VisualState {
         {
             existing.x = Some(pos.x);
             existing.y = Some(pos.y);
-            existing.scale = pos.scale;
+            if let Some(scale) = pos.scale {
+                existing.scale = Some(scale);
+            }
             return Ok(());
         }
 

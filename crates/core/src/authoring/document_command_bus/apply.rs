@@ -16,6 +16,58 @@ impl AuthoringDocumentSession {
     ) -> DocumentApplyResult {
         match command {
             AuthoringDocumentCommand::Graph(command) => self.apply_graph_command(command),
+            AuthoringDocumentCommand::MoveNodes { positions } => {
+                let mut before = std::collections::BTreeMap::new();
+                let mut validation_dirty = false;
+                for (&id, &position) in positions {
+                    if !position.x.is_finite() || !position.y.is_finite() {
+                        return Err(format!("node {id} position must be finite"));
+                    }
+                    let previous = self
+                        .document
+                        .graph
+                        .get_node_pos(id)
+                        .ok_or_else(|| format!("node {id} does not exist"))?;
+                    if previous != position {
+                        validation_dirty |= super::super::validation::layout_position_is_invalid(
+                            previous.x, previous.y,
+                        )
+                            != super::super::validation::layout_position_is_invalid(
+                                position.x, position.y,
+                            );
+                        before.insert(id, previous);
+                    }
+                }
+                if before.is_empty() {
+                    return Err("no-op node move".to_string());
+                }
+                for id in before.keys() {
+                    self.document.graph.set_node_pos(*id, positions[id]);
+                }
+                let field_paths = before
+                    .keys()
+                    .map(|id| format!("graph.nodes[{id}].position"))
+                    .collect();
+                let targets = before
+                    .keys()
+                    .map(|id| DiagnosticTarget::Node { node_id: *id })
+                    .collect();
+                Ok((
+                    AuthoringDocumentDelta::NodesMoved {
+                        before,
+                        validation_dirty,
+                    },
+                    DocumentApplyMetadata {
+                        kind: OperationKind::NodeMoved,
+                        diagnostic_id: None,
+                        diagnostic_target: None,
+                        field_paths,
+                        targets,
+                        before_value: None,
+                        after_value: None,
+                    },
+                ))
+            }
             AuthoringDocumentCommand::ReplaceGraph {
                 graph,
                 kind,

@@ -104,8 +104,10 @@ impl EditorWorkbench {
                 self.toast = Some(ToastState::success("Dry Run completed"));
                 true
             }
-            Err(_) => {
-                self.toast = Some(ToastState::error("Validation failed at runtime init"));
+            Err(error) => {
+                self.toast = Some(ToastState::error(format!(
+                    "Validation failed at runtime init: {error}"
+                )));
                 false
             }
         }

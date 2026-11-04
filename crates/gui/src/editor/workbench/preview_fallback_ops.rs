@@ -5,6 +5,8 @@ use crate::editor::StoryNode;
 
 impl EditorWorkbench {
     pub fn refresh_scene_from_selected_node(&mut self) {
+        self.before_rebuilding_preview_scene();
+        self.composer_route_error = None;
         self.scene.clear();
         self.composer_entity_owners.clear();
         let Some(node_id) = self.selected_node.or(self.node_graph.selected) else {

@@ -86,17 +86,29 @@ impl AssetStore {
     }
 
     pub fn load_bytes_shared(&self, asset_path: &str) -> Result<Arc<[u8]>, AssetError> {
+        self.read_bytes_shared(asset_path, false)
+    }
+
+    /// Reads the current file and refreshes the cache after path and integrity checks.
+    pub fn reload_bytes(&self, asset_path: &str) -> Result<Vec<u8>, AssetError> {
+        self.read_bytes_shared(asset_path, true)
+            .map(|bytes| bytes.as_ref().to_vec())
+    }
+
+    fn read_bytes_shared(&self, asset_path: &str, reload: bool) -> Result<Arc<[u8]>, AssetError> {
         let normalized = normalize_asset_request(asset_path);
         let rel = sanitize_rel_path(Path::new(&normalized))?;
         let cache_key = normalize_asset_key(&rel);
 
-        if let Some(bytes) = self
-            .byte_cache
-            .lock()
-            .map_err(|_| std::io::Error::other("asset cache lock poisoned"))?
-            .get(&cache_key)
-        {
-            return Ok(bytes);
+        if !reload {
+            let cached = self
+                .byte_cache
+                .lock()
+                .map_err(|_| std::io::Error::other("asset cache lock poisoned"))?
+                .get(&cache_key);
+            if let Some(bytes) = cached {
+                return Ok(bytes);
+            }
         }
 
         let full_path = canonicalize_within_root(&self.root, &rel)?;
@@ -105,10 +117,18 @@ impl AssetStore {
         let size = bytes.len() as u64;
         self.verify_manifest(&cache_key, size, &bytes)?;
         let bytes: Arc<[u8]> = Arc::from(bytes);
-        self.byte_cache
+        let mut cache = self
+            .byte_cache
             .lock()
-            .map_err(|_| std::io::Error::other("asset cache lock poisoned"))?
-            .insert(cache_key, Arc::clone(&bytes));
+            .map_err(|_| std::io::Error::other("asset cache lock poisoned"))?;
+        if !reload {
+            // Another load can populate the cache while this one is reading.
+            // Preserve its result, especially a completed explicit reload.
+            if let Some(cached) = cache.get(&cache_key) {
+                return Ok(cached);
+            }
+        }
+        cache.insert(cache_key, Arc::clone(&bytes));
         Ok(bytes)
     }
 

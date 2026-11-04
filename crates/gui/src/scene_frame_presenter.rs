@@ -136,7 +136,7 @@ impl EguiSceneFramePresenter {
     }
 }
 
-fn scale_rect(origin: egui::Rect, rect: LayoutRect, sx: f32, sy: f32) -> egui::Rect {
+pub(crate) fn scale_rect(origin: egui::Rect, rect: LayoutRect, sx: f32, sy: f32) -> egui::Rect {
     egui::Rect::from_min_size(
         egui::pos2(origin.left() + rect.x * sx, origin.top() + rect.y * sy),
         egui::vec2(rect.width * sx, rect.height * sy),

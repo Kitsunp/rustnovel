@@ -144,8 +144,26 @@ impl NodeGraph {
 
     /// Compares persisted graph content, ignoring the transient dirty flag.
     pub fn has_same_content(&self, other: &Self) -> bool {
-        self.nodes == other.nodes
-            && self.connections == other.connections
+        self.nodes == other.nodes && self.has_same_non_node_content(other)
+    }
+
+    // Compilation consumes node data and layout validity, not the layout itself.
+    pub(super) fn has_same_compilation_input(&self, other: &Self) -> bool {
+        use super::validation::layout_position_is_invalid;
+
+        self.nodes.len() == other.nodes.len()
+            && self.nodes.iter().zip(&other.nodes).all(|(left, right)| {
+                Arc::ptr_eq(left, right)
+                    || (left.0 == right.0
+                        && left.1 == right.1
+                        && layout_position_is_invalid(left.2.x, left.2.y)
+                            == layout_position_is_invalid(right.2.x, right.2.y))
+            })
+            && self.has_same_non_node_content(other)
+    }
+
+    fn has_same_non_node_content(&self, other: &Self) -> bool {
+        self.connections == other.connections
             && self.scene_profiles == other.scene_profiles
             && self.bookmarks == other.bookmarks
             && self.fragments == other.fragments

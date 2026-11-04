@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::{VnError, VnResult};
 use crate::event::{ChoiceOptionRaw, ChoiceRaw, EventRaw};
 use crate::event_behavior::{node_behavior_for_authoring_node, NodeBehavior};
-use crate::script::ScriptRaw;
+use crate::script::{ScriptCompiled, ScriptRaw};
 
 use super::export_helpers::targets_end_label;
 use super::export_validation::validate_strict_graph_export;
@@ -89,11 +89,24 @@ pub fn to_script_lossy_for_diagnostics(graph: &NodeGraph) -> ScriptRaw {
 }
 
 pub fn to_script_strict(graph: &NodeGraph) -> VnResult<ScriptRaw> {
-    validate_strict_graph_export(graph)?;
+    strict_projection(graph).map(|(script, _)| script)
+}
+
+pub(in crate::authoring) fn strict_projection(
+    graph: &NodeGraph,
+) -> VnResult<(ScriptRaw, ScriptCompiled)> {
     let script = to_script(graph);
+    let compiled = compile_strict_projection(graph, &script)?;
+    Ok((script, compiled))
+}
+
+pub(in crate::authoring) fn compile_strict_projection(
+    graph: &NodeGraph,
+    script: &ScriptRaw,
+) -> VnResult<ScriptCompiled> {
+    validate_strict_graph_export(graph, script)?;
     script
         .compile()
-        .map(|_| script)
         .map_err(|err| VnError::invalid_script(format!("strict authoring export failed: {err}")))
 }
 

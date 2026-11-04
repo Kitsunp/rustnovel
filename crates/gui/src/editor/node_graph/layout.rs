@@ -35,9 +35,12 @@ impl NodeGraph {
         &mut self,
         orientation: GraphLayoutOrientation,
     ) -> bool {
-        self.edit_graph("Auto layout", |graph| {
-            GraphLayout { graph }.apply(orientation)
-        })
+        let mut graph = self.authoring_graph().clone();
+        if !(GraphLayout { graph: &mut graph }).apply(orientation) {
+            return false;
+        }
+        let positions = graph.nodes().map(|(id, _, pos)| (*id, *pos)).collect();
+        self.apply_node_positions_reported(positions)
     }
 }
 

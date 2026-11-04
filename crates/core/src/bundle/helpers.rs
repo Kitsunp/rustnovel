@@ -126,11 +126,54 @@ pub(super) fn output_root_exists_as_directory(path: &Path) -> VnResult<bool> {
 }
 
 pub(super) fn planned_output_root(path: &Path) -> VnResult<PathBuf> {
-    if output_root_exists_as_directory(path)? {
-        path.canonicalize()
-            .map_err(|e| invalid_bundle(format!("canonicalize output_root: {e}")))
-    } else {
-        Ok(path.to_path_buf())
+    let absolute = std::path::absolute(path).map_err(|error| {
+        invalid_bundle(format!("resolve output_root '{}': {error}", path.display()))
+    })?;
+    let mut ancestor = absolute.as_path();
+    let mut missing = Vec::new();
+    loop {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) => {
+                if missing.is_empty() && !metadata.file_type().is_dir() {
+                    return Err(invalid_bundle(format!(
+                        "output_root is not a directory: '{}'",
+                        path.display()
+                    )));
+                }
+                let mut resolved = ancestor.canonicalize().map_err(|error| {
+                    invalid_bundle(format!(
+                        "canonicalize output_root ancestor '{}': {error}",
+                        ancestor.display()
+                    ))
+                })?;
+                if !output_root_exists_as_directory(&resolved)? {
+                    return Err(invalid_bundle(format!(
+                        "output_root ancestor disappeared: '{}'",
+                        resolved.display()
+                    )));
+                }
+                resolved.extend(missing.into_iter().rev());
+                return Ok(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let leaf = ancestor.file_name().ok_or_else(|| {
+                    invalid_bundle(format!(
+                        "cannot resolve missing output_root component '{}': {error}",
+                        ancestor.display()
+                    ))
+                })?;
+                missing.push(leaf);
+                ancestor = ancestor.parent().ok_or_else(|| {
+                    invalid_bundle(format!("cannot resolve output_root '{}'", path.display()))
+                })?;
+            }
+            Err(error) => {
+                return Err(invalid_bundle(format!(
+                    "inspect output_root ancestor '{}': {error}",
+                    ancestor.display()
+                )));
+            }
+        }
     }
 }
 

@@ -1,9 +1,15 @@
 //! Security policy validation for scripts.
 
 use crate::error::{VnError, VnResult};
-use crate::event::{AudioActionCompiled, CondCompiled, EventCompiled, EventRaw};
+use crate::event::{
+    audio_action_name, audio_channel_name, transition_kind_name, AudioActionCompiled, CondCompiled,
+    EventCompiled, EventRaw,
+};
 use crate::resource::ResourceLimiter;
 use crate::script::{ScriptCompiled, ScriptRaw};
+
+mod content;
+use content::validate_event_content;
 
 /// Policy used to validate script content and compiled ranges.
 #[derive(Clone, Debug, Default)]
@@ -39,30 +45,10 @@ impl SecurityPolicy {
         }
 
         for event in &script.events {
+            validate_event_content!(event, EventRaw, self, limits);
             match event {
-                EventRaw::Dialogue(dialogue) => {
-                    if !self.allow_empty_speaker && dialogue.speaker.trim().is_empty() {
-                        return Err(VnError::SecurityPolicy(
-                            "speaker cannot be empty".to_string(),
-                        ));
-                    }
-                    if dialogue.text.len() > limits.max_text_length {
-                        return Err(VnError::ResourceLimit("dialogue text".to_string()));
-                    }
-                }
                 EventRaw::Choice(choice) => {
-                    if choice.prompt.len() > limits.max_text_length {
-                        return Err(VnError::ResourceLimit("choice prompt".to_string()));
-                    }
-                    if choice.options.is_empty() {
-                        return Err(VnError::InvalidScript(
-                            "choice must have options".to_string(),
-                        ));
-                    }
                     for option in &choice.options {
-                        if option.text.len() > limits.max_text_length {
-                            return Err(VnError::ResourceLimit("choice option".to_string()));
-                        }
                         if option.target.len() > limits.max_label_length {
                             return Err(VnError::ResourceLimit("choice target".to_string()));
                         }
@@ -72,83 +58,6 @@ impl SecurityPolicy {
                                 option.target
                             )));
                         }
-                    }
-                }
-                EventRaw::Scene(scene) => {
-                    if scene.characters.len() > limits.max_characters {
-                        return Err(VnError::ResourceLimit("character count".to_string()));
-                    }
-                    if let Some(background) = &scene.background {
-                        validate_path(background, "background asset", limits)?;
-                    }
-                    if let Some(music) = &scene.music {
-                        validate_path(music, "music asset", limits)?;
-                    }
-                    for character in &scene.characters {
-                        if character.name.len() > limits.max_asset_length {
-                            return Err(VnError::ResourceLimit("character name".to_string()));
-                        }
-                        if let Some(expression) = &character.expression {
-                            if expression.len() > limits.max_asset_length {
-                                return Err(VnError::ResourceLimit(
-                                    "character expression".to_string(),
-                                ));
-                            }
-                        }
-                        if let Some(position) = &character.position {
-                            if position.len() > limits.max_asset_length {
-                                return Err(VnError::ResourceLimit(
-                                    "character position".to_string(),
-                                ));
-                            }
-                        }
-                    }
-                }
-                EventRaw::Patch(patch) => {
-                    if let Some(bg) = &patch.background {
-                        if !bg.is_empty() {
-                            validate_path(bg, "background image", limits)?;
-                        }
-                    }
-                    if let Some(music) = &patch.music {
-                        if !music.is_empty() {
-                            validate_path(music, "music file", limits)?;
-                        }
-                    }
-                    for character in &patch.add {
-                        validate_path(&character.name, "character name", limits)?;
-                        if let Some(expr) = &character.expression {
-                            validate_path(expr, "character expression", limits)?;
-                        }
-                        if let Some(pos) = &character.position {
-                            if pos.len() > limits.max_label_length {
-                                return Err(VnError::ResourceLimit(
-                                    "character position".to_string(),
-                                ));
-                            }
-                        }
-                        if let Some(scale) = character.scale {
-                            validate_positive_scale(scale, "character scale")?;
-                        }
-                    }
-                    for character in &patch.update {
-                        validate_path(&character.name, "character name", limits)?;
-                        if let Some(expr) = &character.expression {
-                            validate_path(expr, "character expression", limits)?;
-                        }
-                        if let Some(pos) = &character.position {
-                            if pos.len() > limits.max_label_length {
-                                return Err(VnError::ResourceLimit(
-                                    "character position".to_string(),
-                                ));
-                            }
-                        }
-                        if let Some(scale) = character.scale {
-                            validate_positive_scale(scale, "character patch scale")?;
-                        }
-                    }
-                    for name in &patch.remove {
-                        validate_path(name, "character name", limits)?;
                     }
                 }
                 EventRaw::Jump { target } => {
@@ -181,51 +90,13 @@ impl SecurityPolicy {
                         )));
                     }
                 }
-                EventRaw::ExtCall { command, args } => {
-                    if command.len() > limits.max_label_length {
-                        return Err(VnError::ResourceLimit("ext command".to_string()));
-                    }
-                    for arg in args {
-                        if arg.len() > limits.max_text_length {
-                            return Err(VnError::ResourceLimit("ext arg".to_string()));
-                        }
-                    }
-                }
-                EventRaw::AudioAction(action) => {
-                    if let Some(asset) = &action.asset {
-                        validate_path(asset, "audio asset", limits)?;
-                    }
-                    if let Some(volume) = action.volume {
-                        if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
-                            return Err(VnError::InvalidScript(
-                                "audio volume must be finite and in 0.0..=1.0".to_string(),
-                            ));
-                        }
-                    }
-                    if let Some(duration) = action.fade_duration_ms {
-                        if duration > 600_000 {
-                            return Err(VnError::InvalidScript(
-                                "audio fade duration must be <= 600000ms".to_string(),
-                            ));
-                        }
-                    }
-                }
-                EventRaw::Transition(transition) => {
-                    if transition.duration_ms > 600_000 {
-                        return Err(VnError::InvalidScript(
-                            "transition duration must be <= 600000ms".to_string(),
-                        ));
-                    }
-                    if let Some(color) = &transition.color {
-                        validate_hex_color(color, "transition color")?;
-                    }
-                }
-                EventRaw::SetCharacterPosition(pos) => {
-                    validate_path(&pos.name, "character name", limits)?;
-                    if let Some(scale) = pos.scale {
-                        validate_positive_scale(scale, "set_character_position scale")?;
-                    }
-                }
+                EventRaw::Dialogue(_)
+                | EventRaw::Scene(_)
+                | EventRaw::Patch(_)
+                | EventRaw::ExtCall { .. }
+                | EventRaw::AudioAction(_)
+                | EventRaw::Transition(_)
+                | EventRaw::SetCharacterPosition(_) => {}
             }
         }
         Ok(())
@@ -240,7 +111,15 @@ impl SecurityPolicy {
         if script.events.len() > limits.max_events {
             return Err(VnError::ResourceLimit("compiled event count".to_string()));
         }
+        // Raw compilation introduces at most one flag per event. Bound the
+        // declared binary capacity too, before allocating the runtime bitset.
+        if u64::from(script.flag_count) > limits.max_events as u64 {
+            return Err(VnError::ResourceLimit("compiled flag capacity".to_string()));
+        }
         for (label, &index) in &script.labels {
+            if label.len() > limits.max_label_length {
+                return Err(VnError::ResourceLimit(format!("label '{label}' too long")));
+            }
             if index as usize > script.events.len() {
                 return Err(VnError::InvalidScript(format!(
                     "compiled label '{label}' outside events"
@@ -255,6 +134,7 @@ impl SecurityPolicy {
         }
 
         for event in &script.events {
+            validate_event_content!(event, EventCompiled, self, limits);
             match event {
                 EventCompiled::Choice(choice) => {
                     for option in &choice.options {
@@ -307,6 +187,14 @@ impl SecurityPolicy {
                 EventCompiled::AudioAction(action) => {
                     validate_compiled_audio_action(action)?;
                 }
+                EventCompiled::Transition(transition)
+                    if transition_kind_name(transition.kind) == "unknown" =>
+                {
+                    return Err(VnError::InvalidScript(format!(
+                        "invalid compiled transition kind {}",
+                        transition.kind
+                    )));
+                }
                 _ => {}
             }
         }
@@ -343,15 +231,15 @@ fn validate_positive_scale(scale: f32, name: &str) -> VnResult<()> {
 }
 
 fn validate_compiled_audio_action(action: &AudioActionCompiled) -> VnResult<()> {
-    if action.channel > 2 {
+    if audio_channel_name(action.channel) == "unknown" {
         return Err(VnError::InvalidScript(format!(
-            "invalid compiled audio channel {} (expected 0=bgm, 1=sfx, 2=voice)",
+            "invalid compiled audio channel {}",
             action.channel
         )));
     }
-    if action.action > 2 {
+    if audio_action_name(action.action) == "unknown" {
         return Err(VnError::InvalidScript(format!(
-            "invalid compiled audio action {} (expected 0=play, 1=stop, 2=fade_out)",
+            "invalid compiled audio action {}",
             action.action
         )));
     }
@@ -363,22 +251,6 @@ fn validate_compiled_audio_action(action: &AudioActionCompiled) -> VnResult<()> 
     {
         return Err(VnError::InvalidScript(
             "compiled audio play action requires a non-empty asset".to_string(),
-        ));
-    }
-    if action
-        .volume
-        .is_some_and(|volume| !volume.is_finite() || !(0.0..=1.0).contains(&volume))
-    {
-        return Err(VnError::InvalidScript(
-            "compiled audio volume must be finite and in 0.0..=1.0".to_string(),
-        ));
-    }
-    if action
-        .fade_duration_ms
-        .is_some_and(|duration| duration > 600_000)
-    {
-        return Err(VnError::InvalidScript(
-            "compiled audio fade duration must be <= 600000ms".to_string(),
         ));
     }
     Ok(())

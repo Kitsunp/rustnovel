@@ -42,6 +42,14 @@ fn resolves_defaults_for_small_display() {
     assert_eq!(resolved.height, 600.0);
     assert!(resolved.ui_scale > 1.0);
     assert!(resolved.scale_factor >= 1.5);
+    for (budget, expected) in [(0, 0), (128, 128 * 1024 * 1024), (u64::MAX, usize::MAX)] {
+        let resolved = VnConfig {
+            asset_cache_budget_mb: Some(budget),
+            ..VnConfig::default()
+        }
+        .resolve(None);
+        assert_eq!(resolved.asset_cache_budget_bytes, expected);
+    }
 }
 
 #[test]

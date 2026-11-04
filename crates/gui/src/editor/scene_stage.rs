@@ -329,8 +329,8 @@ impl<'a> SceneStagePainter<'a> {
         let ui = &content_ui;
         match kind {
             EntityKind::Image(image) => {
-                if let Some(texture_id) = self.resolve_image_texture(ui.ctx(), image.path.as_ref())
-                {
+                let result = self.try_resolve_image_texture(ui.ctx(), image.path.as_ref());
+                if let Ok(Some(texture_id)) = result {
                     ui.painter().image(
                         texture_id,
                         rect,
@@ -339,22 +339,24 @@ impl<'a> SceneStagePainter<'a> {
                     );
                 } else {
                     paint_asset_fallback(ui, rect, is_selected, "Image", image.path.as_ref());
+                    if let Err(error) = result {
+                        Self::paint_image_failure(ui, rect, &error);
+                    }
                 }
             }
             EntityKind::Character(character) => {
-                if let Some(expression) = &character.expression {
-                    if let Some(texture_id) =
-                        self.resolve_image_texture(ui.ctx(), expression.as_ref())
-                    {
-                        ui.painter().image(
-                            texture_id,
-                            rect,
-                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                            egui::Color32::WHITE,
-                        );
-                        paint_caption(ui, rect, character.name.as_ref());
-                        return;
-                    }
+                let result = character.expression.as_ref().map(|expression| {
+                    self.try_resolve_image_texture(ui.ctx(), expression.as_ref())
+                });
+                if let Some(Ok(Some(texture_id))) = result {
+                    ui.painter().image(
+                        texture_id,
+                        rect,
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                    paint_caption(ui, rect, character.name.as_ref());
+                    return;
                 }
                 paint_character_fallback(
                     ui,
@@ -363,6 +365,9 @@ impl<'a> SceneStagePainter<'a> {
                     character.name.as_ref(),
                     character.expression.as_deref(),
                 );
+                if let Some(Err(error)) = result {
+                    Self::paint_image_failure(ui, rect, &error);
+                }
             }
             EntityKind::Audio(audio) => {
                 paint_audio_surface(ui, rect, is_selected, audio.path.as_ref(), audio.looping);
@@ -383,18 +388,51 @@ impl<'a> SceneStagePainter<'a> {
         }
     }
 
+    /// Resolve a texture when only its presence is needed; stage painting also reports failures.
     pub fn resolve_image_texture(
         &mut self,
         ctx: &egui::Context,
         asset_path: &str,
     ) -> Option<egui::TextureId> {
+        self.try_resolve_image_texture(ctx, asset_path)
+            .ok()
+            .flatten()
+    }
+
+    fn try_resolve_image_texture(
+        &mut self,
+        ctx: &egui::Context,
+        asset_path: &str,
+    ) -> Result<Option<egui::TextureId>, String> {
+        let Some(root) = self.project_root else {
+            return Ok(None);
+        };
         ImageTextureCache::new(self.image_cache, self.image_failures, self.resource_service)
             .texture(
                 ctx,
-                self.project_root?,
+                root,
                 asset_path,
                 ImageView::Scene(self.preview_quality),
             )
+            .map(Some)
+    }
+
+    fn paint_image_failure(ui: &egui::Ui, rect: egui::Rect, error: &str) {
+        let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+        let color = egui::Color32::from_rgb(255, 210, 190);
+        let galley = painter.layout(
+            error.to_owned(),
+            egui::FontId::proportional(12.0),
+            color,
+            (rect.width() - 8.0).max(1.0),
+        );
+        let pos = rect.left_top() + egui::vec2(4.0, 4.0);
+        painter.rect_filled(
+            egui::Rect::from_min_size(pos, galley.size()).expand(3.0),
+            2.0,
+            egui::Color32::from_black_alpha(220),
+        );
+        painter.galley(pos, galley, color);
     }
 }
 

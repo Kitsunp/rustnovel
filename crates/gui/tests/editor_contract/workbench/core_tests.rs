@@ -106,6 +106,111 @@ fn workbench_update_uses_supplied_delta_ticks_and_seconds() {
 }
 
 #[test]
+fn timeline_survives_preview_failure_and_does_not_follow_reused_entity_id() {
+    use visual_novel_engine::{Easing, EntityKind, Keyframe, PropertyType, Track};
+
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    let start = workbench.node_graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+    let scene = workbench.node_graph.add_node(
+        StoryNode::Scene {
+            profile: None,
+            background: None,
+            music: None,
+            characters: vec![visual_novel_engine::runtime::CharacterPlacementRaw {
+                name: "Ava".into(),
+                x: Some(20),
+                y: Some(40),
+                ..Default::default()
+            }],
+        },
+        egui::pos2(0.0, 120.0),
+    );
+    let end = workbench.node_graph.add_node(StoryNode::End, egui::pos2(0.0, 240.0));
+    workbench.node_graph.connect(start, scene);
+    workbench.node_graph.connect(scene, end);
+    workbench.node_graph.set_single_selection(Some(scene));
+    workbench.selected_node = Some(scene);
+    workbench.composer_preview_mode = crate::editor::ComposerPreviewMode::SelectedRoute;
+    workbench.sync_graph_to_script().unwrap();
+    let id = workbench.scene.iter().find(|entity| matches!(entity.kind, EntityKind::Character(_))).unwrap().id;
+    let mut track = Track::new(id, PropertyType::PositionX);
+    track.add_keyframe(Keyframe::new(0, 300, Easing::Linear)).unwrap();
+    workbench.timeline.add_track(track).unwrap();
+    assert_eq!(workbench.composer_animated_scene().get(id).unwrap().transform.x, 300);
+
+    workbench.node_graph.remove_node(start);
+    assert!(workbench.sync_graph_to_script().is_err());
+    assert_eq!(workbench.timeline.track_count(), 1);
+    assert!(workbench.scene.is_empty());
+    assert!(workbench.apply_graph_undo());
+    assert!(workbench.engine.is_some());
+    assert_eq!(workbench.timeline.track_count(), 1);
+    assert_eq!(workbench.composer_animated_scene().get(id).unwrap().transform.x, 300);
+
+    workbench.node_graph.edit_node(scene, |node| {
+        if let StoryNode::Scene { background, .. } = node {
+            *background = Some("room.png".into());
+        }
+    });
+    workbench.sync_graph_to_script().unwrap();
+    let original = workbench.scene.get(id).unwrap_or_else(|| panic!("expected reused {id:?}, scene: {:?}", workbench.scene));
+    assert!(matches!(original.kind, EntityKind::Image(_)));
+    let original_x = original.transform.x;
+    let preview = workbench.composer_animated_scene();
+    assert_eq!(preview.get(id).unwrap().transform.x, original_x);
+    assert_eq!(workbench.timeline.track_count(), 1);
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("other.json");
+    std::fs::write(&path, workbench.node_graph.to_script().to_json().unwrap()).unwrap();
+    workbench.load_script(path);
+    assert_eq!(workbench.timeline.track_count(), 0);
+}
+
+#[test]
+fn timeline_rejects_ambiguous_and_missing_targets() {
+    use visual_novel_engine::{Easing, EntityId, EntityKind, Keyframe, PropertyType, Track};
+
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    let character = EntityKind::Character(visual_novel_engine::CharacterData {
+        name: "Duplicate".into(),
+        expression: None,
+    });
+    let first = workbench.scene.spawn(character.clone()).unwrap();
+    workbench.scene.spawn(character).unwrap();
+    for id in [first, EntityId::new(99)] {
+        let mut track = Track::new(id, PropertyType::PositionX);
+        track.add_keyframe(Keyframe::new(0, 300, Easing::Linear)).unwrap();
+        workbench.timeline.add_track(track).unwrap();
+    }
+    let preview = workbench.composer_animated_scene();
+    assert_eq!(preview.get(first).unwrap().transform.x, 0);
+    assert_eq!(workbench.timeline.track_count(), 2);
+    workbench.show_timeline = true;
+    let ctx = egui::Context::default();
+    let output = ctx.run(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 960.0))), ..Default::default() }, |ctx| workbench.render_editor_mode(ctx));
+    let labels = output.shapes.iter().filter_map(|shape| match &shape.shape {
+        egui::epaint::Shape::Text(text) => Some(text.galley.text()),
+        _ => None,
+    }).collect::<Vec<_>>();
+    assert!(labels.iter().any(|label| label.contains("2 timeline track(s) suspended")), "{labels:?}");
+
+    workbench.timeline.clear();
+    let _ = ctx.run(egui::RawInput::default(), |ctx| workbench.render_editor_mode(ctx));
+    workbench.scene = visual_novel_engine::SceneState::new();
+    let replacement = workbench.scene.spawn(EntityKind::Character(visual_novel_engine::CharacterData {
+        name: "Replacement".into(),
+        expression: None,
+    })).unwrap();
+    assert_eq!(replacement, first);
+    let mut track = Track::new(replacement, PropertyType::PositionX);
+    track.add_keyframe(Keyframe::new(0, 450, Easing::Linear)).unwrap();
+    workbench.timeline.add_track(track).unwrap();
+    let _ = ctx.run(egui::RawInput::default(), |ctx| workbench.render_editor_mode(ctx));
+    assert_eq!(workbench.composer_animated_scene().get(replacement).unwrap().transform.x, 450);
+}
+
+#[test]
 fn export_wizard_initializes_project_defaults_without_executing() {
     let mut workbench = EditorWorkbench::new(VnConfig::default());
     let tmp = tempfile::tempdir().expect("tempdir");

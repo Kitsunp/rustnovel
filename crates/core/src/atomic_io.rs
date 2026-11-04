@@ -78,14 +78,15 @@ fn replace_with(path: &Path, write: impl FnOnce(&mut File) -> io::Result<()>) ->
         let mut pending = PendingFile {
             path: temp_path,
             file: Some(file),
-            published: false,
+            cleanup_on_drop: true,
         };
         let file = pending.file.as_mut().expect("temporary file is open");
-        write(file)?;
-        file.sync_all()?;
+        let written = write(file).and_then(|()| file.sync_all());
         drop(pending.file.take());
-        fs::rename(&pending.path, path)?;
-        pending.published = true;
+        if let Err(error) = written.and_then(|()| fs::rename(&pending.path, path)) {
+            return Err(pending.abort(error));
+        }
+        pending.cleanup_on_drop = false;
         return Ok(());
     }
     Err(io::Error::new(
@@ -97,26 +98,86 @@ fn replace_with(path: &Path, write: impl FnOnce(&mut File) -> io::Result<()>) ->
 struct PendingFile {
     path: PathBuf,
     file: Option<File>,
-    published: bool,
+    cleanup_on_drop: bool,
+}
+
+#[derive(Debug)]
+struct CleanupFailure {
+    primary: io::Error,
+    cleanup: io::Error,
+    path: PathBuf,
+}
+
+impl std::fmt::Display for CleanupFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}; failed to remove temporary '{}': {}",
+            self.primary,
+            self.path.display(),
+            self.cleanup
+        )
+    }
+}
+
+impl std::error::Error for CleanupFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.primary)
+    }
+}
+
+impl PendingFile {
+    fn cleanup(&mut self) -> io::Result<()> {
+        // Windows requires the handle to be closed before removal.
+        drop(self.file.take());
+        #[cfg(windows)]
+        let permission_error = match fs::metadata(&self.path) {
+            Ok(metadata) if metadata.permissions().readonly() => {
+                let mut permissions = metadata.permissions();
+                #[allow(clippy::permissions_set_readonly_false)]
+                permissions.set_readonly(false);
+                fs::set_permissions(&self.path, permissions).err()
+            }
+            _ => None,
+        };
+        match fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            #[cfg(windows)]
+            Err(error) if permission_error.is_some() => Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "{error}; additionally failed to clear readonly attribute: {}",
+                    permission_error.unwrap()
+                ),
+            )),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn abort(&mut self, primary: io::Error) -> io::Error {
+        let cleanup = self.cleanup();
+        // Do not retry in Drop: it would make an error reporting an abandoned
+        // temporary inaccurate if a second, unobserved removal succeeded.
+        self.cleanup_on_drop = false;
+        match cleanup {
+            Ok(()) => primary,
+            Err(cleanup) => io::Error::new(
+                primary.kind(),
+                CleanupFailure {
+                    primary,
+                    cleanup,
+                    path: self.path.clone(),
+                },
+            ),
+        }
+    }
 }
 
 impl Drop for PendingFile {
     fn drop(&mut self) {
-        // Windows requires closing our handle before removing an unpublished file.
-        drop(self.file.take());
-        if !self.published {
-            // A copied read-only source must not prevent temporary cleanup on Windows.
-            #[cfg(windows)]
-            if let Ok(metadata) = fs::metadata(&self.path) {
-                let mut permissions = metadata.permissions();
-                if permissions.readonly() {
-                    // This cfg(windows) block only clears the DOS read-only attribute.
-                    #[allow(clippy::permissions_set_readonly_false)]
-                    permissions.set_readonly(false);
-                    let _ = fs::set_permissions(&self.path, permissions);
-                }
-            }
-            let _ = fs::remove_file(&self.path);
+        if self.cleanup_on_drop {
+            let _ = self.cleanup();
         }
     }
 }
@@ -138,5 +199,66 @@ mod tests {
         assert_eq!(err.to_string(), "writer failed");
         assert_eq!(fs::read(&target).unwrap(), b"original");
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+
+        let original_error = io::Error::from_raw_os_error(5);
+        let original_kind = original_error.kind();
+        let mut missing = PendingFile {
+            path: dir.path().join("already-absent"),
+            file: None,
+            cleanup_on_drop: true,
+        };
+        let err = missing.abort(original_error);
+        assert_eq!(err.kind(), original_kind);
+        assert_eq!(err.raw_os_error(), Some(5));
+
+        // A directory cannot be removed by remove_file, making cleanup fail
+        // deterministically without depending on platform-specific permissions.
+        let blocked = dir.path().join("blocked-temp");
+        fs::create_dir(&blocked).unwrap();
+        let mut pending = PendingFile {
+            path: blocked.clone(),
+            file: None,
+            cleanup_on_drop: true,
+        };
+        let err = pending.abort(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "primary write failure",
+        ));
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert!(err.to_string().contains("primary write failure"));
+        assert!(err.to_string().contains(&blocked.display().to_string()));
+        let combined = err
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<CleanupFailure>()
+            .unwrap();
+        assert_eq!(combined.primary.to_string(), "primary write failure");
+        assert!(!combined.cleanup.to_string().is_empty());
+        assert!(blocked.exists());
+
+        let rename_target = dir.path().join("rename-target");
+        let err = replace_with(&rename_target, |file| {
+            file.write_all(b"new content")?;
+            fs::create_dir(&rename_target)
+        })
+        .unwrap_err();
+        assert!(!err.to_string().is_empty());
+        assert!(rename_target.is_dir());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 3);
+
+        #[cfg(windows)]
+        {
+            let readonly_target = dir.path().join("readonly-target");
+            let err = replace_with(&readonly_target, |file| {
+                let mut permissions = file.metadata()?.permissions();
+                permissions.set_readonly(true);
+                file.set_permissions(permissions)?;
+                Err(io::Error::other("readonly writer failed"))
+            })
+            .unwrap_err();
+            assert_eq!(err.to_string(), "readonly writer failed");
+            assert!(!readonly_target.exists());
+            assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 3);
+        }
     }
 }

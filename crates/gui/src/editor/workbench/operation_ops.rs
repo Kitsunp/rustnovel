@@ -78,7 +78,12 @@ impl EditorWorkbench {
     }
 
     pub fn commit_modified_graph(&mut self) {
-        self.node_graph.commit_drag_positions();
+        if let Err(error) = self.node_graph.try_commit_drag_positions() {
+            self.toast = Some(ToastState::error(format!(
+                "Could not commit dragged nodes: {error}"
+            )));
+            return;
+        }
         if !self.node_graph.is_modified() {
             return;
         }
@@ -108,28 +113,25 @@ impl EditorWorkbench {
         &mut self,
         command: visual_novel_engine::authoring::AuthoringDocumentCommand,
     ) -> bool {
-        use visual_novel_engine::authoring::AuthoringDocumentCommand;
-        self.node_graph.commit_drag_positions();
+        if let Err(error) = self.node_graph.try_commit_drag_positions() {
+            self.toast = Some(ToastState::error(format!(
+                "Could not commit dragged nodes: {error}"
+            )));
+            return false;
+        }
         self.record_pending_editor_operation();
-        let available = match command {
-            AuthoringDocumentCommand::UndoLast | AuthoringDocumentCommand::RevertLast => {
-                self.node_graph.authoring_session.undo_delta_count()
+        let outcome = match self.node_graph.apply_document_history(command) {
+            Ok(Some(outcome)) => outcome,
+            Ok(None) => return false,
+            Err(error) => {
+                self.toast = Some(ToastState::error(error));
+                return false;
             }
-            AuthoringDocumentCommand::RedoLast => {
-                self.node_graph.authoring_session.redo_delta_count()
-            }
-            _ => unreachable!("document history command required"),
         };
-        if available == 0 {
-            return false;
-        }
-        if let Err(error) = self.apply_authoring_document_command(command) {
-            self.toast = Some(ToastState::error(error));
-            return false;
-        }
+        self.refresh_document_state();
+        self.last_operation_fingerprint = Some(outcome.after_fingerprint.clone());
         self.node_graph.clear_operation_hint();
         self.node_graph.clear_modified();
-        self.node_graph.reconcile_view_after_document_change();
         self.selected_node = self.node_graph.selected;
         self.selected_entity = None;
         if let Err(error) = self.sync_graph_to_script() {

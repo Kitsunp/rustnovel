@@ -82,6 +82,16 @@ fn batch_builds_story_moves_character_and_matches_core_session_with_undo_redo() 
         }));
     }
     commands.extend([
+        AuthoringDocumentCommand::MoveNodes {
+            positions: [
+                (1, AuthoringPosition::new(125.0, 215.0)),
+                (2, AuthoringPosition::new(-50.0, 310.0)),
+            ]
+            .into_iter()
+            .collect(),
+        },
+        AuthoringDocumentCommand::UndoLast,
+        AuthoringDocumentCommand::RedoLast,
         AuthoringDocumentCommand::Graph(AuthoringCommand::MoveLayer {
             object_id: layer.clone(),
             x: 320,
@@ -109,12 +119,22 @@ fn batch_builds_story_moves_character_and_matches_core_session_with_undo_redo() 
         },
     ]);
     fs::write(&commands_path, serde_json::to_vec(&commands).unwrap()).unwrap();
+    let replay = AuthoringDocumentSession::replay(&commands).unwrap();
     let expected = apply_authoring_document_commands_headless(document, commands).unwrap();
     let report = assert_success(&run(&project, &commands_path, &["--in-place", "--json"]));
     assert_eq!(report["wrote"], true);
     assert_eq!(report["dry_run"], false);
     let actual = AuthoringDocument::from_json(&fs::read_to_string(&project).unwrap()).unwrap();
     assert!(actual.graph.has_same_content(&expected.document.graph));
+    assert!(actual.graph.has_same_content(&replay.document().graph));
+    assert_eq!(
+        actual.graph.get_node_pos(1),
+        Some(AuthoringPosition::new(125.0, 215.0))
+    );
+    assert_eq!(
+        actual.graph.get_node_pos(2),
+        Some(AuthoringPosition::new(-50.0, 310.0))
+    );
     assert_eq!(
         authoring_document_layout_sha256(&actual),
         authoring_document_layout_sha256(&expected.document)
@@ -173,8 +193,21 @@ fn graph_command_object_keeps_single_json_output_contract() {
     let report = assert_success(&run(&project, &commands, &["--in-place", "--json"]));
     assert!(report.get("operation").is_some());
     assert!(report.get("outcomes").is_none());
-    let actual = AuthoringDocument::from_json(&fs::read_to_string(project).unwrap()).unwrap();
+    let actual = AuthoringDocument::from_json(&fs::read_to_string(&project).unwrap()).unwrap();
     assert!(matches!(actual.graph.get_node(0), Some(StoryNode::Start)));
+    fs::write(
+        &commands,
+        r#"{"command":"move_nodes","positions":{"0":{"x":15.0,"y":20.0}}}"#,
+    )
+    .unwrap();
+    let report = assert_success(&run(&project, &commands, &["--in-place", "--json"]));
+    assert!(report.get("operation").is_some());
+    assert!(report.get("outcomes").is_none());
+    let moved = AuthoringDocument::from_json(&fs::read_to_string(project).unwrap()).unwrap();
+    assert_eq!(
+        moved.graph.get_node_pos(0),
+        Some(AuthoringPosition::new(15.0, 20.0))
+    );
 }
 
 #[test]
@@ -193,6 +226,10 @@ fn failed_or_malformed_batches_leave_input_and_existing_output_untouched() {
     for (input, error) in [
         (
             json!([first.clone(), {"command":"graph","operation":"remove_node","node_id":999}]),
+            "command 2 failed",
+        ),
+        (
+            json!([first.clone(), {"command":"move_nodes","positions":{"0":{"x":10.0,"y":20.0},"999":{"x":30.0,"y":40.0}}}]),
             "command 2 failed",
         ),
         (
@@ -217,6 +254,14 @@ fn failed_or_malformed_batches_leave_input_and_existing_output_untouched() {
             assert_eq!(fs::read(&destination).unwrap(), b"existing output");
         }
     }
+    fs::write(&commands, r#"[{"command":"set_background_fit_override","node_id":0,"fit":"contain"},{"command":"move_nodes","positions":{"0":{"x":10,"y":20},"0":{"x":30,"y":40}}}]"#).unwrap();
+    let result = run(&project, &commands, &["--in-place"]);
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("parse Core command 2"), "{error}");
+    assert!(error.contains("duplicate"), "{error}");
+    assert_eq!(fs::read_to_string(&project).unwrap(), original);
+    assert_eq!(fs::read(&destination).unwrap(), b"existing output");
 }
 
 #[test]

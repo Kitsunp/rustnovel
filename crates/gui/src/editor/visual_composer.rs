@@ -3,7 +3,9 @@ use eframe::egui;
 use std::collections::HashMap;
 use std::path::Path;
 use visual_novel_engine::{
-    authoring::composer::PresentationSnapshot, runtime::Engine, EntityId, SceneState,
+    authoring::composer::{PresentationSnapshot, DEFAULT_COMPOSER_RESOLUTION},
+    runtime::Engine,
+    EntityId, SceneState,
 };
 
 use crate::editor::resource_service::EditorResourceService;
@@ -338,6 +340,21 @@ impl<'a> VisualComposerPanel<'a> {
         self
     }
 
+    pub(crate) fn with_authoring_layers(
+        mut self,
+        layers: &[LayeredSceneObject],
+        owners: &HashMap<u32, u32>,
+    ) -> Self {
+        self.entity_object_ids =
+            layers::authoring_entity_object_ids_from_layers(self.scene, owners, layers);
+        self
+    }
+
+    pub(crate) fn with_authoring_object_ids(mut self, ids: HashMap<u32, String>) -> Self {
+        self.entity_object_ids = ids;
+        self
+    }
+
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -366,8 +383,9 @@ impl<'a> VisualComposerPanel<'a> {
                     self.selected_authoring_node,
                 )
             });
+        let sorted_entities = self.scene.iter_sorted().collect::<Vec<_>>();
         for object in &mut objects {
-            if let Some(entity) = self.scene.iter_sorted().nth(object.object_index) {
+            if let Some(entity) = sorted_entities.get(object.object_index) {
                 if let Some(id) = self.entity_object_ids.get(&entity.id.raw()) {
                     if object.character_name.is_some() || object.kind == StageLayerKind::Background
                     {
@@ -600,7 +618,7 @@ impl<'a> VisualComposerPanel<'a> {
     }
 
     fn stage_size(&self) -> (f32, f32) {
-        let (w, h) = self.stage_resolution.unwrap_or((1280, 720));
+        let (w, h) = self.stage_resolution.unwrap_or(DEFAULT_COMPOSER_RESOLUTION);
         (w.max(1) as f32, h.max(1) as f32)
     }
 }

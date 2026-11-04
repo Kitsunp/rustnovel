@@ -914,6 +914,7 @@ fn stress_presentation_snapshot() -> PresentationSnapshot {
             .collect(),
         overlays: Vec::new(),
         provenance: vec!["gui-render-contract".to_string()],
+        preview_error: None,
     }
 }
 

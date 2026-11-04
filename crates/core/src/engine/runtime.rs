@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, VecDeque};
+use std::sync::OnceLock;
 
 use crate::audio::{scene_music_command, AudioCommand};
 use crate::error::{VnError, VnResult};
@@ -13,10 +14,10 @@ use crate::route_tree::{
     ReadModelSnapshot, RouteProgressSnapshot, RouteTree, VisualResolveStrategy,
 };
 use crate::scene_frame::{ImageFit, LayoutRect, RenderCommand, SceneFrame};
-use crate::script::{ScriptCompiled, ScriptRaw};
+use crate::script::{RuntimeScriptInput, ScriptCompiled, ScriptRaw};
 use crate::security::SecurityPolicy;
 use crate::state::EngineState;
-use crate::storage::{compute_script_id, SaveData};
+use crate::storage::{SaveData, ScriptId};
 use crate::visual::VisualState;
 
 #[path = "runtime/visual.rs"]
@@ -81,6 +82,7 @@ impl ExternalCallOutcome {
 #[derive(Clone, Debug)]
 pub struct Engine {
     script: ScriptCompiled,
+    script_id: OnceLock<ScriptId>,
     state: EngineState,
     policy: SecurityPolicy,
     limits: ResourceLimiter,
@@ -98,9 +100,7 @@ impl Engine {
         policy: SecurityPolicy,
         limits: ResourceLimiter,
     ) -> VnResult<Self> {
-        policy.validate_raw(&script, limits)?;
-        let script = script.compile()?;
-        Self::from_compiled(script, policy, limits)
+        Self::from_input(RuntimeScriptInput::Json(script), policy, limits)
     }
 
     /// Builds an engine directly from a compiled script.
@@ -109,7 +109,15 @@ impl Engine {
         policy: SecurityPolicy,
         limits: ResourceLimiter,
     ) -> VnResult<Self> {
-        policy.validate_compiled(&script, limits)?;
+        Self::from_input(RuntimeScriptInput::Compiled(script), policy, limits)
+    }
+
+    pub(crate) fn from_input(
+        input: RuntimeScriptInput,
+        policy: SecurityPolicy,
+        limits: ResourceLimiter,
+    ) -> VnResult<Self> {
+        let script = input.into_compiled(&policy, limits)?;
         Ok(Self::from_validated_compiled(script, policy, limits))
     }
 
@@ -124,6 +132,7 @@ impl Engine {
         route_visited_ips.insert(script.start_ip);
         let mut engine = Self {
             script,
+            script_id: OnceLock::new(),
             state,
             policy,
             limits,
@@ -137,9 +146,22 @@ impl Engine {
         engine
     }
 
+    pub(crate) fn fresh_session(&self) -> Self {
+        Self::from_validated_compiled(self.script.clone(), self.policy.clone(), self.limits)
+    }
+
     /// Returns a reference to the compiled script.
     pub fn script(&self) -> &ScriptCompiled {
         &self.script
+    }
+
+    /// Returns the canonical identity of the immutable script loaded in this engine.
+    pub fn script_id(&self) -> VnResult<ScriptId> {
+        if let Some(id) = self.script_id.get() {
+            return Ok(*id);
+        }
+        let id = self.script.script_id()?;
+        Ok(*self.script_id.get_or_init(|| id))
     }
 
     /// Returns a reference to the current compiled event.
@@ -314,6 +336,13 @@ impl Engine {
 
     /// Returns a renderer-agnostic frame for player/API/GUI adapters.
     pub fn scene_frame(&self) -> SceneFrame {
+        let mut frame = self.presentation_frame();
+        frame.route = Some(self.route_tree());
+        frame
+    }
+
+    /// Builds the visible frame without rebuilding optional route diagnostics.
+    pub fn presentation_frame(&self) -> SceneFrame {
         let event = self.current_event_ref().ok();
         let mut visual = self.state.visual.clone();
         let mut diagnostics = Vec::new();
@@ -352,7 +381,7 @@ impl Engine {
             visual,
             commands,
             interactions,
-            route: Some(self.route_tree()),
+            route: None,
             theme_id: Some("default".to_string()),
             layout: None,
         }
@@ -450,7 +479,7 @@ impl Engine {
     /// Loads a decoded save only when it belongs to this engine's compiled script.
     /// Byte-level authentication is performed when decoding the save.
     pub fn load_save_data(&mut self, save: SaveData) -> VnResult<()> {
-        let script_id = compute_script_id(&self.script.to_binary()?);
+        let script_id = self.script_id()?;
         save.validate_script_id(&script_id)
             .map_err(|err| VnError::invalid_script(err.to_string()))?;
         self.set_state(save.state)

@@ -1,4 +1,5 @@
 use super::*;
+use visual_novel_engine::runtime::ScriptRaw;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -49,7 +50,7 @@ fn test_app_with_save_root(save_root: PathBuf) -> VnApp {
     let asset_store =
         AssetStore::new(assets_root, SecurityMode::Trusted, None, false).expect("asset store");
     let engine = minimal_engine();
-    let script_id = visual_novel_engine::compute_script_id(&engine.script().to_binary().unwrap());
+    let script_id = engine.script_id().unwrap();
     VnApp {
         engine,
         config,
@@ -68,6 +69,129 @@ fn test_app_with_save_root(save_root: PathBuf) -> VnApp {
         save_store: SaveSlotStore::new(save_root),
         menu_tab: PlayerMenuTabKind::Saves,
     }
+}
+
+#[test]
+fn player_paints_character_textures_with_core_scene_positions_and_scale() {
+    use visual_novel_engine::runtime::{
+        CharacterPlacementRaw, EventRaw, SceneUpdateRaw, SetCharacterPositionRaw,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    for (name, width, height) in [("background.png", 16, 9), ("character.png", 2, 4)] {
+        image::RgbaImage::from_pixel(width, height, image::Rgba([80, 160, 220, 255]))
+            .save(directory.path().join(name))
+            .unwrap();
+    }
+    let mut app = test_app_with_save_root(directory.path().join("saves"));
+    app.assets = AssetManager::new(
+        AssetStore::new(
+            directory.path().to_path_buf(),
+            SecurityMode::Trusted,
+            None,
+            false,
+        )
+        .unwrap(),
+        1024 * 1024,
+    );
+    let script = ScriptRaw::new(
+        vec![
+            EventRaw::Scene(SceneUpdateRaw {
+                background: Some("background.png".to_string()),
+                characters: vec![
+                    CharacterPlacementRaw {
+                        name: "Ava".to_string(),
+                        expression: Some("character.png".to_string()),
+                        x: Some(640),
+                        y: Some(100),
+                        ..Default::default()
+                    },
+                    CharacterPlacementRaw {
+                        name: "Narrator".to_string(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }),
+            EventRaw::SetCharacterPosition(SetCharacterPositionRaw {
+                name: "Ava".to_string(),
+                x: 320,
+                y: 180,
+                scale: Some(0.5),
+            }),
+            EventRaw::SetCharacterPosition(SetCharacterPositionRaw {
+                name: "Ava".to_string(),
+                x: 900,
+                y: 220,
+                scale: None,
+            }),
+        ],
+        std::collections::BTreeMap::from([("start".to_string(), 0)]),
+    );
+    app.engine = Engine::new(
+        script,
+        SecurityPolicy::default(),
+        ResourceLimiter::default(),
+    )
+    .unwrap();
+    let ctx = egui::Context::default();
+    let background = app
+        .assets
+        .texture_for_asset(&ctx, "background.png")
+        .unwrap()
+        .unwrap()
+        .id();
+    let character = app
+        .assets
+        .texture_for_asset(&ctx, "character.png")
+        .unwrap()
+        .unwrap()
+        .id();
+    for (x, y, scale) in [
+        (640.0, 100.0, 1.0),
+        (320.0, 180.0, 0.5),
+        (900.0, 220.0, 0.5),
+    ] {
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1400.0, 900.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| app.render_player_stage(ui, ctx, 0.0));
+            },
+        );
+        let bounds = |id| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Mesh(mesh) if mesh.texture_id == id => Some(mesh.calc_bounds()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("player did not paint texture {id:?}"))
+        };
+        let stage = bounds(background);
+        let sprite = bounds(character);
+        assert!((sprite.center().x - (stage.left() + x / 1280.0 * stage.width())).abs() < 0.1);
+        assert!((sprite.top() - (stage.top() + y / 720.0 * stage.height())).abs() < 0.1);
+        assert!((sprite.height() - 420.0 * scale / 720.0 * stage.height()).abs() < 0.1);
+        assert!((sprite.width() / sprite.height() - 0.5).abs() < 0.001);
+        assert!(app.last_error.is_none(), "{:?}", app.last_error);
+        app.engine.step().unwrap();
+    }
+    let mut missing = app.engine.state().clone();
+    missing.visual.characters[0].expression = Some("missing.png".into());
+    app.engine.set_state(missing).unwrap();
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| app.render_player_stage(ui, ctx, 0.0));
+    });
+    assert!(app
+        .last_error
+        .as_deref()
+        .is_some_and(|message| message.contains("missing.png")));
 }
 
 #[test]
@@ -109,7 +233,8 @@ fn save_load_reports_errors_and_restores_state() {
 
     let _ = std::fs::remove_file(blocked_save_root);
 
-    let save_root = unique_test_path("load_paths");
+    let save_dir = tempfile::tempdir().unwrap();
+    let save_root = save_dir.path().to_path_buf();
     let mut app = test_app_with_save_root(save_root.clone());
     let save_path = save_root.join("manual.sav");
     app.save_state(&save_path);
@@ -177,5 +302,18 @@ fn save_load_reports_errors_and_restores_state() {
         0,
         "quickload restores the backup"
     );
-    std::fs::remove_dir_all(save_root).unwrap();
+    assert_eq!(
+        app.last_status.as_deref(),
+        Some("Quick loaded from backup. Primary save: missing")
+    );
+
+    std::fs::write(save_root.join("slots/quicksave.vnsav"), b"broken").unwrap();
+    app.engine.step().unwrap();
+    app.quickload();
+    assert!(app.last_error.is_none());
+    assert_eq!(app.engine.state().position, 0);
+    assert_eq!(
+        app.last_status.as_deref(),
+        Some("Quick loaded from backup. Primary save: save data too small")
+    );
 }

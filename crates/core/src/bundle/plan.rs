@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use crate::authoring::load_runtime_projection_for_bundle;
 use crate::error::VnResult;
-use crate::load_runtime_script_from_entry;
+use crate::script::{ScriptCompiled, ScriptRaw};
 
 use super::assets::{detect_asset_path_collisions, AssetPathCollision};
 use super::capabilities::{build_capability_report, ExportCapabilityReport};
@@ -17,6 +18,22 @@ use super::{
 };
 
 pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
+    Ok(prepare_plan(spec)?.plan)
+}
+
+pub(super) struct PlanSnapshot {
+    pub(super) plan: ExportPlan,
+    pub(super) project_root: PathBuf,
+    pub(super) output_root: PathBuf,
+    pub(super) script_source_path: PathBuf,
+    pub(super) manifest: crate::ProjectManifest,
+    pub(super) script: ScriptRaw,
+    pub(super) compiled: Option<ScriptCompiled>,
+    pub(super) script_json: String,
+    pub(super) runtime_artifact_path: Option<PathBuf>,
+}
+
+pub(super) fn prepare_plan(spec: &ExportBundleSpec) -> VnResult<PlanSnapshot> {
     let project_root = spec
         .project_root
         .canonicalize()
@@ -43,12 +60,13 @@ pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
             "output_root contains the entry script; choose a separate export folder",
         ));
     }
-    let script = load_runtime_script_from_entry(&script_source_path).map_err(|e| {
-        invalid_bundle(format!(
-            "load entry script '{}': {e}",
-            entry_script.display()
-        ))
-    })?;
+    let (script, compiled) =
+        load_runtime_projection_for_bundle(&script_source_path).map_err(|e| {
+            invalid_bundle(format!(
+                "load entry script '{}': {e}",
+                entry_script.display()
+            ))
+        })?;
     let script_json = script
         .to_json()
         .map_err(|e| invalid_bundle(format!("serialize runtime script: {e}")))?;
@@ -248,7 +266,7 @@ pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
         }));
     }
 
-    Ok(ExportPlan {
+    let plan = ExportPlan {
         schema: "vnengine.export_plan.v1".to_string(),
         target_platform: spec.target_platform.as_str().to_string(),
         output_layout_version: spec.output_layout_version,
@@ -273,6 +291,17 @@ pub fn build_export_plan(spec: &ExportBundleSpec) -> VnResult<ExportPlan> {
         diagnostics,
         integrity: spec.integrity.as_str().to_string(),
         capabilities,
+    };
+    Ok(PlanSnapshot {
+        plan,
+        project_root,
+        output_root,
+        script_source_path,
+        manifest,
+        script,
+        compiled,
+        script_json,
+        runtime_artifact_path,
     })
 }
 

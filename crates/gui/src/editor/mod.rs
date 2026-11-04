@@ -31,7 +31,7 @@ pub mod project_io;
 pub mod quick_fix;
 pub mod resource_service;
 pub mod route_tree_view;
-pub mod scene_frame_presenter;
+pub use crate::scene_frame_presenter;
 pub mod scene_stage;
 pub mod script_sync;
 pub mod timeline_panel;

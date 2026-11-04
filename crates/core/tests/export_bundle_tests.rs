@@ -12,7 +12,7 @@ use visual_novel_engine::{
         AudioActionRaw, CharacterPlacementRaw, DialogueRaw, EventRaw, ScenePatchRaw,
         SceneTransitionRaw, SceneUpdateRaw, ScriptRaw,
     },
-    BundleIntegrity, ExportBundleSpec, ExportTargetPlatform, ProjectManifest,
+    BundleIntegrity, ExportBundleSpec, ExportService, ExportTargetPlatform, ProjectManifest,
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -80,6 +80,21 @@ fn export_rejects_destinations_containing_its_sources_without_modifying_them() {
         assert_eq!(fs::read(root.join("main.json")).unwrap(), script_before);
         assert!(root.join("assets/bgm/theme.ogg").is_file());
     }
+    let missing_parent = tmp.path().join("not-created");
+    let source_alias = missing_parent.join("..").join("project");
+    let spec = ExportBundleSpec {
+        project_root: root.clone(),
+        output_root: source_alias,
+        target_platform: ExportTargetPlatform::Windows,
+        entry_script: None,
+        runtime_artifact: None,
+        integrity: BundleIntegrity::None,
+        output_layout_version: 1,
+        hmac_key: None,
+    };
+    assert!(export_bundle(spec).is_err());
+    assert!(!missing_parent.exists());
+    assert_eq!(fs::read(root.join("main.json")).unwrap(), script_before);
 }
 
 fn create_escape_symlink(link: &Path, target: &Path) -> bool {
@@ -964,15 +979,16 @@ fn export_bundle_accepts_authoring_document_entry() {
 }
 
 #[test]
-fn export_bundle_windows_runtime_exe_creates_top_level_executable() {
+fn prepared_export_uses_captured_script_and_preserves_previous_bundle_if_runtime_changes() {
     let (_tmp, project_root) = build_project_fixture();
     let runtime_dir = project_root.join("runtime");
     fs::create_dir_all(&runtime_dir).expect("mkdir runtime");
     let runtime_bytes = minimal_pe_exe();
-    fs::write(runtime_dir.join("vn-runtime.exe"), &runtime_bytes).expect("write runtime");
+    let runtime_path = runtime_dir.join("vn-runtime.exe");
+    fs::write(&runtime_path, &runtime_bytes).expect("write runtime");
     let out = project_root.join("dist_exe");
 
-    let report = export_bundle(ExportBundleSpec {
+    let spec = ExportBundleSpec {
         project_root: project_root.clone(),
         output_root: out.clone(),
         target_platform: ExportTargetPlatform::Windows,
@@ -981,8 +997,27 @@ fn export_bundle_windows_runtime_exe_creates_top_level_executable() {
         integrity: BundleIntegrity::None,
         output_layout_version: 1,
         hmac_key: None,
-    })
-    .expect("bundle export with runtime exe");
+    };
+    let service = ExportService::new();
+    let prepared = service
+        .prepare_export(spec.clone())
+        .expect("prepare executable bundle");
+    assert_eq!(prepared.plan().executable.as_deref(), Some("game.exe"));
+    let captured_script_hash = prepared.plan().script_sha256.clone();
+    let source = project_root.join("main.json");
+    let mut later_script = ScriptRaw::from_json(&fs::read_to_string(&source).unwrap()).unwrap();
+    let EventRaw::Dialogue(dialogue) = &mut later_script.events[0] else {
+        panic!("fixture must start with a dialogue");
+    };
+    dialogue.text = "edited after preparing the export".to_string();
+    fs::write(&source, later_script.to_json().unwrap()).unwrap();
+    let report = prepared
+        .execute_executable()
+        .expect("publish captured script");
+    let published_script = fs::read(out.join(&report.script_source)).unwrap();
+    assert_eq!(sha256_hex(&published_script), captured_script_hash);
+    let published = ScriptRaw::from_json(std::str::from_utf8(&published_script).unwrap()).unwrap();
+    assert_ne!(published, later_script);
 
     assert!(
         !out.join("runtime/vn-runtime.exe").exists(),
@@ -999,6 +1034,52 @@ fn export_bundle_windows_runtime_exe_creates_top_level_executable() {
         launcher.contains("\"%~dp0game.exe\""),
         "launcher should execute the top-level exe: {launcher}"
     );
+
+    let previous_report = fs::read(out.join("meta/package_report.json")).unwrap();
+    let prepared = service
+        .prepare_export(spec.clone())
+        .expect("prepare second export");
+    assert_ne!(prepared.plan().script_sha256, captured_script_hash);
+    fs::write(runtime_path, b"runtime replaced after planning").unwrap();
+    let error = prepared.execute_executable().unwrap_err().to_string();
+    assert!(
+        error.contains("runtime artifact") && error.contains("changed"),
+        "{error}"
+    );
+    assert_eq!(fs::read(out.join("game.exe")).unwrap(), runtime_bytes);
+    assert_eq!(
+        fs::read(out.join(&report.script_source)).unwrap(),
+        published_script
+    );
+    assert_eq!(
+        fs::read(out.join("meta/package_report.json")).unwrap(),
+        previous_report
+    );
+    let blocked = service
+        .prepare_export(ExportBundleSpec {
+            runtime_artifact: Some("missing-runtime.exe".into()),
+            ..spec
+        })
+        .expect("a blocked plan is available for inspection");
+    assert!(blocked.plan().diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "export.runtime_artifact.unreadable" && diagnostic.severity == "error"
+    }));
+    let error = blocked.execute().unwrap_err().to_string();
+    assert!(
+        error.contains("export.runtime_artifact.unreadable"),
+        "{error}"
+    );
+    assert_eq!(
+        fs::read(out.join("meta/package_report.json")).unwrap(),
+        previous_report
+    );
+    assert!(!fs::read_dir(&project_root).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".dist_exe.staging-")
+    }));
 }
 
 #[test]

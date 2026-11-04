@@ -69,6 +69,36 @@ class ComposerReportBindingTests(unittest.TestCase):
         self.assertFalse(hidden_character.visible)
         self.assertTrue(hidden_character.locked)
 
+        default = graph.compose_scene_snapshot(scene)
+        self.assertEqual((default.stage_width, default.stage_height), (1280, 720))
+        for kwargs, expected in (
+            ({"stage_width": 800}, (800, default.stage_height)),
+            ({"stage_height": 600}, (default.stage_width, 600)),
+            ({"stage_width": 800, "stage_height": 600}, (800, 600)),
+            ({"locale": "es"}, (default.stage_width, default.stage_height)),
+        ):
+            snapshot = graph.compose_scene_snapshot(scene, **kwargs)
+            self.assertEqual((snapshot.stage_width, snapshot.stage_height), expected)
+            character_snapshot = next(
+                obj for obj in snapshot.objects if obj.object_id == character.object_id
+            )
+            self.assertFalse(character_snapshot.visible)
+            self.assertTrue(character_snapshot.locked)
+
+        start = graph.add_node(vn.StoryNode.start(), 0.0, -100.0)
+        end = graph.add_node(vn.StoryNode.end(), 0.0, 100.0)
+        graph.connect(start, scene)
+        graph.connect(scene, end)
+        preview = graph.preview_start_from_node(scene)
+        for kwargs, expected in (
+            ({}, (default.stage_width, default.stage_height)),
+            ({"stage_width": 800}, (800, default.stage_height)),
+            ({"stage_height": 600}, (default.stage_width, 600)),
+            ({"stage_width": 800, "stage_height": 600, "locale": "es"}, (800, 600)),
+        ):
+            snapshot = preview.snapshot(**kwargs)
+            self.assertEqual((snapshot.stage_width, snapshot.stage_height), expected)
+
     def test_python_document_command_layer_visible_trace(self):
         import visual_novel_engine as vn
 

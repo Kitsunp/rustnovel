@@ -3,6 +3,7 @@
 use crate::event::transition_kind_name;
 
 use crate::event::EventCompiled;
+use crate::scene_frame::SceneFrame;
 use crate::visual::VisualState;
 
 /// UI state derived from the current event.
@@ -41,6 +42,20 @@ pub enum UiView {
 impl UiState {
     /// Build a UI view from the current event and visual state.
     pub fn from_event(event: &EventCompiled, visual: &VisualState) -> Self {
+        if let EventCompiled::Scene(scene) = event {
+            let mut resolved = visual.clone();
+            resolved.apply_scene(scene);
+            return Self::from_resolved_visual(event, &resolved);
+        }
+        Self::from_resolved_visual(event, visual)
+    }
+
+    /// Builds the UI view from the visual state already projected into the frame.
+    pub fn from_scene_frame(event: &EventCompiled, frame: &SceneFrame) -> Self {
+        Self::from_resolved_visual(event, &frame.visual)
+    }
+
+    fn from_resolved_visual(event: &EventCompiled, visual: &VisualState) -> Self {
         let view = match event {
             EventCompiled::Dialogue(dialogue) => UiView::Dialogue {
                 speaker: dialogue.speaker.as_ref().to_string(),
@@ -54,19 +69,9 @@ impl UiState {
                     .map(|option| option.text.as_ref().to_string())
                     .collect(),
             },
-            EventCompiled::Scene(scene) => {
-                let mut visual = visual.clone();
-                visual.apply_scene(scene);
-                UiView::Scene {
-                    description: summarize_scene(&visual),
-                }
-            }
-            EventCompiled::Patch(_) => {
-                // Apply patch happened in engine, visual state is already updated
-                UiView::Scene {
-                    description: summarize_scene(visual),
-                }
-            }
+            EventCompiled::Scene(_) | EventCompiled::Patch(_) => UiView::Scene {
+                description: summarize_scene(visual),
+            },
             EventCompiled::Jump { target_ip } => UiView::System {
                 message: format!("Jump to {target_ip}"),
             },

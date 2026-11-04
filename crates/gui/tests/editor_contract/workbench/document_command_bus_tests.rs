@@ -334,6 +334,52 @@ fn gui_document_history_limits_undo_and_preserves_redo_order() {
 }
 
 #[test]
+fn standalone_and_workbench_history_restore_the_same_document_and_view() {
+    use crate::editor::node_editor::{NodeEditorHistoryAction, NodeEditorPanel};
+    use visual_novel_engine::authoring::AuthoringDocumentCommand;
+
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    let (scene, object_id) = add_scene_with_character(&mut workbench);
+    workbench.node_graph.set_single_selection(Some(scene));
+    workbench.node_graph.pan = egui::vec2(12.0, 24.0);
+    workbench
+        .apply_authoring_document_command(AuthoringDocumentCommand::SetLayerVisible {
+            object_id: object_id.clone(),
+            visible: false,
+        })
+        .unwrap();
+    let mut standalone = workbench.node_graph.clone();
+
+    for (action, redo) in [
+        (NodeEditorHistoryAction::Undo, false),
+        (NodeEditorHistoryAction::Redo, true),
+    ] {
+        assert!(NodeEditorPanel::new(&mut standalone)
+            .apply_history_action(action)
+            .unwrap());
+        assert!(if redo {
+            workbench.apply_graph_redo()
+        } else {
+            workbench.apply_graph_undo()
+        });
+        assert!(standalone
+            .authoring_graph()
+            .has_same_content(workbench.node_graph.authoring_graph()));
+        assert_eq!(
+            standalone.authoring_session.document().composer_layer_overrides,
+            workbench.document().composer_layer_overrides
+        );
+        assert_eq!(standalone.selected, workbench.node_graph.selected);
+        assert_eq!(standalone.pan, workbench.node_graph.pan);
+        assert_eq!(
+            standalone.take_operation_hint().unwrap().kind,
+            if redo { "redo" } else { "undo" }
+        );
+    }
+    assert!(!standalone.authoring_session.document().composer_layer_overrides[&object_id].visible);
+}
+
+#[test]
 fn gui_document_command_preserves_preview_behavior() {
     let mut workbench = EditorWorkbench::new(VnConfig::default());
     let (scene, object_id) = add_scene_with_character(&mut workbench);

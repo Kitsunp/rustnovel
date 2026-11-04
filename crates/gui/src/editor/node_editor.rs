@@ -304,39 +304,47 @@ impl<'a> NodeEditorPanel<'a> {
     }
 
     pub fn apply_undo_shortcut(&mut self) -> bool {
-        self.apply_history_action(NodeEditorHistoryAction::Undo)
+        self.report_history_result(NodeEditorHistoryAction::Undo)
     }
 
     pub fn apply_redo_shortcut(&mut self) -> bool {
-        self.apply_history_action(NodeEditorHistoryAction::Redo)
+        self.report_history_result(NodeEditorHistoryAction::Redo)
     }
 
-    fn apply_history_action(&mut self, action: NodeEditorHistoryAction) -> bool {
-        self.graph.commit_drag_positions();
-        let available = match action {
-            NodeEditorHistoryAction::Undo => self.can_undo(),
-            NodeEditorHistoryAction::Redo => self.can_redo(),
-        };
-        if !available {
-            return false;
+    fn report_history_result(&mut self, action: NodeEditorHistoryAction) -> bool {
+        match self.apply_history_action(action) {
+            Ok(applied) => applied,
+            Err(error) => {
+                tracing::error!("Node editor history action failed: {error}");
+                false
+            }
         }
-        if let Some(request) = &mut self.history_request {
-            **request = Some(action);
-            return true;
-        }
+    }
+
+    pub fn apply_history_action(
+        &mut self,
+        action: NodeEditorHistoryAction,
+    ) -> Result<bool, String> {
+        self.graph.try_commit_drag_positions()?;
         use visual_novel_engine::authoring::AuthoringDocumentCommand;
         let (command, kind) = match action {
             NodeEditorHistoryAction::Undo => (AuthoringDocumentCommand::UndoLast, "undo"),
             NodeEditorHistoryAction::Redo => (AuthoringDocumentCommand::RedoLast, "redo"),
         };
-        if self.graph.authoring_session.apply(command).is_err() {
-            return false;
+        if let Some(request) = &mut self.history_request {
+            if !self.graph.history_available(&command)? {
+                return Ok(false);
+            }
+            **request = Some(action);
+            return Ok(true);
         }
-        self.graph.reconcile_view_after_document_change();
+        if self.graph.apply_document_history(command)?.is_none() {
+            return Ok(false);
+        }
         self.graph
             .queue_operation_hint(kind, "Document history", Some("graph".into()), false);
         self.graph.mark_modified();
-        true
+        Ok(true)
     }
 
     fn render_connections(&self, painter: &egui::Painter, rect: egui::Rect) {

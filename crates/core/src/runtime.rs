@@ -40,7 +40,7 @@ pub use crate::scene_frame::{
     SafeAreaMode, SceneFrame, SceneFramePresenter, StageFitPolicy, StageProfile, TypographyToken,
     UiDensity, UiResponse, UiTheme, UiThemeValidationReport, WindowMode,
 };
-pub use crate::script::{ScriptCompiled, ScriptRaw};
+pub use crate::script::{RuntimeScriptInput, ScriptCompiled, ScriptRaw};
 pub use crate::state::EngineState;
 pub use crate::trace::{StateDigest, UiTrace, UiTraceStep, UiView as TraceUiView, VisualDigest};
 pub use crate::ui::{UiState, UiView};

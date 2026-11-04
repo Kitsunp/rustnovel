@@ -173,6 +173,22 @@ fn planning_standalone_export_never_creates_project_files() {
         "dry-run must not create a manifest"
     );
     assert!(!tmp.path().join("out").exists());
+
+    // A newly chosen file is still eligible for an explicit Save and export.
+    workbench.initialize_loaded_document(None);
+    let first_save = tmp.path().join("first.vnauthoring");
+    workbench.pending_save_path = Some(first_save.clone());
+    workbench.export_wizard.output_root = tmp.path().join("out").to_string_lossy().into();
+    workbench.export_wizard.export_kind = ExportWizardKind::CompiledScriptBundle;
+    workbench.export_wizard.dry_run = false;
+    workbench.execute_export_wizard();
+    assert!(
+        workbench.export_wizard.last_error.is_none(),
+        "{:?}",
+        workbench.export_wizard.last_error
+    );
+    assert!(first_save.is_file());
+    assert!(tmp.path().join("out/scripts/compiled.vnc").is_file());
 }
 
 #[test]
@@ -237,6 +253,45 @@ fn export_uses_current_edits_and_script_bundle_ignores_old_runtime_selection() {
         .contains("unsaved changes"));
     assert_eq!(fs::read(&entry).unwrap(), original);
     assert!(!tmp.path().join("out").exists());
+    let corrupted = b"{ invalid JSON";
+    fs::write(&entry, corrupted).unwrap();
+    workbench.plan_export_wizard();
+    let error = workbench.export_wizard.last_error.as_deref().unwrap();
+    assert!(error.contains("Cannot load current document"), "{error}");
+    assert!(error.contains(&entry.display().to_string()), "{error}");
+    for dry_run in [true, false] {
+        workbench.export_wizard.dry_run = dry_run;
+        workbench.execute_export_wizard();
+        let error = workbench.export_wizard.last_error.as_deref().unwrap();
+        assert!(error.contains("Cannot load current document"), "{error}");
+        assert!(error.contains(&entry.display().to_string()), "{error}");
+        assert_eq!(fs::read(&entry).unwrap(), corrupted);
+        assert!(!tmp.path().join("out").exists());
+    }
+    let external = ScriptRaw::new(
+        vec![EventRaw::Dialogue(DialogueRaw {
+            speaker: "Ava".into(),
+            text: "External edit".into(),
+        })],
+        BTreeMap::from([("start".into(), 0)]),
+    )
+    .to_json()
+    .unwrap();
+    fs::write(&entry, &external).unwrap();
+    workbench.execute_export_wizard();
+    let error = workbench.export_wizard.last_error.as_deref().unwrap();
+    assert!(error.contains("changed on disk"), "{error}");
+    assert_eq!(fs::read_to_string(&entry).unwrap(), external);
+    assert!(!tmp.path().join("out").exists());
+
+    fs::remove_file(&entry).unwrap();
+    workbench.execute_export_wizard();
+    let error = workbench.export_wizard.last_error.as_deref().unwrap();
+    assert!(error.contains("Cannot read current document"), "{error}");
+    assert!(error.contains(&entry.display().to_string()), "{error}");
+    assert!(!entry.exists());
+    assert!(!tmp.path().join("out").exists());
+    fs::write(&entry, &original).unwrap();
     workbench.export_wizard.dry_run = false;
     workbench.execute_export_wizard();
     assert!(
@@ -256,6 +311,67 @@ fn export_uses_current_edits_and_script_bundle_ignores_old_runtime_selection() {
         .unwrap()
         .executable
         .is_none());
+    let saved = fs::read(&entry).unwrap();
+    workbench.node_graph.edit_node(dialogue, |node| {
+        if let crate::editor::StoryNode::Dialogue { text, .. } = node {
+            *text = "Local second edit".into();
+        }
+    });
+    for edit_layout in [true, false] {
+        let mut external = visual_novel_engine::authoring::load_authoring_entry(&entry).unwrap();
+        if edit_layout {
+            external.graph.set_node_pos(
+                dialogue,
+                visual_novel_engine::authoring::AuthoringPosition::new(800.0, 400.0),
+            );
+        } else {
+            external
+                .composer_background_fit_overrides
+                .insert(dialogue.to_string(), crate::editor::BackgroundFit::Contain);
+        }
+        let external = external.to_json().unwrap();
+        fs::write(&entry, &external).unwrap();
+        workbench.execute_export_wizard();
+        let error = workbench.export_wizard.last_error.as_deref().unwrap();
+        assert!(error.contains("changed on disk"), "{error}");
+        assert_eq!(fs::read_to_string(&entry).unwrap(), external);
+        if edit_layout {
+            fs::write(tmp.path().join("alternate.json"), &original).unwrap();
+            workbench.export_wizard.entry_script = "alternate.json".into();
+            workbench.execute_export_wizard();
+            assert!(
+                workbench.export_wizard.last_error.is_none(),
+                "{:?}",
+                workbench.export_wizard.last_error
+            );
+            assert_eq!(fs::read_to_string(&entry).unwrap(), external);
+            workbench.export_wizard.entry_script.clear();
+        }
+        fs::write(&entry, &saved).unwrap();
+    }
+    workbench.execute_export_wizard();
+    assert!(
+        workbench.export_wizard.last_error.is_none(),
+        "{:?}",
+        workbench.export_wizard.last_error
+    );
+    assert!(fs::read_to_string(&entry)
+        .unwrap()
+        .contains("Local second edit"));
+    let before_invalid_drag = fs::read(&entry).unwrap();
+    assert!(workbench
+        .node_graph
+        .translate_node_for_drag(dialogue, egui::vec2(f32::NAN, 1.0)));
+    workbench.execute_export_wizard();
+    let error = workbench.export_wizard.last_error.as_deref().unwrap();
+    assert!(error.contains("Could not commit dragged nodes"), "{error}");
+    assert_eq!(fs::read(&entry).unwrap(), before_invalid_drag);
+    assert!(workbench
+        .node_graph
+        .get_node_pos(dialogue)
+        .unwrap()
+        .x
+        .is_nan());
     // A failed retry must not keep displaying the old successful report/plan.
     workbench.export_wizard.output_root.clear();
     workbench.execute_export_wizard();

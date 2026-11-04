@@ -6,11 +6,13 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use visual_novel_engine::{
-    compute_script_id, load_runtime_script_from_entry, resolve_layout, run_repro_case,
+    authoring::{load_prepared_runtime_entry, read_prepared_runtime_entry},
+    resolve_layout, run_repro_case,
     runtime::{Engine, ScriptCompiled, UiTrace},
     validate_ui_theme, BundleIntegrity, ExportBundleSpec, ExportService, ExportTargetPlatform,
     ImportFallbackPolicy, ImportProfile, LayoutPolicy, ReproCase, ResourceLimiter, SaveData,
-    SecurityPolicy, StageProfile, UiTheme, AUTH_SAVE_KEY, SCRIPT_SCHEMA_VERSION,
+    SecurityPolicy, StageProfile, UiTheme, AUTH_SAVE_KEY, DEFAULT_MAX_SAVE_BYTES,
+    SCRIPT_SCHEMA_VERSION,
 };
 use vnengine_assets::{AssetEntry, AssetManifest};
 use walkdir::WalkDir;
@@ -52,7 +54,7 @@ enum Command {
         #[command(subcommand)]
         command: asset_import::AssetCommand,
     },
-    /// Validate a script JSON file.
+    /// Validate runtime JSON, a compiled script, or an authoring document.
     Validate { script: PathBuf },
     /// Validate editor/authoring graph semantics from a script JSON file.
     AuthoringValidate {
@@ -67,7 +69,7 @@ enum Command {
         #[command(subcommand)]
         command: authoring::AuthoringCommand,
     },
-    /// Compile a script JSON file into binary form.
+    /// Validate and compile runtime JSON or an authoring document into binary form.
     Compile {
         script: PathBuf,
         #[arg(short, long)]
@@ -81,7 +83,7 @@ enum Command {
         #[arg(long)]
         in_place: bool,
     },
-    /// Produce an execution trace for a script JSON file.
+    /// Produce an execution trace for runtime JSON, a compiled script, or an authoring document.
     Trace {
         script: PathBuf,
         #[arg(long, default_value_t = 100)]
@@ -100,6 +102,9 @@ enum Command {
     /// Print the native route tree for a script.
     RouteTree { script: PathBuf },
     /// Print read/progress snapshots from a script or save.
+    ///
+    /// For a script, simulate the first option at each choice and report whether
+    /// the simulation finished or stopped early.
     ReadModel { input: PathBuf },
     /// Theme tooling.
     Theme {
@@ -385,7 +390,11 @@ impl From<PackageIntegrityArg> for BundleIntegrity {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let json = cli.json;
-    let suppress_envelope = matches!(&cli.command, Command::Authoring { .. });
+    let suppress_envelope = matches!(
+        &cli.command,
+        Command::Authoring { command }
+            if !matches!(command, authoring::AuthoringCommand::Validate(_))
+    );
     match run_command(cli, json) {
         Ok(data) => {
             if json && !suppress_envelope {
@@ -411,11 +420,21 @@ fn main() -> ExitCode {
         Err(err) => {
             let (code, exit_code) = classify_error(&err);
             if json && !suppress_envelope {
+                let data = match err.downcast_ref::<authoring::ValidationFailure>() {
+                    Some(failure) => match serde_json::to_value(&failure.report) {
+                        Ok(report) => Some(report),
+                        Err(error) => {
+                            eprintln!("failed to serialize validation report: {error}");
+                            return ExitCode::from(2);
+                        }
+                    },
+                    None => None,
+                };
                 print_json_envelope(CliEnvelope {
                     ok: false,
                     code: code.to_string(),
-                    data: None,
-                    error: Some(err.to_string()),
+                    data,
+                    error: Some(format!("{err:#}")),
                 });
             } else {
                 eprintln!("{err:#}");

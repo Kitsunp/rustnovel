@@ -43,6 +43,97 @@ fn authoring_graph_roundtrips_script_without_gui_types() {
 }
 
 #[test]
+fn compiler_reuses_strict_projection_and_preserves_preview_only_fallback() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let node = graph.add_node(
+        StoryNode::Dialogue {
+            speaker: "Ava".into(),
+            text: "Hola".into(),
+        },
+        pos(0.0, 90.0),
+    );
+    let end = graph.add_node(StoryNode::End, pos(0.0, 180.0));
+    graph.connect(start, node);
+    graph.connect(node, end);
+    let strict = graph.to_script_strict().expect("strict export");
+    let result = compiler::compile_authoring_graph(&graph, None);
+    assert!(result.engine_result.is_ok());
+    assert_eq!(
+        serde_json::to_value(&result.script).unwrap(),
+        serde_json::to_value(strict).unwrap()
+    );
+    assert!(result
+        .phase_trace
+        .iter()
+        .any(|phase| phase.phase == compiler::CompilationPhase::ScriptCompile && phase.ok));
+
+    *graph.get_node_mut(node).unwrap() = StoryNode::Generic(EventRaw::Dialogue(DialogueRaw {
+        speaker: "Ava".into(),
+        text: "Preview".into(),
+    }));
+    assert!(graph.to_script_strict().is_err());
+    let expected = graph.to_script_lossy_for_diagnostics();
+    let result = compiler::compile_authoring_graph(&graph, None);
+    assert!(result.engine_result.is_ok());
+    assert_eq!(
+        serde_json::to_value(&result.script).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+    assert!(result
+        .issues
+        .iter()
+        .any(|issue| issue.code == LintCode::CompileError
+            && issue.severity == LintSeverity::Warning
+            && issue.message.contains("export remains blocked")));
+    assert!(result.phase_trace.iter().any(|phase| phase.phase
+        == compiler::CompilationPhase::ScriptCompile
+        && !phase.ok
+        && phase
+            .detail
+            .contains("continuing with diagnostic runtime script")));
+}
+
+#[test]
+fn compiler_keeps_strict_compile_error_and_diagnostic_projection() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
+    let audio = graph.add_node(
+        StoryNode::AudioAction {
+            channel: "not-a-channel".into(),
+            action: "play".into(),
+            asset: Some("music/theme.ogg".into()),
+            volume: None,
+            fade_duration_ms: None,
+            loop_playback: None,
+        },
+        pos(0.0, 90.0),
+    );
+    let end = graph.add_node(StoryNode::End, pos(0.0, 180.0));
+    graph.connect(start, audio);
+    graph.connect(audio, end);
+    let strict_error = graph.to_script_strict().unwrap_err().to_string();
+    let diagnostic = graph.to_script_lossy_for_diagnostics();
+    let result = compiler::compile_authoring_graph(&graph, None);
+    assert_eq!(
+        result.engine_result.err().unwrap(),
+        format!("Strict authoring export failed: {strict_error}")
+    );
+    assert_eq!(
+        serde_json::to_value(result.script).unwrap(),
+        serde_json::to_value(diagnostic).unwrap()
+    );
+    assert!(
+        result
+            .issues
+            .iter()
+            .any(|issue| issue.code == LintCode::CompileError
+                && issue.severity == LintSeverity::Error)
+    );
+    assert!(result.dry_run_report.is_none());
+}
+
+#[test]
 fn authoring_validation_and_safe_quick_fix_are_headless() {
     let mut graph = NodeGraph::new();
     let start = graph.add_node(StoryNode::Start, pos(0.0, 0.0));
@@ -56,6 +147,16 @@ fn authoring_validation_and_safe_quick_fix_are_headless() {
     let end = graph.add_node(StoryNode::End, pos(0.0, 180.0));
     graph.connect(start, dialogue);
     graph.connect(dialogue, end);
+
+    let preview = compiler::compile_authoring_graph(&graph, None);
+    assert!(preview.engine_result.is_ok());
+    assert!(composer::ComposerPreviewSession::start_from_node(&graph, dialogue).is_ok());
+    let limits = ResourceLimiter::default();
+    let strict = SecurityPolicy::default();
+    assert!(strict.validate_raw(&preview.script, limits).is_err());
+    assert!(strict
+        .validate_compiled(&preview.script.compile().unwrap(), limits)
+        .is_err());
 
     let issue = validate_authoring_graph(&graph)
         .into_iter()

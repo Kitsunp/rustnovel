@@ -54,6 +54,23 @@ pub struct ValidateArgs {
     pub output: Option<PathBuf>,
 }
 
+#[derive(Debug)]
+pub(super) struct ValidationFailure {
+    pub report: AuthoringValidationReport,
+}
+
+impl std::fmt::Display for ValidationFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "authoring validation failed with {} error(s)",
+            self.report.error_count
+        )
+    }
+}
+
+impl std::error::Error for ValidationFailure {}
+
 #[derive(Args)]
 pub struct ExplainArgs {
     pub project: PathBuf,
@@ -196,10 +213,7 @@ pub fn validate_authoring_script(
     }
 
     if report.error_count > 0 {
-        anyhow::bail!(
-            "authoring validation failed with {} error(s)",
-            report.error_count
-        );
+        return Err(ValidationFailure { report }.into());
     }
     Ok(if json_output {
         Some(serde_json::to_value(report)?)
@@ -290,20 +304,24 @@ enum CommandInput {
 fn read_document_command(path: &Path) -> Result<CommandInput> {
     let source =
         std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let value: serde_json::Value = serde_json::from_str(&source).context("parse command JSON")?;
-    match value {
-        serde_json::Value::Array(values) => values
+    let raw: &serde_json::value::RawValue =
+        serde_json::from_str(&source).context("parse command JSON")?;
+    if raw.get().trim_start().starts_with('[') {
+        let values: Vec<&serde_json::value::RawValue> =
+            serde_json::from_str(raw.get()).context("parse command JSON")?;
+        values
             .into_iter()
             .enumerate()
             .map(|(index, value)| {
-                serde_json::from_value(value)
+                serde_json::from_str(value.get())
                     .with_context(|| format!("parse Core command {}", index + 1))
             })
             .collect::<Result<Vec<_>>>()
-            .map(CommandInput::Batch),
-        value => serde_json::from_value(value)
+            .map(CommandInput::Batch)
+    } else {
+        serde_json::from_str(raw.get())
             .map(|command| CommandInput::Single(Box::new(command)))
-            .context("parse Core command"),
+            .context("parse Core command")
     }
 }
 

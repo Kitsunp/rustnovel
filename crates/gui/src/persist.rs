@@ -3,7 +3,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use visual_novel_engine::{SaveData, SaveError, AUTH_SAVE_KEY};
+use visual_novel_engine::{
+    SaveData, SaveError, SaveStoreError, AUTH_SAVE_KEY, DEFAULT_MAX_SAVE_BYTES,
+};
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
@@ -79,12 +81,18 @@ pub fn save_state_to(path: &Path, data: &SaveData) -> Result<(), PersistError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let payload = data.to_authenticated_binary(AUTH_SAVE_KEY)?;
+    let payload = data.to_authenticated_binary_with_limit(AUTH_SAVE_KEY, DEFAULT_MAX_SAVE_BYTES)?;
     crate::editor::atomic_io::atomic_replace(path, &payload)?;
     Ok(())
 }
 
 pub fn load_state_from(path: &Path) -> Result<SaveData, PersistError> {
-    let raw = fs::read(path)?;
-    Ok(SaveData::from_any_binary(&raw, AUTH_SAVE_KEY)?)
+    let file = fs::File::open(path)?;
+    SaveData::read_authenticated(file, AUTH_SAVE_KEY, DEFAULT_MAX_SAVE_BYTES).map_err(|error| {
+        match error {
+            SaveStoreError::Io(error) => PersistError::Io(error),
+            SaveStoreError::Save(error) => PersistError::Save(error),
+            error => PersistError::Io(std::io::Error::other(error)),
+        }
+    })
 }

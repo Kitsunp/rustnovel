@@ -286,7 +286,12 @@ fn slot_load_recovers_from_corrupted_primary() {
     assert!(
         matches!(store.load_slot(7), Err(SaveStoreError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound)
     );
-    assert!(store.list_slots().unwrap().is_empty());
+    let listing = store.list_slots_with_issues().unwrap();
+    assert!(listing.entries.is_empty());
+    assert_eq!(listing.issues.len(), 1);
+    assert!(
+        matches!(&listing.issues[0].error, SaveStoreError::Io(err) if err.kind() == std::io::ErrorKind::NotFound)
+    );
     fs::create_dir(&backup).unwrap();
     assert!(
         matches!(store.load_slot(7), Err(SaveStoreError::Io(err)) if err.kind() == std::io::ErrorKind::InvalidInput)

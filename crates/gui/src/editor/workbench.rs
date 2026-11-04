@@ -25,6 +25,8 @@ use crate::editor::{
 };
 use crate::VnConfig;
 
+#[path = "workbench/timeline_ops.rs"]
+mod timeline_ops;
 #[path = "workbench/types.rs"]
 mod types;
 pub use types::*;
@@ -54,6 +56,7 @@ pub struct EditorWorkbench {
     pub project_root: Option<std::path::PathBuf>,
     pub current_script: Option<ScriptRaw>,
     pub saved_script_snapshot: Option<ScriptRaw>,
+    saved_document_version: Option<(std::path::PathBuf, [u8; 32])>,
     pub pending_save_path: Option<std::path::PathBuf>,
 
     // UI State
@@ -91,6 +94,7 @@ pub struct EditorWorkbench {
     pub composer_entity_owners: std::collections::HashMap<u32, u32>,
     pub composer_image_cache: std::collections::HashMap<String, egui::TextureHandle>,
     pub composer_image_failures: std::collections::HashMap<String, String>,
+    composer_route_error: Option<String>,
     pub resource_service: crate::editor::resource_service::EditorResourceService,
     pub composer_preview_quality: crate::editor::PreviewQuality,
     pub composer_stage_fit: crate::editor::StageFit,
@@ -99,6 +103,8 @@ pub struct EditorWorkbench {
 
     // Timeline/Playback
     pub timeline: visual_novel_engine::Timeline,
+    timeline_bindings: std::collections::HashMap<u32, Option<timeline_ops::TimelineBinding>>,
+    timeline_scene_generation: u64,
     pub current_time: f32,
     timeline_fractional_ticks: f64,
     pub is_playing: bool,
@@ -211,6 +217,7 @@ impl EditorWorkbench {
             project_root: None,
             current_script: None,
             saved_script_snapshot: None,
+            saved_document_version: None,
             pending_save_path: None,
             mode: EditorMode::Editor,
             show_graph: true,
@@ -242,12 +249,15 @@ impl EditorWorkbench {
             composer_entity_owners: std::collections::HashMap::new(),
             composer_image_cache: std::collections::HashMap::new(),
             composer_image_failures: std::collections::HashMap::new(),
+            composer_route_error: None,
             resource_service: crate::editor::resource_service::EditorResourceService::new(),
             composer_preview_quality: crate::editor::PreviewQuality::default(),
             composer_stage_fit: crate::editor::StageFit::default(),
             composer_preview_mode: crate::editor::ComposerPreviewMode::default(),
             composer_default_background_fit: crate::editor::BackgroundFit::default(),
             timeline: visual_novel_engine::Timeline::new(60), // 60 ticks per second
+            timeline_bindings: std::collections::HashMap::new(),
+            timeline_scene_generation: 0,
             current_time: 0.0,
             timeline_fractional_ticks: 0.0,
             is_playing: false,
@@ -339,9 +349,23 @@ impl EditorWorkbench {
 
     /// Evaluate the scratch timeline on a copy, leaving authored poses intact.
     pub fn composer_animated_scene(&self) -> visual_novel_engine::SceneState {
+        if self.timeline.track_count() == 0 {
+            return self.scene.clone();
+        }
+        let identities = self.timeline_scene_identities();
+        self.composer_animated_scene_with_identities(&identities)
+    }
+
+    fn composer_animated_scene_with_identities(
+        &self,
+        identities: &std::collections::HashMap<u32, timeline_ops::TimelineBinding>,
+    ) -> visual_novel_engine::SceneState {
         use visual_novel_engine::PropertyType;
         let mut scene = self.scene.clone();
         for (id, property, value) in self.timeline.evaluate_at(self.current_time as u32) {
+            if !self.timeline_binding_matches(id.raw(), identities) {
+                continue;
+            }
             let Some(entity) = scene.get_mut(id) else {
                 continue;
             };

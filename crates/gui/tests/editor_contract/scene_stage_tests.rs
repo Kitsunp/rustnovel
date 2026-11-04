@@ -1,10 +1,62 @@
-use std::collections::HashMap;
 use super::*;
 use crate::editor::StageFit;
+use std::collections::HashMap;
 use visual_novel_engine::{
     runtime::{EventCompiled, SharedStr, VisualState},
     Transform,
 };
+
+#[test]
+fn stage_fallback_shows_image_error_and_recovers_when_file_appears() {
+    use crate::editor::{resource_service::EditorResourceService, PreviewQuality};
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut scene = visual_novel_engine::SceneState::new();
+    scene
+        .spawn_with_transform(
+            Transform::at(320, 180),
+            EntityKind::Image(visual_novel_engine::ImageData {
+                path: "missing.png".into(),
+                tint: None,
+            }),
+        )
+        .unwrap();
+    let stage = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 360.0));
+    let geometry = stage_geometry(stage, (640.0, 360.0), StageFit::Fill);
+    let ctx = egui::Context::default();
+    let mut cache = HashMap::new();
+    let mut failures = HashMap::new();
+    let mut resources = EditorResourceService::new();
+    let mut render = || {
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(stage),
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    SceneStagePainter::new(
+                        Some(dir.path()),
+                        PreviewQuality::High,
+                        &mut cache,
+                        &mut failures,
+                        &mut resources,
+                    )
+                    .paint_read_only(ui, &scene, geometry);
+                });
+            },
+        )
+    };
+    let output = render();
+    assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::epaint::Shape::Text(text) if text.galley.text().contains("missing image:") && text.galley.text().contains("missing.png"))));
+    image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]))
+        .save(dir.path().join("missing.png"))
+        .unwrap();
+    let output = render();
+    assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::epaint::Shape::Text(text) if text.galley.text().contains("missing image:"))));
+}
 
 #[test]
 fn background_and_locked_character_can_be_inspected_without_moving() {

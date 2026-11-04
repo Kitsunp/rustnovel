@@ -1,4 +1,4 @@
-use super::assets::validate_asset;
+use super::assets::{validate_asset, AssetProbeError};
 use super::scene::validate_character_scale;
 use crate::authoring::{
     DiagnosticTarget, FieldPath, LintCode, LintIssue, SemanticValue, SemanticValueKind,
@@ -20,7 +20,7 @@ pub(crate) fn validate_audio<F>(
     asset_exists: &F,
     issues: &mut Vec<LintIssue>,
 ) where
-    F: Fn(&str) -> bool,
+    F: Fn(&str) -> Result<(), AssetProbeError>,
 {
     let action = audio_action_code(audio.action);
     if audio_channel_code(audio.channel).is_none() {

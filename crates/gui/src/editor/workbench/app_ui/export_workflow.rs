@@ -141,31 +141,30 @@ impl EditorWorkbench {
             self.toast = Some(ToastState::error(error));
             return;
         }
-        match visual_novel_engine::ExportService::new().plan_export(&spec) {
-            Ok(plan) => {
-                let service = visual_novel_engine::ExportService::new();
-                let validation = if self.export_wizard.require_executable {
-                    service.validate_executable_export_plan(&plan, spec.target_platform)
-                } else {
-                    service.validate_export_plan(&plan)
-                };
-                if let Err(error) = validation {
-                    self.export_wizard.last_plan = Some(plan);
-                    self.export_wizard.last_error = Some(error.to_string());
-                    self.toast = Some(ToastState::error(
-                        "Export blocked; see the diagnostics below",
-                    ));
-                    return;
-                }
-                self.export_wizard.last_plan = Some(plan);
-            }
+        let service = visual_novel_engine::ExportService::new();
+        let target = spec.target_platform;
+        let prepared = match service.prepare_export(spec) {
+            Ok(prepared) => prepared,
             Err(err) => {
                 self.export_wizard.last_error = Some(err.to_string());
                 self.toast = Some(ToastState::error(format!("Export plan failed: {err}")));
                 return;
             }
-        }
+        };
+        self.export_wizard.last_plan = Some(prepared.plan().clone());
         if self.export_wizard.dry_run {
+            let validation = if self.export_wizard.require_executable {
+                service.validate_executable_export_plan(prepared.plan(), target)
+            } else {
+                service.validate_export_plan(prepared.plan())
+            };
+            if let Err(error) = validation {
+                self.export_wizard.last_error = Some(error.to_string());
+                self.toast = Some(ToastState::error(
+                    "Export blocked; see the diagnostics below",
+                ));
+                return;
+            }
             self.export_wizard
                 .logs
                 .push("execute: dry-run stopped before writing bundle".to_string());
@@ -175,9 +174,9 @@ impl EditorWorkbench {
             return;
         }
         let result = if self.export_wizard.require_executable {
-            visual_novel_engine::export_executable_bundle(spec)
+            prepared.execute_executable()
         } else {
-            visual_novel_engine::ExportService::new().execute_export(spec)
+            prepared.execute()
         };
         match result {
             Ok(report) => {
@@ -229,30 +228,65 @@ impl EditorWorkbench {
         if self.node_graph.is_empty() {
             return Err("The current document is empty".into());
         }
-        let stored = visual_novel_engine::authoring::load_authoring_entry(&current).ok();
-        let has_saved_layout = std::fs::read_to_string(&current)
-            .ok()
-            .is_some_and(|source| {
-                visual_novel_engine::authoring::source_looks_like_authoring_document(&source)
-            });
-        let pending_drag = self.node_graph.dragging_node.is_some();
-        let changed = pending_drag
-            || (!has_saved_layout && !self.node_graph.authoring_session.dirty_flags().is_clean())
-            || stored.as_ref().is_none_or(|document| {
-                (if has_saved_layout {
-                    !document
-                        .graph
-                        .has_same_content(self.node_graph.authoring_graph())
-                } else {
-                    // Import-time automatic layout is not an unsaved story edit.
-                    serde_json::to_value(document.graph.to_script()).ok()
-                        != serde_json::to_value(self.node_graph.to_script()).ok()
-                }) || document.composer_layer_overrides != self.document().composer_layer_overrides
-                    || document.composer_background_fit_overrides
-                        != self.document().composer_background_fit_overrides
-            });
-        if !changed {
-            return Ok(());
+        let tracked = self.saved_document_version.as_ref().filter(|(path, _)| {
+            *path == current
+                || path
+                    .canonicalize()
+                    .ok()
+                    .zip(current.canonicalize().ok())
+                    .is_some_and(|(a, b)| a == b)
+        });
+        match std::fs::read_to_string(&current) {
+            Ok(source) => {
+                let (stored, format) =
+                    visual_novel_engine::authoring::parse_authoring_entry_with_format(&source)
+                        .map_err(|error| {
+                            format!(
+                                "Cannot load current document '{}': {error}",
+                                current.display()
+                            )
+                        })?;
+                if tracked.is_some_and(|(_, version)| {
+                    *version != crate::editor::project_io::document_version(source.as_bytes())
+                }) {
+                    return Err(format!(
+                        "The document in '{}' changed on disk. Reload it or save your edits to another file before exporting.",
+                        current.display()
+                    ));
+                }
+                // Import-time automatic layout is not an unsaved story edit.
+                let graph_changed =
+                    if format == visual_novel_engine::authoring::AuthoringEntryFormat::Document {
+                        !stored
+                            .graph
+                            .has_same_content(self.node_graph.authoring_graph())
+                    } else {
+                        stored.graph.to_script() != self.node_graph.to_script()
+                    };
+                let changed = graph_changed
+                    || self.node_graph.dragging_node.is_some()
+                    || self.node_graph.is_modified()
+                    || !self.node_graph.authoring_session.dirty_flags().is_clean()
+                    || stored.composer_layer_overrides != self.document().composer_layer_overrides
+                    || stored.composer_background_fit_overrides
+                        != self.document().composer_background_fit_overrides;
+                if !changed {
+                    return Ok(());
+                }
+                if tracked.is_none() {
+                    return Err(format!(
+                        "Cannot verify the existing document in '{}'. Reload it or save your edits to another file before exporting.",
+                        current.display()
+                    ));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && tracked.is_none() => {}
+            Err(error) => {
+                return Err(format!(
+                    "Cannot read current document '{}': {error}",
+                    current.display()
+                ));
+            }
         }
         if !save {
             return Err("There are unsaved changes. Save the document to check this export, or use Save and export with Dry-run disabled.".into());
@@ -261,6 +295,7 @@ impl EditorWorkbench {
             .authoring_graph()
             .to_script_strict()
             .map_err(|error| format!("Cannot export the current document: {error}"))?;
+        // This detects changes before saving; another writer can still race the atomic replace.
         self.save_document(&current)
             .map_err(|error| format!("Could not save before export: {error}"))?;
         Ok(())

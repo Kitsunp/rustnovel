@@ -68,6 +68,11 @@ fn dragging_a_group_is_a_view_preview_until_one_document_commit() {
     assert_eq!(graph.authoring_session.undo_delta_count(), history);
     assert!(graph.commit_drag_positions());
     assert_eq!(graph.authoring_session.undo_delta_count(), history + 1);
+    assert!(matches!(
+        graph.authoring_session.recorded_commands().last(),
+        Some(AuthoringDocumentCommand::MoveNodes { positions }) if positions.len() == 2
+    ));
+    assert_eq!(graph.selected_nodes.len(), 2);
     assert_eq!(
         graph.authoring_graph().get_node_pos(b),
         Some(AuthoringPosition::new(10.0, 120.0))
@@ -81,6 +86,88 @@ fn dragging_a_group_is_a_view_preview_until_one_document_commit() {
     graph.translate_selected_or_node_for_drag(a, egui::vec2(-5.0, 0.0));
     assert!(!graph.commit_drag_positions());
     assert_eq!(graph.authoring_session.redo_delta_count(), 1);
+}
+
+#[test]
+fn programmatic_group_move_and_auto_layout_use_single_reversible_commands() {
+    let mut graph = NodeGraph::new();
+    let start = graph.add_node(StoryNode::Start, egui::pos2(0.0, 0.0));
+    let end = graph.add_node(StoryNode::End, egui::pos2(0.0, 100.0));
+    graph.connect(start, end);
+    graph.selected_nodes.extend([start, end]);
+    let before = graph.authoring_graph().clone();
+    let count = graph.authoring_session.undo_delta_count();
+    assert_eq!(
+        graph.translate_selected_or_node(start, egui::vec2(10.0, 20.0)),
+        2
+    );
+    assert_eq!(graph.authoring_session.undo_delta_count(), count + 1);
+    assert!(matches!(graph.authoring_session.recorded_commands().last(),
+        Some(AuthoringDocumentCommand::MoveNodes { positions }) if positions.len() == 2));
+    graph
+        .authoring_session
+        .apply(AuthoringDocumentCommand::UndoLast)
+        .unwrap();
+    assert!(graph.authoring_graph().has_same_content(&before));
+
+    let count = graph.authoring_session.undo_delta_count();
+    assert!(graph.auto_layout_hierarchical());
+    assert_eq!(graph.authoring_session.undo_delta_count(), count + 1);
+    assert!(matches!(
+        graph.authoring_session.recorded_commands().last(),
+        Some(AuthoringDocumentCommand::MoveNodes { .. })
+    ));
+    graph
+        .authoring_session
+        .apply(AuthoringDocumentCommand::UndoLast)
+        .unwrap();
+    assert!(graph.authoring_graph().has_same_content(&before));
+}
+
+#[test]
+fn invalid_drag_commit_preserves_the_pending_preview_and_document() {
+    let mut graph = NodeGraph::new();
+    let id = graph.add_node(StoryNode::Start, egui::pos2(10.0, 20.0));
+    let history = graph.authoring_session.undo_delta_count();
+    assert!(graph.translate_node_for_drag(id, egui::vec2(f32::NAN, 1.0)));
+    let error = graph.try_commit_drag_positions().unwrap_err();
+    assert!(!error.is_empty());
+    assert!(graph.get_node_pos(id).unwrap().x.is_nan());
+    assert_eq!(
+        graph.authoring_graph().get_node_pos(id),
+        Some(AuthoringPosition::new(10.0, 20.0))
+    );
+    assert_eq!(graph.authoring_session.undo_delta_count(), history);
+}
+
+#[test]
+fn invalid_drag_prevents_sync_and_save_instead_of_saving_the_previous_position() {
+    let mut workbench = EditorWorkbench::new(VnConfig::default());
+    let id = workbench
+        .node_graph
+        .add_node(StoryNode::Start, egui::pos2(10.0, 20.0));
+    assert!(workbench
+        .node_graph
+        .translate_node_for_drag(id, egui::vec2(f32::NAN, 1.0)));
+    let error = workbench.sync_graph_to_script().unwrap_err();
+    assert!(error.contains("Could not commit dragged nodes"), "{error}");
+    let history = workbench.node_graph.authoring_session.undo_delta_count();
+    assert!(!workbench.apply_graph_undo());
+    assert_eq!(
+        workbench.node_graph.authoring_session.undo_delta_count(),
+        history
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("document.vnauthoring");
+    workbench.execute_save(&path, "");
+    assert!(!path.exists());
+    assert!(workbench
+        .toast
+        .as_ref()
+        .unwrap()
+        .message
+        .contains("Could not commit dragged nodes"));
+    assert!(workbench.node_graph.get_node_pos(id).unwrap().x.is_nan());
 }
 
 #[test]

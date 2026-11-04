@@ -27,6 +27,17 @@ impl EditorWorkbench {
                     .show(ctx, |ui| {
                         let mut current_time_u32 = self.current_time as u32;
                         let mut is_playing = self.is_playing;
+                        self.capture_timeline_bindings();
+                        let suspended = self.suspended_timeline_tracks();
+                        if suspended > 0 {
+                            ui.colored_label(
+                                egui::Color32::YELLOW,
+                                format!(
+                            "{suspended} timeline track(s) suspended: target missing or changed."
+                        ),
+                            );
+                        }
+                        let previous_track_count = self.timeline.track_count();
                         TimelinePanel::new(
                             &mut self.timeline,
                             &mut current_time_u32,
@@ -34,6 +45,9 @@ impl EditorWorkbench {
                         )
                         .with_selected_entity(self.selected_entity)
                         .ui(ui);
+                        if self.timeline.track_count() != previous_track_count {
+                            self.capture_timeline_bindings();
+                        }
                         self.current_time = current_time_u32 as f32;
                         self.is_playing = is_playing;
                         if !is_playing {
@@ -167,6 +181,12 @@ impl EditorWorkbench {
                 ui.set_clip_rect(composer_rect);
                 self.render_fragments_panel(ui);
                 ui.separator();
+                if let Some(error) = &self.composer_route_error {
+                    ui.colored_label(
+                        egui::Color32::LIGHT_RED,
+                        format!("Composer route unavailable. Showing selected node: {error}"),
+                    );
+                }
                 let active_event_node_id = self.engine.as_ref().and_then(|engine| {
                     self.node_graph
                         .authoring_graph()
@@ -178,8 +198,31 @@ impl EditorWorkbench {
                     .and_then(|node_id| self.node_graph.get_node(node_id).cloned());
                 let mut composer_background_fit =
                     self.composer_background_fit_for_node(composer_selected_node);
-                let mut animated_scene = self.composer_animated_scene();
-                let mut composer = crate::editor::visual_composer::VisualComposerPanel::new(
+                // Reuse the unanimated object bindings only when the animation
+                // cannot change their sorted order or the ownership source.
+                let shared_ids = (self.timeline.track_count() > 0
+                    && entity_owners == self.composer_entity_owners
+                    && !self
+                        .timeline
+                        .tracks()
+                        .any(|track| track.property == visual_novel_engine::PropertyType::ZOrder))
+                .then(|| {
+                    crate::editor::visual_composer::layers::authoring_entity_object_ids_from_layers(
+                        &self.scene,
+                        &entity_owners,
+                        self.node_graph
+                            .authoring_session
+                            .read_model()
+                            .composer_layers(),
+                    )
+                });
+                let mut animated_scene = if let Some(ids) = &shared_ids {
+                    let identities = self.timeline_scene_identities_with_object_ids(ids);
+                    self.composer_animated_scene_with_identities(&identities)
+                } else {
+                    self.composer_animated_scene()
+                };
+                let composer = crate::editor::visual_composer::VisualComposerPanel::new(
                     crate::editor::visual_composer::VisualComposerPanelParams {
                         scene: &mut animated_scene,
                         engine: &self.engine,
@@ -205,8 +248,18 @@ impl EditorWorkbench {
                         // painted and edited, including isolated/animated previews.
                         presentation_snapshot: None,
                     },
-                )
-                .with_authoring_graph(self.node_graph.authoring_graph(), &entity_owners);
+                );
+                let mut composer = if let Some(ids) = shared_ids {
+                    composer.with_authoring_object_ids(ids)
+                } else {
+                    composer.with_authoring_layers(
+                        self.node_graph
+                            .authoring_session
+                            .read_model()
+                            .composer_layers(),
+                        &entity_owners,
+                    )
+                };
                 if let Some(act) = composer.ui(ui, &entity_owners) {
                     composer_actions.push(act);
                 }

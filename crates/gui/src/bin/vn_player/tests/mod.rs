@@ -194,10 +194,17 @@ fn smoke_mode_loads_packaged_flow_and_updates_reports() -> Result<(), Box<dyn st
     std::fs::create_dir_all(bundle.join("meta"))?;
     std::fs::create_dir_all(bundle.join("assets/backgrounds"))?;
 
-    let asset = b"smoke-asset";
+    let mut asset = Vec::new();
+    image::ImageEncoder::write_image(
+        image::codecs::png::PngEncoder::new(&mut asset),
+        &[255, 0, 0, 255],
+        1,
+        1,
+        image::ColorType::Rgba8,
+    )?;
     let asset_path = bundle.join("assets/backgrounds/smoke.png");
-    std::fs::write(&asset_path, asset)?;
-    let asset_hash = sha256_hex(asset);
+    std::fs::write(&asset_path, &asset)?;
+    let asset_hash = sha256_hex(&asset);
     std::fs::write(
         bundle.join("meta/assets_manifest.json"),
         serde_json::json!({
@@ -219,7 +226,7 @@ fn smoke_mode_loads_packaged_flow_and_updates_reports() -> Result<(), Box<dyn st
                 {
                     "type": "scene",
                     "background": "assets/backgrounds/smoke.png",
-                    "characters": []
+                    "characters": [{"name": "Ava"}]
                 },
                 {
                     "type": "dialogue",
@@ -263,6 +270,75 @@ fn smoke_mode_loads_packaged_flow_and_updates_reports() -> Result<(), Box<dyn st
     std::fs::write(bundle.join("meta/bundle.hmac_sha256"), "abc123")?;
 
     let smoke_report = bundle.join("meta/runtime_smoke_report.json");
+    let script_path = bundle.join("scripts/compiled.vnscript.json");
+    let asset_path = bundle.join("assets/backgrounds/smoke.png");
+    let protected = [
+        script_path.clone(),
+        bundle.join("meta/assets_manifest.json"),
+        bundle.join("meta/package_report.json"),
+        asset_path.clone(),
+    ];
+    for path in &protected {
+        let before = std::fs::read(path)?;
+        let error = run_from_args(vec![
+            script_path.display().to_string(),
+            "--assets-root".into(),
+            bundle.display().to_string(),
+            "--manifest".into(),
+            bundle
+                .join("meta/assets_manifest.json")
+                .display()
+                .to_string(),
+            "--require-manifest".into(),
+            "--smoke-report".into(),
+            path.display().to_string(),
+        ])
+        .expect_err("smoke report must not overwrite an input");
+        assert!(error.to_string().contains("smoke report"), "{error}");
+        assert_eq!(std::fs::read(path)?, before);
+    }
+    let hardlink = bundle.join("hardlinked-report.json");
+    std::fs::hard_link(&script_path, &hardlink)?;
+    let original_script = std::fs::read(&script_path)?;
+    let error = run_from_args(vec![
+        script_path.display().to_string(),
+        "--smoke-report".into(),
+        hardlink.display().to_string(),
+    ])
+    .expect_err("a hard link to the script is not a smoke report");
+    assert!(error.to_string().contains("smoke report"), "{error}");
+    assert_eq!(std::fs::read(&script_path)?, original_script);
+    let symlink = bundle.join("symlinked-report.json");
+    if create_file_symlink(&symlink, &script_path) {
+        let error = run_from_args(vec![
+            script_path.display().to_string(),
+            "--smoke-report".into(),
+            symlink.display().to_string(),
+        ])
+        .expect_err("a symlink to the script must be rejected");
+        assert!(error.to_string().contains("smoke report"), "{error}");
+        assert_eq!(std::fs::read(&script_path)?, original_script);
+    }
+    let original_asset = std::fs::read(&asset_path)?;
+    std::fs::write(
+        &asset_path,
+        br#"{"schema":"vnengine.player_runtime_smoke.v1"}"#,
+    )?;
+    let error = run_from_args(vec![
+        script_path.display().to_string(),
+        "--assets-root".into(),
+        bundle.display().to_string(),
+        "--manifest".into(),
+        bundle
+            .join("meta/assets_manifest.json")
+            .display()
+            .to_string(),
+        "--smoke-report".into(),
+        asset_path.display().to_string(),
+    ])
+    .expect_err("assets remain protected even if their JSON resembles a smoke report");
+    assert!(error.to_string().contains("smoke report"), "{error}");
+    std::fs::write(&asset_path, original_asset)?;
     run_from_args(vec![
         bundle
             .join("scripts/compiled.vnscript.json")
@@ -320,6 +396,80 @@ fn smoke_mode_loads_packaged_flow_and_updates_reports() -> Result<(), Box<dyn st
     assert_eq!(package["smoke_result"], smoke["smoke_result"]);
     assert_eq!(compat["smoke_result"], smoke["smoke_result"]);
     assert_eq!(package["smoke_result"]["status"], "passed");
+    run_from_args(vec![
+        script_path.display().to_string(),
+        "--assets-root".into(),
+        bundle.display().to_string(),
+        "--manifest".into(),
+        bundle
+            .join("meta/assets_manifest.json")
+            .display()
+            .to_string(),
+        "--require-manifest".into(),
+        "--smoke-report".into(),
+        smoke_report.display().to_string(),
+    ])?;
+    let manifest_path = bundle.join("meta/assets_manifest.json");
+    let valid_manifest = std::fs::read(&manifest_path)?;
+    let corrupt = b"not a PNG";
+    std::fs::write(&asset_path, corrupt)?;
+    let mut manifest: Value = serde_json::from_slice(&valid_manifest)?;
+    manifest["assets"]["assets/backgrounds/smoke.png"]["sha256"] = sha256_hex(corrupt).into();
+    manifest["assets"]["assets/backgrounds/smoke.png"]["size"] = corrupt.len().into();
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest)?)?;
+    let run = || {
+        run_from_args(vec![
+            script_path.display().to_string(),
+            "--assets-root".into(),
+            bundle.display().to_string(),
+            "--manifest".into(),
+            manifest_path.display().to_string(),
+            "--require-manifest".into(),
+            "--smoke-report".into(),
+            smoke_report.display().to_string(),
+        ])
+    };
+    let error = run().expect_err("matching hash must not hide a corrupt image");
+    assert!(
+        error
+            .to_string()
+            .contains("export.runtime_smoke.render_frame"),
+        "{error}"
+    );
+    assert!(
+        error.to_string().contains("assets/backgrounds/smoke.png"),
+        "{error}"
+    );
+    assert!(error.to_string().contains("decode"), "{error}");
+    let failed: Value = serde_json::from_slice(&std::fs::read(&smoke_report)?)?;
+    assert_eq!(failed["status"], "failed");
+    std::fs::write(&asset_path, &asset)?;
+    std::fs::write(&manifest_path, valid_manifest)?;
+    run()?;
+    let recovered: Value = serde_json::from_slice(&std::fs::read(&smoke_report)?)?;
+    assert_eq!(recovered["status"], "passed");
+    let package_path = bundle.join("meta/package_report.json");
+    let package_before = std::fs::read(&package_path)?;
+    let failed_report = bundle.join("meta/unpublished-smoke.json");
+    let invalid_compat = bundle.join("meta/invalid-compat.json");
+    std::fs::write(&invalid_compat, "[]")?;
+    let artifacts = SmokeArtifactContext {
+        target_platform: "windows".into(),
+        bundle_root: Some(bundle.to_path_buf()),
+        script_path,
+        assets_root: bundle.to_path_buf(),
+        manifest_path: Some(bundle.join("meta/assets_manifest.json")),
+        package_report_path: Some(package_path.clone()),
+        compat_report_path: Some(invalid_compat),
+        smoke_report_path: Some(failed_report.clone()),
+    };
+    let smoke_result: ExportRuntimeSmokeResult =
+        serde_json::from_value(smoke["smoke_result"].clone())?;
+    let error = write_smoke_artifacts(&artifacts, &smoke_result, true)
+        .expect_err("a failed second report update must abort publication");
+    assert!(error.to_string().contains("compat_report"), "{error}");
+    assert_eq!(std::fs::read(package_path)?, package_before);
+    assert!(!failed_report.exists());
     Ok(())
 }
 

@@ -10,8 +10,8 @@ use super::command_bus::CommandApplyMetadata as DocumentApplyMetadata;
 use super::{
     authoring_document_layout_sha256, authoring_document_sha256,
     build_authoring_document_report_fingerprint, validate_authoring_graph_no_io, AuthoringDocument,
-    AuthoringReportFingerprint, LintIssue, OperationKind, OperationLogEntry, OperationStatus,
-    VerificationRun,
+    AuthoringReportFingerprint, DiagnosticTarget, LintIssue, OperationKind, OperationLogEntry,
+    OperationStatus, VerificationRun,
 };
 
 pub use read_model::{
@@ -33,7 +33,6 @@ pub struct AuthoringDocumentSession {
     redo_command_indices: Vec<usize>,
     recorded_commands: Vec<AuthoringDocumentCommand>,
     cached_fingerprint: Option<AuthoringReportFingerprint>,
-    cached_validation: Option<Vec<LintIssue>>,
     dirty: AuthoringDirtyFlags,
     read_model: AuthoringReadModel,
 }
@@ -95,7 +94,6 @@ impl AuthoringDocumentSession {
             redo_command_indices: Vec::new(),
             recorded_commands: Vec::new(),
             cached_fingerprint: None,
-            cached_validation: None,
             dirty: AuthoringDirtyFlags::default(),
             read_model,
         }
@@ -184,25 +182,17 @@ impl AuthoringDocumentSession {
         redo_index: Option<usize>,
     ) -> Result<AuthoringDocumentCommandOutcome, String> {
         let before_fingerprint = self.current_fingerprint();
-        let before_issues = self.current_validation();
         let (delta, metadata) = self.apply_without_logging(&command)?;
-        self.read_model.update_from_delta(&self.document, &delta);
-        let dirty = AuthoringDirtyFlags::for_delta(&delta);
-        self.dirty.include(dirty);
-        let after_fingerprint = self.fingerprint_after_delta(&before_fingerprint, &delta);
-        let after_issues = if dirty.validation_dirty {
-            self.cached_validation = None;
-            self.current_validation()
-        } else {
-            self.cached_validation = Some(before_issues.clone());
-            before_issues.clone()
-        };
-        if dirty.validation_dirty {
-            self.read_model.replace_diagnostics(&after_issues);
-        }
+        let (after_fingerprint, before_issues) =
+            self.refresh_after_delta(&before_fingerprint, &delta);
+        let after_issues = self.read_model.diagnostics();
         let details = match &command {
             AuthoringDocumentCommand::Graph(command) => metadata.graph_details(command),
             AuthoringDocumentCommand::ReplaceGraph { details, .. } => details.clone(),
+            AuthoringDocumentCommand::MoveNodes { .. } => match metadata.targets.as_slice() {
+                [DiagnosticTarget::Node { node_id }] => format!("Moved node {node_id}"),
+                nodes => format!("Moved {} nodes", nodes.len()),
+            },
             _ => format!("authoring document command applied: {command:?}"),
         };
         let operation = metadata
@@ -212,8 +202,8 @@ impl AuthoringDocumentSession {
             operation.operation_id.clone(),
             "document_command_bus",
             &after_fingerprint,
-            &before_issues,
-            &after_issues,
+            before_issues.as_deref().unwrap_or(after_issues),
+            after_issues,
         );
 
         self.undo_deltas.push((
@@ -249,13 +239,20 @@ impl AuthoringDocumentSession {
         fingerprint
     }
 
-    fn current_validation(&mut self) -> Vec<LintIssue> {
-        if let Some(issues) = &self.cached_validation {
-            return issues.clone();
-        }
-        let issues = validate_authoring_graph_no_io(&self.document.graph);
-        self.cached_validation = Some(issues.clone());
-        issues
+    fn refresh_after_delta(
+        &mut self,
+        before: &AuthoringReportFingerprint,
+        delta: &AuthoringDocumentDelta,
+    ) -> (AuthoringReportFingerprint, Option<Vec<LintIssue>>) {
+        self.read_model.update_from_delta(&self.document, delta);
+        let dirty = AuthoringDirtyFlags::for_delta(delta);
+        self.dirty.include(dirty);
+        let after = self.fingerprint_after_delta(before, delta);
+        let before_issues = dirty.validation_dirty.then(|| {
+            self.read_model
+                .replace_diagnostics(validate_authoring_graph_no_io(&self.document.graph))
+        });
+        (after, before_issues)
     }
 
     fn fingerprint_after_delta(
@@ -286,7 +283,6 @@ impl AuthoringDocumentSession {
             .pop()
             .ok_or_else(|| "no document command delta to revert".to_string())?;
         let before_fingerprint = self.current_fingerprint();
-        let before_issues = self.current_validation();
         if let Err(error) = self.apply_inverse_delta(&delta) {
             self.undo_deltas.push((delta, command_index));
             return Err(error);
@@ -294,20 +290,9 @@ impl AuthoringDocumentSession {
         let reverted = AuthoringDocumentDelta::Reverted {
             reverted: Box::new(delta),
         };
-        self.read_model.update_from_delta(&self.document, &reverted);
-        let dirty = AuthoringDirtyFlags::for_delta(&reverted);
-        self.dirty.include(dirty);
-        let after_fingerprint = self.fingerprint_after_delta(&before_fingerprint, &reverted);
-        let after_issues = if dirty.validation_dirty {
-            self.cached_validation = None;
-            self.current_validation()
-        } else {
-            self.cached_validation = Some(before_issues.clone());
-            before_issues.clone()
-        };
-        if dirty.validation_dirty {
-            self.read_model.replace_diagnostics(&after_issues);
-        }
+        let (after_fingerprint, before_issues) =
+            self.refresh_after_delta(&before_fingerprint, &reverted);
+        let after_issues = self.read_model.diagnostics();
         let operation = OperationLogEntry::new_typed(
             if matches!(command, AuthoringDocumentCommand::UndoLast) {
                 OperationKind::Undo
@@ -322,8 +307,8 @@ impl AuthoringDocumentSession {
             operation.operation_id.clone(),
             "document_command_bus",
             &after_fingerprint,
-            &before_issues,
-            &after_issues,
+            before_issues.as_deref().unwrap_or(after_issues),
+            after_issues,
         );
         self.redo_command_indices.push(command_index);
         self.recorded_commands.push(command);
@@ -429,7 +414,8 @@ fn delta_preserves_semantic_fingerprint(delta: &AuthoringDocumentDelta) -> bool 
         | AuthoringDocumentDelta::LayerLockedChanged { .. }
         | AuthoringDocumentDelta::BackgroundFitChanged { .. }
         | AuthoringDocumentDelta::BackgroundFitCleared { .. }
-        | AuthoringDocumentDelta::ComposerOverridesReset { .. } => true,
+        | AuthoringDocumentDelta::ComposerOverridesReset { .. }
+        | AuthoringDocumentDelta::NodesMoved { .. } => true,
         AuthoringDocumentDelta::Graph(_) | AuthoringDocumentDelta::GraphReplaced { .. } => false,
         AuthoringDocumentDelta::Reverted { reverted } => {
             delta_preserves_semantic_fingerprint(reverted)

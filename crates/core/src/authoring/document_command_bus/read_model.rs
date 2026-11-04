@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
+use std::sync::{Arc, OnceLock};
 
 use super::super::{
     collect_authoring_asset_refs,
     composer::{self, ComposerSnapshot, LayerOverride, LayeredSceneObject},
     validate_authoring_graph_no_io, AuthoringDocument, AuthoringReportFingerprint, LintIssue,
-    StoryNode,
+    NodeGraph, StoryNode,
 };
 use super::AuthoringDocumentDelta;
 
@@ -94,7 +95,7 @@ impl AuthoringReadModel {
     }
 
     pub fn preview_data_for_node(&self, node_id: u32) -> Option<&ComposerSnapshot> {
-        self.preview_index.snapshots_by_node.get(&node_id)
+        self.preview_index.get(node_id)
     }
 
     pub fn report_stale_state(
@@ -105,8 +106,12 @@ impl AuthoringReadModel {
         AuthoringReportStaleState::compare(report, current)
     }
 
-    pub(crate) fn replace_diagnostics(&mut self, issues: &[LintIssue]) {
-        self.diagnostics_index = DiagnosticsIndex::from_issues(issues.to_vec());
+    pub(crate) fn replace_diagnostics(&mut self, issues: Vec<LintIssue>) -> Vec<LintIssue> {
+        std::mem::replace(
+            &mut self.diagnostics_index,
+            DiagnosticsIndex::from_issues(issues),
+        )
+        .issues
     }
 
     pub(crate) fn update_from_delta(
@@ -124,7 +129,8 @@ impl AuthoringReadModel {
                 .composer_layer_index
                 .update_layer_override(object_id, *after),
             AuthoringDocumentDelta::BackgroundFitChanged { .. }
-            | AuthoringDocumentDelta::BackgroundFitCleared { .. } => {}
+            | AuthoringDocumentDelta::BackgroundFitCleared { .. }
+            | AuthoringDocumentDelta::NodesMoved { .. } => {}
             AuthoringDocumentDelta::Graph(_) | AuthoringDocumentDelta::GraphReplaced { .. } => {
                 self.rebuild_document_projection(document);
             }
@@ -132,6 +138,8 @@ impl AuthoringReadModel {
                 self.composer_layer_index = ComposerLayerIndex::from_document(document);
                 self.preview_index = PreviewIndex::from_document(document);
             }
+            AuthoringDocumentDelta::Reverted { reverted }
+                if matches!(reverted.as_ref(), AuthoringDocumentDelta::NodesMoved { .. }) => {}
             AuthoringDocumentDelta::Reverted { .. } => self.rebuild_document_projection(document),
         }
         if matches!(
@@ -319,18 +327,40 @@ impl RouteIndex {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 struct PreviewIndex {
-    snapshots_by_node: BTreeMap<u32, ComposerSnapshot>,
+    generation: Arc<PreviewGeneration>,
+}
+
+#[derive(Debug, Default)]
+struct PreviewGeneration {
+    graph: NodeGraph,
+    layer_overrides: BTreeMap<String, LayerOverride>,
+    snapshots_by_node: BTreeMap<u32, OnceLock<Box<ComposerSnapshot>>>,
 }
 
 impl PreviewIndex {
     fn from_document(document: &AuthoringDocument) -> Self {
-        let mut snapshots_by_node = BTreeMap::new();
-        for (node_id, _, _) in document.graph.nodes() {
+        let snapshots_by_node = document
+            .graph
+            .nodes()
+            .map(|(node_id, _, _)| (*node_id, OnceLock::new()))
+            .collect();
+        Self {
+            generation: Arc::new(PreviewGeneration {
+                graph: document.graph.clone(),
+                layer_overrides: document.composer_layer_overrides.clone(),
+                snapshots_by_node,
+            }),
+        }
+    }
+
+    fn get(&self, node_id: u32) -> Option<&ComposerSnapshot> {
+        let slot = self.generation.snapshots_by_node.get(&node_id)?;
+        let snapshot = slot.get_or_init(|| {
             let mut snapshot = composer::compose_scene_snapshot(
-                &document.graph,
-                Some(*node_id),
+                &self.generation.graph,
+                Some(node_id),
                 None,
                 None,
                 None,
@@ -338,11 +368,11 @@ impl PreviewIndex {
             );
             composer::apply_layer_overrides(
                 &mut snapshot.objects,
-                &document.composer_layer_overrides,
+                &self.generation.layer_overrides,
             );
-            snapshots_by_node.insert(*node_id, snapshot);
-        }
-        Self { snapshots_by_node }
+            Box::new(snapshot)
+        });
+        Some(snapshot.as_ref())
     }
 }
 
@@ -376,4 +406,135 @@ fn node_search_text(node: &StoryNode) -> String {
         serde_json::to_string(node).unwrap_or_default()
     )
     .to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod lazy_preview_tests {
+    use super::*;
+    use crate::authoring::{
+        AuthoringCommand, AuthoringDocumentCommand, AuthoringDocumentSession, AuthoringPosition,
+    };
+
+    fn scene(background: &str) -> StoryNode {
+        StoryNode::Scene {
+            profile: None,
+            background: Some(background.into()),
+            music: None,
+            characters: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn snapshots_are_lazy_shared_and_equivalent_to_eager_projection() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<AuthoringReadModel>();
+        let mut graph = NodeGraph::new();
+        for id in 0..32 {
+            graph.add_node(scene(&format!("bg/{id}.png")), AuthoringPosition::default());
+        }
+        let document = AuthoringDocument::new(graph);
+        let model = AuthoringReadModel::from_document(&document);
+        let clone = model.clone();
+        assert!(Arc::ptr_eq(
+            &model.preview_index.generation,
+            &clone.preview_index.generation
+        ));
+        assert!(model
+            .preview_index
+            .generation
+            .snapshots_by_node
+            .values()
+            .all(|entry| entry.get().is_none()));
+        assert!(model.preview_data_for_node(u32::MAX).is_none());
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let model = &model;
+                scope.spawn(move || {
+                    let snapshot = model.preview_data_for_node(2).unwrap();
+                    let expected = composer::compose_scene_snapshot(
+                        &model.preview_index.generation.graph,
+                        Some(2),
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
+                    assert_eq!(snapshot, &expected);
+                });
+            }
+        });
+        assert_eq!(
+            model
+                .preview_index
+                .generation
+                .snapshots_by_node
+                .values()
+                .filter(|entry| entry.get().is_some())
+                .count(),
+            1
+        );
+        assert!(std::ptr::eq(
+            model.preview_data_for_node(2).unwrap(),
+            clone.preview_data_for_node(2).unwrap()
+        ));
+    }
+
+    #[test]
+    fn mutations_invalidate_generation_without_changing_cloned_read_model() {
+        let mut graph = NodeGraph::new();
+        let id = graph.add_node(scene("before.png"), AuthoringPosition::default());
+        let mut session = AuthoringDocumentSession::new(AuthoringDocument::new(graph));
+        let old = session.read_model().clone();
+        let object_id = old.preview_data_for_node(id).unwrap().objects[0]
+            .object_id
+            .clone();
+        session
+            .apply(AuthoringDocumentCommand::SetLayerVisible {
+                object_id: object_id.clone(),
+                visible: false,
+            })
+            .unwrap();
+        assert!(old.preview_data_for_node(id).unwrap().objects[0].visible);
+        assert!(
+            !session
+                .read_model()
+                .preview_data_for_node(id)
+                .unwrap()
+                .objects[0]
+                .visible
+        );
+        session.apply(AuthoringDocumentCommand::UndoLast).unwrap();
+        assert!(
+            session
+                .read_model()
+                .preview_data_for_node(id)
+                .unwrap()
+                .objects[0]
+                .visible
+        );
+        session
+            .apply(AuthoringDocumentCommand::Graph(
+                AuthoringCommand::EditNode {
+                    node_id: id,
+                    replacement: scene("after.png"),
+                },
+            ))
+            .unwrap();
+        assert_eq!(
+            session
+                .read_model()
+                .preview_data_for_node(id)
+                .unwrap()
+                .objects[0]
+                .asset_path
+                .as_deref(),
+            Some("after.png")
+        );
+        assert_eq!(
+            old.preview_data_for_node(id).unwrap().objects[0]
+                .asset_path
+                .as_deref(),
+            Some("before.png")
+        );
+    }
 }

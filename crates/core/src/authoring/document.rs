@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
+use std::fmt;
 
+use serde::de::{DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -98,26 +100,89 @@ impl AuthoringDocument {
 }
 
 pub fn source_looks_like_authoring_document(source: &str) -> bool {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(source) else {
-        return source_contains_authoring_markers(source);
-    };
-    value.as_object().is_some_and(|object| {
-        object.contains_key("authoring_schema_version")
-            || object.contains_key("authoring_document_version")
-            || object.contains_key("authoring")
-            || object.contains_key("editor")
-            || object.contains_key("editor_metadata")
-            || object.contains_key("graph")
-            || object.contains_key("composer_layer_overrides")
-            || object.contains_key("composer_background_fit_overrides")
-            || object.contains_key("operation_log")
-            || object.contains_key("verification_runs")
-            || object.contains_key("nodes")
-            || object.contains_key("connections")
-            || object.get("graph").is_some_and(|graph| {
-                graph.get("nodes").is_some() || graph.get("connections").is_some()
-            })
-    })
+    let mut deserializer = serde_json::Deserializer::from_str(source);
+    MarkerProbe::Root
+        .deserialize(&mut deserializer)
+        .and_then(|found| deserializer.end().map(|()| found))
+        .unwrap_or_else(|_| source_contains_authoring_markers(source))
+}
+
+// Walk values with serde_json's usual syntax, depth and number checks, while
+// retaining only whether a top-level authoring key was seen.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MarkerProbe {
+    Root,
+    Nested,
+    Key,
+}
+
+impl<'de> DeserializeSeed<'de> for MarkerProbe {
+    type Value = bool;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<bool, D::Error> {
+        deserializer.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for MarkerProbe {
+    type Value = bool;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<bool, A::Error> {
+        let mut found = false;
+        while let Some(marker) = map.next_key_seed(Self::Key)? {
+            found |= self == Self::Root && marker;
+            map.next_value_seed(Self::Nested)?;
+        }
+        Ok(found)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<bool, A::Error> {
+        while seq.next_element_seed(Self::Nested)?.is_some() {}
+        Ok(false)
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<bool, E> {
+        Ok(self == Self::Key
+            && matches!(
+                value,
+                "authoring_schema_version"
+                    | "authoring_document_version"
+                    | "authoring"
+                    | "editor"
+                    | "editor_metadata"
+                    | "graph"
+                    | "composer_layer_overrides"
+                    | "composer_background_fit_overrides"
+                    | "operation_log"
+                    | "verification_runs"
+                    | "nodes"
+                    | "connections"
+            ))
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<bool, E> {
+        Ok(false)
+    }
+
+    fn visit_i64<E>(self, _: i64) -> Result<bool, E> {
+        Ok(false)
+    }
+
+    fn visit_u64<E>(self, _: u64) -> Result<bool, E> {
+        Ok(false)
+    }
+
+    fn visit_f64<E>(self, _: f64) -> Result<bool, E> {
+        Ok(false)
+    }
+
+    fn visit_unit<E>(self) -> Result<bool, E> {
+        Ok(false)
+    }
 }
 
 fn source_contains_authoring_markers(source: &str) -> bool {
