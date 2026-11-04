@@ -117,9 +117,10 @@ jobs:
           import base64
           from pathlib import Path
 
+          # Opaque 1x1 RGBA PNG decoded by the player during smoke.
           Path("target/package-linux-smoke/project/assets/backgrounds/smoke.png").write_bytes(
               base64.b64decode(
-                  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+                  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGOQUDH4DwACMAFsjceziQAAAABJRU5ErkJggg=="
               )
           )
           PY
